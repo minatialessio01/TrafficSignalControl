@@ -51,7 +51,7 @@ DEFAULTS = {
     "batch_size":          20,     # batch size (paper: 20)
     "gamma":               0.85,   # discount factor (paper: 0.85)
     "lr":                  1e-3,   # learning rate (non spec. → 1e-3)
-    "buffer_size":         10_000, # replay buffer (paper: 10,000)
+    "buffer_size":         3_000,  # replay buffer (modificato per limitarlo a 3000 come richiesto)
     "min_buffer_size":     1_000,  # minimum size prima del training (paper: 1,000)
     "hidden_dim":          64,     # hidden dim (non spec. → 64)
     "num_heads":           4,      # teste attenzione (Fig. 10b → 4)
@@ -421,6 +421,9 @@ def run_training(args):
 
         # ── Chiusura Traiettoria ───────────────────────────────────────────────
         agent.replay_buffer.end_episode()
+        
+        # Salva l'epsilon attuale prima che agent.update lo modifichi per il prossimo episodio
+        epsilon_used = getattr(agent, 'epsilon', 0.0)
 
         # ── Aggiornamento modello (Algorithm 1, line 9-14) ─────────────────
         loss = agent.update(
@@ -450,7 +453,7 @@ def run_training(args):
                 travel_time=travel_time,
                 extra_info={
                     "running_avg_travel_time": running_metrics.last_n_avg_travel_time,
-                    "epsilon": agent.epsilon,
+                    "epsilon": epsilon_used,
                 }
             )
 
@@ -461,7 +464,7 @@ def run_training(args):
             throughput=throughput,
             total_reward=ep_metrics.total_reward,
             avg_loss=ep_metrics.avg_loss,
-            epsilon=agent.epsilon,
+            epsilon=epsilon_used,
             buffer_size=len(agent.replay_buffer)
         )
 
@@ -498,7 +501,7 @@ def run_training(args):
             travel_time=travel_time,
             throughput=throughput,
             loss=loss,
-            epsilon=agent.epsilon,
+            epsilon=epsilon_used,
             total_reward=ep_metrics.total_reward,
             is_best=is_best,
             eta_str=eta_str
