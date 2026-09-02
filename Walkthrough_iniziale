@@ -1,0 +1,269 @@
+# Spiegazione del codice MetaSTGAT
+
+## Struttura complessiva
+
+Il codice segue la struttura classica di un progetto di **Deep Reinforcement Learning**:
+
+```
+CodiceTesi/
+├── src/              ← librerie (modelli, environment, agenti, utils)
+├── scripts/          ← script eseguibili (train, test, ablation, dati)
+├── docker/           ← containerizzazione
+├── README.md         ← documentazione utente
+├── requirements.txt  ← dipendenze Python
+└── setup_env.sh      ← setup automatico WSL/Linux
+```
+
+---
+
+## 1. Environment (`src/environment/`)
+
+### `cityflow_env.py` — Il cuore dell'ambiente
+
+Questo file **fa da ponte tra CityFlow e il modello**. CityFlow è il simulatore di traffico; questo wrapper lo traduce nel linguaggio del Reinforcement Learning (MDP).
+
+**Cosa fa concretamente:**
+
+```
+CityFlow (simulatore) ──→ CityFlowEnv ──→ Agente DQN
+                          ┌──────────┐
+                          │ reset()  │ → stato iniziale di ogni intersezione
+                          │ step()   │ → esegue 15s (10 verde+3 giallo+2 rosso)
+                          │          │   → restituisce (next_state, reward, done)
+                          └──────────┘
+```
+
+**Lo stato** di ogni intersezione i al tempo t è (Eq. 3-4 del paper):
+```
+s_i^t = [n_vec(12), p_vec(8)]   → dim totale = 20
+```
+- `n_vec`: quanti veicoli ci sono su ciascuna delle 12 corsie in ingresso (normalizzato /30)
+- `p_vec`: one-hot encoding della fase semaforica corrente (0..7)
+
+**Il reward** è (Eq. 1):
+```
+r_i = -P_i = -(veicoli_entranti - veicoli_uscenti)
+```
+Minimizzare la pressione = massimizzare il flusso.
+
+**Le meta-feature** (uniche rispetto a un ambiente normale) sono due tipi di informazioni aggiuntive usate *solo* da MetaSTGAT per generare i pesi dinamici:
+- `get_spatial_meta_features()` → pressione corsie + n. veicoli + distanza vicini → input a SMK-Learner
+- `get_temporal_meta_features()` → lunghezza coda + storico stati → input a TMK-Learner
+
+### `graph_builder.py` — La topologia del grafo
+
+Costruisce gli oggetti `Data` di **PyTorch Geometric** a partire dalla lista di adiacenza delle intersezioni. L'`edge_index` è un tensore `(2, E)` dove ogni colonna `[i, j]` significa "l'intersezione j influenza l'intersezione i". Questo formato è quello standard richiesto da PyG.
+
+---
+
+## 2. Modelli (`src/models/`)
+
+I modelli seguono esattamente la gerarchia del paper:
+
+```
+state_encoder.py          ← Eq. 3-4  (base di tutto)
+    ↓
+meta_knowledge_learner.py ← Sec. 4.3.1 (feature → embedding)
+    ↓
+meta_gat.py               ← Eq. 14-17 (spaziale dinamico)
+meta_lstm.py              ← Eq. 20-21 (temporale dinamico)
+    ↓
+stgat.py                  ← Eq. 5-12  (baseline senza meta)
+metastgat.py              ← Modello completo
+```
+
+### `state_encoder.py` — Dual MLP Encoder (Eq. 3-4)
+
+```python
+class DualStateEncoder(nn.Module):
+    temporal_encoder  # W11, W21  →  e_i  → va all'LSTM
+    spatial_encoder   # W12, W22  →  e_j  → va alla GAT (query)
+```
+
+Lo stesso stato `s_i^t` viene codificato **due volte in parallelo** con pesi diversi, perché le due rappresentazioni hanno ruoli diversi nell'architettura. Questo è esattamente ciò che il paper descrive nelle Eq. 3 e 4.
+
+### `meta_knowledge_learner.py` — SMK e TMK Learner (Sec. 4.3.1)
+
+```python
+SMKLearner(spatial_features)   →  smk[i]  # embedding spaziale, dim 64
+TMKLearner(temporal_features)  →  tmk[i]  # embedding temporale, dim 64
+```
+
+Sono semplicemente due MLP a 2 strati (come l'encoder, ma con input diversi). L'output non va direttamente al modello principale — serve a generare i **pesi dinamici** per GAT e LSTM. Questa è l'idea chiave del meta-learning: una rete che produce i parametri di un'altra rete.
+
+### `meta_gat.py` — Meta-GAT (Eq. 14-17)
+
+Il meccanismo di attenzione standard GAT calcola:
+```
+φ(Q_i, K_u) = (Q_i · K_u) / √D_h         ← Eq. 7 (STGAT standard)
+```
+
+MetaGAT aggiunge dei pesi **generati dinamicamente** da `MetaDense`:
+```
+W_j, b_j = MetaDense(smk[i])              ← Eq. 14
+φ(Q_i, K_u) = (W_j · (Q_i · K_u) + b_j) / √D_h  ← Eq. 15
+```
+
+`MetaDense` è una piccola rete (2 layer) che prende l'embedding meta e produce una matrice W e un bias b. Ogni intersezione ha quindi la **propria versione dinamica** del meccanismo di attenzione, che cambia a ogni timestep in base allo stato del traffico.
+
+Il layer implementa **multi-head attention** su grafo con `edge_softmax` manuale (normalizzazione della softmax solo sui vicini di ogni nodo, non su tutti i nodi).
+
+### `meta_lstm.py` — Meta-LSTM (Eq. 18-21)
+
+L'LSTM standard ha pesi fissi. Meta-LSTM genera i propri pesi al volo:
+
+```python
+W_Φ, b_Φ = MetaDense3(tmk[i])    ← Eq. 20  (4 gate × pesi)
+x_i, c_t = MetaLSTMCell(e_i, h_prev, c_prev, W_Φ, b_Φ)  ← Eq. 21
+```
+
+`MetaLSTMCell` implementa manualmente le equazioni LSTM (Eq. 19: forget gate, input gate, output gate, cell gate) ma accetta i pesi come argomento invece di averli come parametri fissi. Questo pattern si chiama **hypernetwork** in letteratura.
+
+> **Perché serve un'implementazione manuale?** PyTorch's `nn.LSTMCell` ha pesi fissi che sono parametri del modello. Qui i pesi cambiano a ogni forward pass per ogni nodo, quindi dobbiamo fare la moltiplicazione matriciale a mano.
+
+### `stgat.py` — STGAT Baseline (Eq. 5-12)
+
+È il modello senza meta-learning. Usa:
+- `DualStateEncoder` → e_i, e_j
+- `nn.LSTMCell` standard → x_i (temporal feature)
+- `StandardGATLayer` × 2:
+  - **CST module**: Q=e_j, K=x_i, V=x_i → z_CST (fonde spaziale+temporale)
+  - **CS module**: Q=K=V=e_j → z_CS (solo spaziale)
+- DQN head: `Dense(Concat(z_CST, z_CS))` → Q-values
+
+### `metastgat.py` — MetaSTGAT Completo
+
+Sostituisce i componenti standard con quelli meta:
+
+| Componente | STGAT | MetaSTGAT |
+|---|---|---|
+| LSTM | `nn.LSTMCell` (pesi fissi) | `MetaLSTM` (pesi da TMK) |
+| GAT CST | `StandardGATLayer` | `MetaGATLayer` (pesi da TMK) |
+| GAT CS | `StandardGATLayer` | `MetaGATLayer` (pesi da SMK) |
+
+Il forward pass completo:
+```
+states → DualEncoder → e_i, e_j
+spatial_features → SMKLearner → smk
+temporal_features → TMKLearner → tmk
+(e_i, tmk) → MetaLSTM → x_i
+(e_j, x_i, tmk) → MetaGAT_CST → z_CST
+(e_j, e_j, smk) → MetaGAT_CS  → z_CS
+Concat(z_CST, z_CS) → Dense → Q-values (8)
+```
+
+---
+
+## 3. Agenti (`src/agents/`)
+
+### `replay_buffer.py` — Experience Replay
+
+Buffer circolare FIFO con `collections.deque(maxlen=10000)`. Ogni slot contiene:
+```python
+Transition(state, action, reward, next_state, spatial_meta, temporal_meta)
+```
+Le `spatial_meta` e `temporal_meta` sono i campi aggiuntivi che STGAT non usa ma MetaSTGAT sì.
+
+### `dqn_agent.py` — DQN Agent (Algorithm 1)
+
+Implementa l'Algorithm 1 del paper. Struttura:
+
+```
+Per ogni episodio:
+  1. select_actions()  → epsilon-greedy sul modello online
+  2. env.step()        → ottieni (next_obs, rewards)
+  3. store_transitions()→ metti nel replay buffer
+  ↓  (fine episodio)
+  4. update()          → 100 volte:
+       - sample 20 transizioni dal buffer
+       - calcola Q-target: r + γ * max_a Q(s', a; θ')
+       - calcola loss: MSE(Q_pred, Q_target)
+       - gradient descent RMSprop
+       - soft update target network: θ' ← τθ + (1-τ)θ'
+```
+
+**Checkpoint** (`save_checkpoint` / `load_checkpoint`): salva tutto il necessario per riprendere il training dall'esatto punto di interruzione:
+- `model_state_dict` + `target_model_state_dict`
+- `optimizer_state_dict` (include il momentum di RMSprop)
+- `episode`, `epsilon`, `total_steps`, `best_travel_time`
+
+### `fixedtime_agent.py` — Baseline FixedTime
+
+Semplicissimo: restituisce `fase = (step // 30) % 8`. Nessun training, serve solo come lower bound di confronto.
+
+---
+
+## 4. Utils (`src/utils/`)
+
+### `metrics.py`
+- `EpisodeMetrics`: raccoglie travel time, throughput, reward e loss step per step
+- `RunningMetrics`: calcola la media degli ultimi 10 episodi (metrica finale del paper: *"the average value of the last ten tests"*)
+
+### `logger.py`
+- Scrive un **CSV** con le metriche per ogni episodio (apribile con Excel)
+- Scrive un **JSON** `training_state.json` leggibile da Windows senza Python
+- Gestisce il segnale **SIGINT** (Ctrl+C): quando premi Ctrl+C, il training non si interrompe brutalmente ma attende la fine dell'episodio corrente, salva un checkpoint, e stampa il comando esatto per riprendere
+
+---
+
+## 5. Scripts (`scripts/`)
+
+### `generate_synthetic_data.py`
+Genera i file JSON (roadnet + flow) per la griglia 4×4 con 4 configurazioni, senza dipendere da CityFlow. Può essere eseguito su Windows.
+
+### `download_real_data.py`
+Scarica i dataset Hangzhou e Jinan dal repository CoLight con `urllib` (solo stdlib Python). Prova prima l'URL principale, poi un URL alternativo (LibSignal). Se tutto fallisce, stampa le istruzioni per il download manuale.
+
+### `train.py`
+Il loop principale. Tre argomenti chiave:
+- `--stop-at N` → si ferma all'episodio N e salva checkpoint
+- `--resume path` → riprende da un checkpoint esistente
+- `Ctrl+C` → interruzione pulita con checkpoint automatico
+
+### `test.py`
+Valuta un modello addestrato per `n-eval=10` episodi (default) con epsilon=0 (greedy puro). Salva i risultati in JSON.
+
+### `ablation.py`
+Allena in sequenza tutte e 5 le varianti (Fig. 7-8 del paper) e stampa una tabella comparativa.
+
+---
+
+## Flusso dati completo durante il training
+
+```
+CityFlow simulator
+      │
+      ▼
+CityFlowEnv.step()
+  ├── stato s = [n_vec, p_vec]          (dim 20 per intersezione)
+  ├── spatial_meta = [pressure, dist]   (dim 28, solo MetaSTGAT)
+  └── temporal_meta = [queue, history]  (dim 72, solo MetaSTGAT)
+      │
+      ▼
+DQNAgent.select_actions()
+  └── MetaSTGAT.forward(s, edge_index, smf, tmf)
+        ├── DualEncoder(s) → e_i, e_j
+        ├── SMK(smf) → smk_embedding
+        ├── TMK(tmf) → tmk_embedding
+        ├── MetaLSTM(e_i, tmk) → x_i
+        ├── MetaGAT_CST(e_j, x_i, tmk) → z_CST
+        ├── MetaGAT_CS(e_j, e_j, smk)  → z_CS
+        └── Dense(Concat(z_CST, z_CS)) → Q-values (8 fasi)
+      │
+      ▼
+ReplayBuffer.push(s, a, r, s', smf, tmf)
+      │
+      ▼ (fine episodio: 100 update)
+DQNAgent.update()
+  ├── sample 20 transizioni
+  ├── calcola Q-target = r + 0.85 * max Q(s'; θ')
+  ├── loss = MSE(Q(s,a; θ), Q-target)
+  └── RMSprop step → aggiorna θ
+```
+
+---
+
+## File rimossi/pulizia
+
+- Eliminato `paper_content.txt` dalla cartella temporanea degli artefatti (era l'estrazione testo del PDF, non più necessaria)
+- `implementation_plan.md` e `task.md` rimangono negli artefatti come documentazione di progetto

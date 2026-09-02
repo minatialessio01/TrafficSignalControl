@@ -1,0 +1,22 @@
+# Virtual environments
+venv/
+env/
+.venv/
+.env
+
+# Cache
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# IDEs
+.vscode/
+.idea/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Project specific
+results/
+CityFlow/frontend/node_modules/

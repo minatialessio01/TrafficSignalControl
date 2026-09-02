@@ -1,0 +1,13 @@
+{
+  "interval": 1.0,
+  "seed": 42,
+  "dir": "data/",
+  "roadnetFile": "roadnet_4x4.json",
+  "flowFile": "flow_0.388_peak.json",
+  "rlTrafficLight": true,
+  "laneChange": false,
+  "saveReplay": false,
+  "roadnetLogFile": "roadnet.log",
+  "replayLogFile": "replay.log",
+  "maxStep": 1800
+}
