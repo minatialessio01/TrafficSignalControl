@@ -47,7 +47,7 @@ except ImportError:
 N_PHASES = 8                  # fasi semaforiche per intersezione (Fig. 1)
                               # (NTST, NLSL, NTNL, STSL, WTET, WLEL, ETEL, WTWL)
 N_LANES = 12                  # corsie per intersezione (Section 3.1)
-STATE_DIM = N_LANES + N_PHASES  # dim stato: 12 + 8 = 20
+STATE_DIM = N_LANES + N_LANES + N_PHASES  # dim stato: 12 (veicoli) + 12 (wait time) + 8 (fasi) = 32
 
 GREEN_TIME = 10               # durata verde (s)
 YELLOW_TIME = 3               # durata giallo (s)
@@ -57,6 +57,18 @@ STEP_TIME = GREEN_TIME + YELLOW_TIME + RED_TIME  # 15s per ciclo
 # Fasi standard: in CityFlow le fasi si mappano a indici 0..7
 # La svolta a destra è controllata dal semaforo (non più sempre verde).
 ALL_PHASES = list(range(N_PHASES))
+
+# Mappatura delle corsie con semaforo verde per ogni fase (indici 0-11, ordinamento canonico)
+GREEN_LANES_PER_PHASE = {
+    0: [1, 2, 4, 5],       # NTST: Nord Dritto/Destra (1,2) + Sud Dritto/Destra (4,5)
+    1: [0, 3],             # NLSL: Nord Sinistra (0) + Sud Sinistra (3)
+    2: [0, 1, 2],          # NTNL: Nord Sinistra/Dritto/Destra (0,1,2)
+    3: [3, 4, 5],          # STSL: Sud Sinistra/Dritto/Destra (3,4,5)
+    4: [7, 8, 10, 11],     # WTET: Ovest Dritto/Destra (7,8) + Est Dritto/Destra (10,11)
+    5: [6, 9],             # WLEL: Ovest Sinistra (6) + Est Sinistra (9)
+    6: [9, 10, 11],        # ETEL: Est Sinistra/Dritto/Destra (9,10,11)
+    7: [6, 7, 8]           # WTWL: Ovest Sinistra/Dritto/Destra (6,7,8)
+}
 
 
 class CityFlowEnv:
@@ -68,11 +80,12 @@ class CityFlowEnv:
     per poi selezionare una fase semaforica.
     """
 
-    def __init__(self, config_path: str, num_neighbors: int = 4):
+    def __init__(self, config_path: str, num_neighbors: int = 4, alpha: float = 0.5):
         """
         Args:
             config_path: percorso al file config.json di CityFlow
             num_neighbors: numero massimo di intersezioni vicine (paper: 4)
+            alpha: iperparametro per la penalità dei ritardi nel reward
         """
         if not CITYFLOW_AVAILABLE:
             raise RuntimeError(
@@ -82,6 +95,7 @@ class CityFlowEnv:
 
         self.config_path = config_path
         self.num_neighbors = num_neighbors
+        self.alpha = alpha
 
         # Carica la configurazione
         with open(config_path, "r") as f:
@@ -268,6 +282,7 @@ class CityFlowEnv:
         self.spawn_times = {}
         self.arrived_tt = []
         self.vehicle_wait_times = {}
+        self.all_spawned_vehicles = set()
         
         return self._get_observations()
 
@@ -303,6 +318,8 @@ class CityFlowEnv:
         for _ in range(YELLOW_TIME + RED_TIME):
             self.engine.next_step()
 
+        self.all_spawned_vehicles.update(self.engine.get_vehicles())
+
         # Aggiorna il tempo di attesa dei veicoli
         try:
             speeds = self.engine.get_vehicle_speed()
@@ -335,13 +352,10 @@ class CityFlowEnv:
         rewards = self._compute_rewards()
         done = self._is_done()
 
-        # Statistiche
         info = {
             "step": self.current_step,
             "avg_travel_time": self.get_average_travel_time(),
-            "vehicles_running": sum(
-                len(v) for v in self.engine.get_lane_vehicles().values()
-            )
+            "vehicles_running": self.get_throughput()
         }
 
         return observations, rewards, done, info
@@ -350,12 +364,14 @@ class CityFlowEnv:
         """
         Calcola il vettore di osservazione per ogni intersezione.
 
-        s_i^t = [n_vec (12), p_vec (8)] (Section 3.2)
+        s_i^t = [n_vec (12), wait_vec (12), p_vec (8)] (Section 3.2 modificata)
 
-        n_vec: numero di veicoli su ciascuna delle 12 corsie in ingresso
+        n_vec: numero di veicoli su ciascuna delle 12 corsie in ingresso (filtrato a 167m dal semaforo)
+        wait_vec: max waiting time normalizzato (0.0 - 1.0) per corsia (filtrato a 167m dal semaforo)
         p_vec: fase corrente (one-hot encoding 8 bit)
         """
         lane_vehicles = self.engine.get_lane_vehicles()
+        vehicle_distances = self.engine.get_vehicle_distance()
         observations = {}
 
         for iid in self.inter_ids:
@@ -363,9 +379,27 @@ class CityFlowEnv:
             lanes = self.inter_lanes.get(iid, [])
             # Padding/tronca a N_LANES corsie
             n_vec = np.zeros(N_LANES, dtype=np.float32)
+            wait_vec = np.zeros(N_LANES, dtype=np.float32)
+            
             for k, lane_id in enumerate(lanes[:N_LANES]):
                 vehicles = lane_vehicles.get(lane_id, [])
-                n_vec[k] = len(vehicles)
+                
+                veicoli_vicini = 0
+                max_wt = 0.0
+                
+                for veh in vehicles:
+                    # Filtriamo solo i veicoli a <= 167m dal semaforo (avendo la strada lunga ~340m, consideriamo dist >= 173m)
+                    dist = vehicle_distances.get(veh, 0.0)
+                    if dist >= 173.0:
+                        veicoli_vicini += 1
+                        
+                        wt = self.vehicle_wait_times.get(veh, 0.0)
+                        if wt > max_wt:
+                            max_wt = wt
+                            
+                n_vec[k] = veicoli_vicini
+                # Normalizza e clippa tra 0.0 e 1.0 (supponendo 100s come limite ragionevole di saturazione)
+                wait_vec[k] = np.clip(max_wt / 100.0, 0.0, 1.0)
 
             # Normalizza il numero di veicoli
             n_vec = np.clip(n_vec / 30.0, 0.0, 5.0)
@@ -374,31 +408,68 @@ class CityFlowEnv:
             p_vec = np.zeros(N_PHASES, dtype=np.float32)
             p_vec[self.current_phase[iid]] = 1.0
 
-            observations[iid] = np.concatenate([n_vec, p_vec])  # dim=20
+            observations[iid] = np.concatenate([n_vec, wait_vec, p_vec])  # dim=32
 
         return observations
 
     def _compute_rewards(self) -> Dict[str, float]:
         """
-        Calcola il reward per ogni intersezione basato sulla pressione.
-        Pressione = Somma(veicoli in ingresso) - Somma(veicoli in uscita)
-        Reward = - Pressione
+        Calcola il reward per ogni intersezione basato sulla Weighted Pressure.
+        Pressure = Somma(veicoli in ingresso) - Somma(veicoli in uscita)
+        Reward = -Pressure - (alpha * max_red_wait_time)
+        Nota: la pressure è posta in negativo per penalizzare incroci congestionati.
         """
         lane_vehicles = self.engine.get_lane_vehicles()
+        vehicle_distances = self.engine.get_vehicle_distance()
         rewards = {}
 
         for iid in self.inter_ids:
-            in_lanes = self.inter_lanes.get(iid, [])
+            lanes = self.inter_lanes.get(iid, [])
             out_lanes = self._get_outgoing_lanes(iid)
             
-            in_count = sum(len(lane_vehicles.get(l, [])) for l in in_lanes)
-            out_count = sum(len(lane_vehicles.get(l, [])) for l in out_lanes)
+            # Calcolo Pressione "Corta": filtriamo i veicoli vicini (167m)
+            in_count = 0
+            for l in lanes:
+                for veh in lane_vehicles.get(l, []):
+                    # Corsia in ingresso: il semaforo è alla fine (dist >= 173m)
+                    if vehicle_distances.get(veh, 0.0) >= 173.0:
+                        in_count += 1
+                        
+            out_count = 0
+            for l in out_lanes:
+                for veh in lane_vehicles.get(l, []):
+                    # Corsia in uscita: il semaforo è all'inizio (dist <= 167m)
+                    if vehicle_distances.get(veh, 0.0) <= 167.0:
+                        out_count += 1
             
             pressure = in_count - out_count
             
-            # Scaliamo la reward per evitare gradienti troppo grandi
-            # (Ad esempio, dividiamo per 10 per mantenere valori ragionevoli)
-            rewards[iid] = -float(pressure) / 10.0
+            current_phase = self.current_phase[iid]
+            green_lanes = GREEN_LANES_PER_PHASE.get(current_phase, [])
+            
+            max_red_wait_time = 0.0
+            for k, lane_id in enumerate(lanes[:N_LANES]):
+                if k not in green_lanes:
+                    vehicles = lane_vehicles.get(lane_id, [])
+                    for veh in vehicles:
+                        # Consideriamo il wait time solo per le auto vicine al semaforo (dist >= 173m)
+                        if vehicle_distances.get(veh, 0.0) >= 173.0:
+                            wt = self.vehicle_wait_times.get(veh, 0.0)
+                            if wt > max_red_wait_time:
+                                max_red_wait_time = wt
+                            
+            # Formula implementata: -Pressure - (alpha * max_red_wait_time)
+            raw_reward = -float(pressure) - (self.alpha * max_red_wait_time)
+            
+            # NORMALIZZAZIONE:
+            # Poiché l'episodio dura 1800 secondi (maxStep=1800), il max_red_wait_time teorico è 1800.
+            # Con alpha = 0.5, il termine di penalità può raggiungere circa -900.
+            # Sommando la pressione (es. ~100), il raw_reward può arrivare a -1000.
+            # Dividiamo per 100.0 per riportare il reward in un range gestibile dalla rete (es. da -10 a 0).
+            normalized_reward = raw_reward / 100.0
+            
+            # CLIPPING di sicurezza contro picchi anomali
+            rewards[iid] = max(min(normalized_reward, 5.0), -20.0)
 
         return rewards
 
@@ -549,7 +620,7 @@ class CityFlowEnv:
 
     def get_throughput(self) -> int:
         """Numero di veicoli che hanno completato il viaggio."""
-        return int(self.engine.get_vehicle_count())
+        return len(self.all_spawned_vehicles) - int(self.engine.get_vehicle_count())
 
     @property
     def action_space_n(self) -> int:

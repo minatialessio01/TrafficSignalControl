@@ -36,7 +36,7 @@ class MetaSTGAT(nn.Module):
     MetaSTGAT: modello completo con meta-learning.
 
     Args:
-        state_dim:      dimensione stato input (d0=20)
+        state_dim:      dimensione stato input (d0=32)
         hidden_dim:     dimensione nascosta (d1=D_h, default 64)
         num_heads:      teste attenzione (H, default 4)
         n_actions:      numero di azioni/fasi (default 8)
@@ -47,7 +47,7 @@ class MetaSTGAT(nn.Module):
     """
 
     def __init__(self,
-                 state_dim: int = 20,
+                 state_dim: int = 32,
                  hidden_dim: int = 64,
                  num_heads: int = 4,
                  n_actions: int = 8,

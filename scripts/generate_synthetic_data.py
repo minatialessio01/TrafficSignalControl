@@ -344,19 +344,58 @@ def make_flow(arrival_rate: float, variance_type: str,
             path_rate = rate_per_source * prob
             if path_rate < 1e-6: continue
             
-            if variance_type == "flat": interval = 1.0 / path_rate
-            else: interval = 1.0 / (path_rate * 1.5)
+            veh_params = {
+                "length": 5.0, "width": 2.0, "maxPosAcc": 2.6, "maxNegAcc": 4.5,
+                "usualPosAcc": 2.0, "usualNegAcc": 3.5, "minGap": 2.5, "maxSpeed": MAX_SPEED, "headwayTime": 1.5
+            }
+            
+            if variance_type == "flat": 
+                interval = 1.0 / path_rate
+                # Flat: flusso costante su tutta la durata
+                flows.append({
+                    "vehicle": veh_params,
+                    "route": route,
+                    "interval": float(max(1.0, interval + rng.gauss(0, interval * 0.1))),
+                    "startTime": 0,
+                    "endTime": duration
+                })
+            else: 
+                # Peak: diviso in 3 fasi da 10 minuti (stesso volume totale medio)
+                bg_rate = path_rate * 0.75
+                peak_rate = path_rate * 1.5
                 
-            flows.append({
-                "vehicle": {
-                    "length": 5.0, "width": 2.0, "maxPosAcc": 2.6, "maxNegAcc": 4.5,
-                    "usualPosAcc": 2.0, "usualNegAcc": 3.5, "minGap": 2.5, "maxSpeed": MAX_SPEED, "headwayTime": 1.5
-                },
-                "route": route,
-                "interval": float(max(0.5, interval + rng.gauss(0, interval * (0.3 if variance_type == "flat" else 0.6)))),
-                "startTime": 0,
-                "endTime": duration
-            })
+                # Fase 1: Pre-Peak (0 - 600s)
+                if bg_rate > 1e-6:
+                    interval_bg1 = 1.0 / bg_rate
+                    flows.append({
+                        "vehicle": veh_params,
+                        "route": route,
+                        "interval": float(max(1.0, interval_bg1 + rng.gauss(0, interval_bg1 * 0.1))),
+                        "startTime": 0,
+                        "endTime": 600
+                    })
+                
+                # Fase 2: Peak Burst (600 - 1200s)
+                if peak_rate > 1e-6:
+                    interval_peak = 1.0 / peak_rate
+                    flows.append({
+                        "vehicle": veh_params,
+                        "route": route,
+                        "interval": float(max(1.0, interval_peak + rng.gauss(0, interval_peak * 0.1))),
+                        "startTime": 600,
+                        "endTime": 1200
+                    })
+                    
+                # Fase 3: Post-Peak (1200 - 1800s)
+                if bg_rate > 1e-6:
+                    interval_bg2 = 1.0 / bg_rate
+                    flows.append({
+                        "vehicle": veh_params,
+                        "route": route,
+                        "interval": float(max(1.0, interval_bg2 + rng.gauss(0, interval_bg2 * 0.1))),
+                        "startTime": 1200,
+                        "endTime": min(1800, duration)
+                    })
 
     return flows
 

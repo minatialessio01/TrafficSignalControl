@@ -26,11 +26,11 @@ class StateEncoder(nn.Module):
     spaziale (produce e_j). Le due istanze hanno pesi distinti.
 
     Args:
-        input_dim:  d0 = dimensione dello stato di input (default: 20 = 12+8)
+        input_dim:  d0 = dimensione dello stato di input (default: 32 = 12+12+8)
         hidden_dim: d1 = dimensione dello spazio latente (default: 64)
     """
 
-    def __init__(self, input_dim: int = 20, hidden_dim: int = 64):
+    def __init__(self, input_dim: int = 32, hidden_dim: int = 64):
         super().__init__()
         self.fc1 = nn.Linear(input_dim, hidden_dim)
         self.fc2 = nn.Linear(hidden_dim, hidden_dim)
@@ -60,7 +60,7 @@ class DualStateEncoder(nn.Module):
     Come descritto nelle Eq. 3-4 dell'articolo.
     """
 
-    def __init__(self, input_dim: int = 20, hidden_dim: int = 64):
+    def __init__(self, input_dim: int = 32, hidden_dim: int = 64):
         super().__init__()
         # Branch temporale (Eq. 3): W11, W21
         self.temporal_encoder = StateEncoder(input_dim, hidden_dim)

@@ -107,7 +107,7 @@ class STGAT(nn.Module):
       DualEncoder → LSTM → [CST Module + CS Module] → DQN head
 
     Args:
-        state_dim:   dimensione stato input (default: 20)
+        state_dim:   dimensione stato input (default: 32)
         hidden_dim:  dimensione nascosta (default: 64, non specificata nel paper)
         num_heads:   teste di attenzione (default: 4, da Fig. 10b)
         n_actions:   numero di azioni/fasi (default: 8)
@@ -115,7 +115,7 @@ class STGAT(nn.Module):
     """
 
     def __init__(self,
-                 state_dim: int = 20,
+                 state_dim: int = 32,
                  hidden_dim: int = 64,
                  num_heads: int = 4,
                  n_actions: int = 8,
