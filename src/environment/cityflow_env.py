@@ -121,9 +121,11 @@ class CityFlowEnv:
         self.adjacency = self._build_adjacency()
 
         # Mappa corsie per intersezione
+        # Mappa corsie per intersezione
         self.inter_lanes = self._get_lanes_per_intersection()
-
-        # Distanze tra intersezioni vicine (per le meta-feature)
+        
+        # Distanze e lunghezze strade
+        self.road_lengths = self._get_road_lengths()
         self.inter_distances = self._compute_distances()
 
         # Stato corrente
@@ -246,6 +248,17 @@ class CityFlowEnv:
                     
         return inter_lanes
 
+    def _get_road_lengths(self) -> Dict[str, float]:
+        import math
+        lengths = {}
+        for r in self.roadnet.get("roads", []):
+            pts = r.get("points", [])
+            length = 0.0
+            for i in range(len(pts)-1):
+                length += math.dist((pts[i]["x"], pts[i]["y"]), (pts[i+1]["x"], pts[i+1]["y"]))
+            lengths[r["id"]] = length
+        return lengths
+
     def _compute_distances(self) -> Dict[Tuple[str, str], float]:
         """Distanza euclidea normalizzata tra coppie di intersezioni vicine."""
         positions = {}
@@ -306,6 +319,7 @@ class CityFlowEnv:
             self.engine.set_tl_phase(iid, phase)
             self.current_phase[iid] = phase
 
+        incoming_t0 = self._get_incoming_vehicles_ids()
         old_vehicles = set(self.engine.get_vehicles(include_waiting=True))
 
         # Esegui GREEN_TIME secondi di simulazione verde
@@ -347,9 +361,11 @@ class CityFlowEnv:
                 self.arrived_tt.append(tt)
                 del self.spawn_times[veh]
 
+        incoming_t1 = self._get_incoming_vehicles_ids()
+
         # Calcola stati, reward, e done
         observations = self._get_observations()
-        rewards = self._compute_rewards()
+        rewards = self._compute_rewards(incoming_t0, incoming_t1)
         done = self._is_done()
 
         info = {
@@ -382,15 +398,19 @@ class CityFlowEnv:
             wait_vec = np.zeros(N_LANES, dtype=np.float32)
             
             for k, lane_id in enumerate(lanes[:N_LANES]):
+                if lane_id.startswith("missing_"):
+                    continue
+                road_id = "_".join(lane_id.split("_")[:-1])
+                cutoff = max(0.0, self.road_lengths.get(road_id, 340.0) - 167.0)
                 vehicles = lane_vehicles.get(lane_id, [])
                 
                 veicoli_vicini = 0
                 max_wt = 0.0
                 
                 for veh in vehicles:
-                    # Filtriamo solo i veicoli a <= 167m dal semaforo (avendo la strada lunga ~340m, consideriamo dist >= 173m)
                     dist = vehicle_distances.get(veh, 0.0)
-                    if dist >= 173.0:
+                    # Filtriamo solo i veicoli vicini al semaforo
+                    if dist >= cutoff:
                         veicoli_vicini += 1
                         
                         wt = self.vehicle_wait_times.get(veh, 0.0)
@@ -412,37 +432,48 @@ class CityFlowEnv:
 
         return observations
 
-    def _compute_rewards(self) -> Dict[str, float]:
+    def _get_incoming_vehicles_ids(self) -> Dict[str, set]:
+        """Restituisce per ogni intersezione il set di ID dei veicoli in ingresso (nel raggio visivo)."""
+        lane_vehicles = self.engine.get_lane_vehicles()
+        vehicle_distances = self.engine.get_vehicle_distance()
+        incoming_ids = {iid: set() for iid in self.inter_ids}
+        
+        for iid in self.inter_ids:
+            lanes = self.inter_lanes.get(iid, [])
+            for l in lanes:
+                if l.startswith("missing_"):
+                    continue
+                road_id = "_".join(l.split("_")[:-1])
+                cutoff = max(0.0, self.road_lengths.get(road_id, 340.0) - 167.0)
+                for veh in lane_vehicles.get(l, []):
+                    if vehicle_distances.get(veh, 0.0) >= cutoff:
+                        incoming_ids[iid].add(veh)
+        return incoming_ids
+
+    def _compute_rewards(self, incoming_t0: Dict[str, set] = None, incoming_t1: Dict[str, set] = None) -> Dict[str, float]:
         """
-        Calcola il reward per ogni intersezione basato sulla Weighted Pressure.
-        Pressure = Somma(veicoli in ingresso) - Somma(veicoli in uscita)
-        Reward = -Pressure - (alpha * max_red_wait_time)
-        Nota: la pressure è posta in negativo per penalizzare incroci congestionati.
+        Calcola il reward per ogni intersezione basato sul Throughput reale e i veicoli in attesa.
+        Reward = Passed - Incoming - (alpha * max_red_wait_time)
+        Dove:
+         - Passed: Veicoli presenti al tempo t che non sono più nelle corsie in ingresso al tempo t+1.
+         - Incoming: Veicoli in ingresso al tempo t.
         """
+        if incoming_t0 is None or incoming_t1 is None:
+            # Fallback se chiamato fuori da step (es. in init, anche se non succede)
+            return {iid: 0.0 for iid in self.inter_ids}
+
         lane_vehicles = self.engine.get_lane_vehicles()
         vehicle_distances = self.engine.get_vehicle_distance()
         rewards = {}
 
         for iid in self.inter_ids:
             lanes = self.inter_lanes.get(iid, [])
-            out_lanes = self._get_outgoing_lanes(iid)
             
-            # Calcolo Pressione "Corta": filtriamo i veicoli vicini (167m)
-            in_count = 0
-            for l in lanes:
-                for veh in lane_vehicles.get(l, []):
-                    # Corsia in ingresso: il semaforo è alla fine (dist >= 173m)
-                    if vehicle_distances.get(veh, 0.0) >= 173.0:
-                        in_count += 1
-                        
-            out_count = 0
-            for l in out_lanes:
-                for veh in lane_vehicles.get(l, []):
-                    # Corsia in uscita: il semaforo è all'inizio (dist <= 167m)
-                    if vehicle_distances.get(veh, 0.0) <= 167.0:
-                        out_count += 1
+            in_t0 = incoming_t0.get(iid, set())
+            in_t1 = incoming_t1.get(iid, set())
             
-            pressure = in_count - out_count
+            passed = len(in_t0 - in_t1)
+            incoming = len(in_t0)
             
             current_phase = self.current_phase[iid]
             green_lanes = GREEN_LANES_PER_PHASE.get(current_phase, [])
@@ -450,22 +481,23 @@ class CityFlowEnv:
             max_red_wait_time = 0.0
             for k, lane_id in enumerate(lanes[:N_LANES]):
                 if k not in green_lanes:
+                    if lane_id.startswith("missing_"):
+                        continue
+                    road_id = "_".join(lane_id.split("_")[:-1])
+                    cutoff = max(0.0, self.road_lengths.get(road_id, 340.0) - 167.0)
                     vehicles = lane_vehicles.get(lane_id, [])
                     for veh in vehicles:
-                        # Consideriamo il wait time solo per le auto vicine al semaforo (dist >= 173m)
-                        if vehicle_distances.get(veh, 0.0) >= 173.0:
+                        # Consideriamo il wait time solo per le auto vicine al semaforo
+                        if vehicle_distances.get(veh, 0.0) >= cutoff:
                             wt = self.vehicle_wait_times.get(veh, 0.0)
                             if wt > max_red_wait_time:
                                 max_red_wait_time = wt
                             
-            # Formula implementata: -Pressure - (alpha * max_red_wait_time)
-            raw_reward = -float(pressure) - (self.alpha * max_red_wait_time)
+            # Formula: Passed - Incoming - (alpha * max_red_wait_time)
+            raw_reward = float(passed) - float(incoming) - (self.alpha * max_red_wait_time)
             
             # NORMALIZZAZIONE:
-            # Poiché l'episodio dura 1800 secondi (maxStep=1800), il max_red_wait_time teorico è 1800.
-            # Con alpha = 0.5, il termine di penalità può raggiungere circa -900.
-            # Sommando la pressione (es. ~100), il raw_reward può arrivare a -1000.
-            # Dividiamo per 100.0 per riportare il reward in un range gestibile dalla rete (es. da -10 a 0).
+            # Dividiamo per 100.0 per riportare il reward in un range gestibile dalla rete (es. da -10 a +5).
             normalized_reward = raw_reward / 100.0
             
             # CLIPPING di sicurezza contro picchi anomali

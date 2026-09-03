@@ -302,7 +302,7 @@ def evaluate(args):
     os.makedirs(output_dir, exist_ok=True)
     
     if len(baseline_results) > 1:
-        plot_baseline_comparison(baseline_results, output_dir)
+        plot_baseline_comparison(baseline_results, output_dir, os.path.basename(args.config))
 
     # Salva i risultati
     output_dir = args.output or os.path.dirname(args.checkpoint or "results/test")
@@ -321,7 +321,7 @@ def evaluate(args):
         bars = plt.bar(phases, percentages, color='skyblue', edgecolor='black')
         plt.xlabel('Fase Semaforica (Indice)')
         plt.ylabel('Percentuale di Scelta (%)')
-        plt.title(f'Distribuzione Fasi - {args.model}')
+        plt.title(f'Distribuzione Fasi - {args.model}\nConfig: {os.path.basename(args.config)}')
         plt.xticks(phases)
         
         for bar, perc in zip(bars, percentages):
@@ -346,7 +346,7 @@ def evaluate(args):
 
 
 
-def plot_baseline_comparison(results_dict, output_dir):
+def plot_baseline_comparison(results_dict, output_dir, config_name=None):
     """
     results_dict: dict { "ModelName": (avg_tt, avg_tp) }
     """
@@ -355,7 +355,11 @@ def plot_baseline_comparison(results_dict, output_dir):
     tps = [results_dict[m][1] for m in models]
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
-    fig.suptitle("Confronto Modelli — Valutazione Finale", fontsize=14, fontweight='bold')
+    
+    title = "Confronto Modelli — Valutazione Finale"
+    if config_name:
+        title += f"\nConfig: {config_name}"
+    fig.suptitle(title, fontsize=14, fontweight='bold')
 
     colors = ['steelblue', 'mediumseagreen', 'orchid', 'coral', 'gold']
     

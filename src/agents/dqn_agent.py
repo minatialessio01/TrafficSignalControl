@@ -70,8 +70,8 @@ class DQNAgent:
                  gamma: float = 0.85,
                  epsilon_start: float = 0.9,
                  epsilon_end: float = 0.01,
-                 epsilon_decay: float = 0.80,  # ε: 0.9→0.01 intorno all'episodio 20
-                 buffer_size: int = 3000,
+                 epsilon_decay: float = 0.7985,  # ε: 0.9→0.01 in 20 episodi
+                 buffer_size: int = 2400,
                  batch_size: int = 16,
                  seq_len: int = 8,
                  burn_in: int = 4,
@@ -83,8 +83,7 @@ class DQNAgent:
         self.n_actions = n_actions
         self.gamma = gamma
         self.epsilon_start = epsilon_start
-        self.base_epsilon = epsilon_start
-        self.epsilon = 1.0  # primi 10 episodi pura esplorazione
+        self.epsilon = epsilon_start
         self.epsilon_end = epsilon_end
         self.epsilon_decay = epsilon_decay
         self.batch_size = batch_size
@@ -240,23 +239,6 @@ class DQNAgent:
         Returns:
             loss media dell'episodio, o None se buffer insufficiente
         """
-        # Non si allena per i primi 10 episodi
-        if self.total_episodes < 10:
-            # Assicuriamoci che l'episodio venga segnato come terminato per il buffer,
-            # anche se non eseguiamo l'update (normalmente il chiamante gestisce l'end_episode,
-            # ma qui gestiamo solo il return anticipato)
-            self.total_episodes += 1
-            # Mantieni epsilon a 1 per i primi 10 episodi
-            if self.total_episodes < 10:
-                self.epsilon = 1.0
-                self.base_epsilon = self.epsilon_start
-            else:
-                # Al raggiungimento dell'episodio 11, prepara l'epsilon iniziale
-                if (self.total_episodes + 1) % 5 == 0:
-                    self.epsilon = 1.0
-                else:
-                    self.epsilon = self.base_epsilon
-            return None
 
         # Min size rimosso come vincolo rigido per i primi episodi (ci pensa il controllo < 10)
         # Ma verifichiamo comunque che ci siano sequenze valide.
@@ -376,14 +358,8 @@ class DQNAgent:
 
         self.total_episodes += 1
         
-        # Decay base_epsilon dopo l'episodio di allenamento
-        self.base_epsilon = max(self.epsilon_end, self.base_epsilon * self.epsilon_decay)
-        
-        # Logica di esplorazione ciclica per il prossimo episodio
-        if (self.total_episodes + 1) % 5 == 0:
-            self.epsilon = 1.0  # Pura esplorazione (ciclica)
-        else:
-            self.epsilon = self.base_epsilon
+        # Decay semplice di epsilon dopo l'episodio di allenamento
+        self.epsilon = max(self.epsilon_end, self.epsilon * self.epsilon_decay)
 
         return total_loss / n_updates
 

@@ -51,14 +51,14 @@ DEFAULTS = {
     "batch_size":          20,     # batch size (paper: 20)
     "gamma":               0.85,   # discount factor (paper: 0.85)
     "lr":                  1e-3,   # learning rate (non spec. → 1e-3)
-    "buffer_size":         3_000,  # replay buffer (modificato per limitarlo a 3000 come richiesto)
+    "buffer_size":         2_400,  # replay buffer (modificato per limitarlo a 2400 come richiesto)
     "min_buffer_size":     1_000,  # minimum size prima del training (paper: 1,000)
     "hidden_dim":          64,     # hidden dim (non spec. → 64)
     "num_heads":           4,      # teste attenzione (Fig. 10b → 4)
     "num_neighbors":       4,      # vicini (Fig. 10a → 4)
     "epsilon_start":       0.9,    # epsilon iniziale (non spec. → 0.9)
     "epsilon_end":         0.01,   # epsilon finale (non spec. → 0.01)
-    "epsilon_decay":       0.95,   # decay per episodio (aumentato per favorire esplorazione)
+    "epsilon_decay":       0.7985, # decay per episodio (raggiunge 0.01 in 20 episodi)
     "history_len":         5,      # lunghezza storico TMK (non spec. → 5)
     "checkpoint_interval": 10,     # salva ogni N episodi (non spec. → 10)
 }
@@ -181,7 +181,7 @@ def generate_comparison_plots(args, env, rl_agent, edge_index, logger):
 
     # ── Grafico 1: curve di training ──────────────────────────────────────────
     fig, axes = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
-    fig.suptitle(f"Training Progress — {args.model}", fontsize=14, fontweight="bold")
+    fig.suptitle(f"Training Progress — {args.model}\nConfig: {os.path.basename(args.config)}", fontsize=14, fontweight="bold")
 
     # Travel Time
     ax = axes[0]
@@ -261,8 +261,10 @@ def run_training(args):
     
     # ── Salva configurazione e iperparametri ──────────────────────────────────
     config_out = os.path.join(args.output, "training_config.json")
+    save_data = vars(args).copy()
+    save_data["buffer_size"] = DEFAULTS["buffer_size"]
     with open(config_out, "w") as f:
-        json.dump(vars(args), f, indent=4)
+        json.dump(save_data, f, indent=4)
 
     print(f"[Config] Device: {device}")
     print(f"[Config] Modello: {args.model}")
@@ -346,10 +348,7 @@ def run_training(args):
 
     training_start_time = time.time()  # per il calcolo dell'ETA
 
-    # ── Loop di training principale (Algorithm 1) ────────────────────────────
-    for episode in range(start_episode + 1, end_episode + 1):
-
-        # ── Raccolta dati dell'episodio (Algorithm 1, line 4-8) ───────────
+    def run_episode():
         obs = env.reset()
         agent.reset_hidden()
         ep_metrics = EpisodeMetrics()
@@ -421,6 +420,24 @@ def run_training(args):
 
         # ── Chiusura Traiettoria ───────────────────────────────────────────────
         agent.replay_buffer.end_episode()
+        return ep_metrics
+
+
+    # === FASE DI WARM-UP ===
+    if start_episode == 0:
+        print("\n=== FASE DI WARM-UP (10 episodi casuali per riempire il buffer) ===")
+        agent.epsilon = 1.0
+        for w_ep in range(1, 11):
+            run_episode()
+            print(f"  Warm-up Ep {w_ep}/10 completato. (Buffer size: {len(agent.replay_buffer)})")
+        agent.epsilon = args.epsilon_start
+        print("=== FINE WARM-UP ===\n")
+
+    # ── Loop di training principale (Algorithm 1) ────────────────────────────
+    for episode in range(start_episode + 1, end_episode + 1):
+
+        # ── Raccolta dati dell'episodio (Algorithm 1, line 4-8) ───────────
+        ep_metrics = run_episode()
         
         # Salva l'epsilon attuale prima che agent.update lo modifichi per il prossimo episodio
         epsilon_used = getattr(agent, 'epsilon', 0.0)
@@ -506,6 +523,15 @@ def run_training(args):
             is_best=is_best,
             eta_str=eta_str
         )
+
+        # ── Episodio Random Periodico ──────────────────────────────────────
+        if episode % 10 == 0 and episode < args.episodes:
+            print(f"\n[!] Esecuzione di 1 episodio random (senza aggiornamento pesi) per esplorazione...")
+            old_epsilon = agent.epsilon
+            agent.epsilon = 1.0
+            run_episode()
+            agent.epsilon = old_epsilon
+            print(f"[!] Episodio random completato. Epsilon ripristinato a {agent.epsilon:.4f}\n")
 
         # ── Interruzione per Ctrl+C ────────────────────────────────────────
         if logger.interrupted:
