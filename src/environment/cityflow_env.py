@@ -492,9 +492,12 @@ class CityFlowEnv:
                             wt = self.vehicle_wait_times.get(veh, 0.0)
                             if wt > max_red_wait_time:
                                 max_red_wait_time = wt
+            wasted_green_penalty = 0.0
+            if passed == 0 and incoming > 0:
+                wasted_green_penalty = 50.0  # Penalità esplicita per aver dato il verde a una corsia vuota mentre c'è traffico altrove
                             
-            # Formula: Passed - Incoming - (alpha * max_red_wait_time)
-            raw_reward = float(passed) - float(incoming) - (self.alpha * max_red_wait_time)
+            # Formula: Passed - Incoming - (alpha * max_red_wait_time) - wasted_green_penalty
+            raw_reward = float(passed) - float(incoming) - (self.alpha * max_red_wait_time) - wasted_green_penalty
             
             # NORMALIZZAZIONE:
             # Dividiamo per 100.0 per riportare il reward in un range gestibile dalla rete (es. da -10 a +5).
