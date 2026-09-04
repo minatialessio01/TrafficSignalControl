@@ -131,6 +131,7 @@ class CityFlowEnv:
         # Stato corrente
         self.current_step = 0
         self.current_phase = {iid: 0 for iid in self.inter_ids}
+        self.consecutive_phases = {iid: 0 for iid in self.inter_ids}
 
         # Statistiche episodio
         self.episode_travel_times = []
@@ -289,6 +290,7 @@ class CityFlowEnv:
         self.engine.reset()
         self.current_step = 0
         self.current_phase = {iid: 0 for iid in self.inter_ids}
+        self.consecutive_phases = {iid: 0 for iid in self.inter_ids}
         self.episode_travel_times = []
         self.episode_throughput = 0
         
@@ -316,6 +318,10 @@ class CityFlowEnv:
         """
         # Imposta i semafori per ogni intersezione
         for iid, phase in actions.items():
+            if self.current_phase[iid] == phase:
+                self.consecutive_phases[iid] += 1
+            else:
+                self.consecutive_phases[iid] = 1
             self.engine.set_tl_phase(iid, phase)
             self.current_phase[iid] = phase
 
@@ -647,7 +653,21 @@ class CityFlowEnv:
         if total_vehicles == 0:
             return 0.0
             
-        return total_tt / total_vehicles
+        return float(total_tt / total_vehicles)
+
+    def get_invalid_actions(self) -> Dict[str, List[int]]:
+        """
+        Ritorna una maschera delle azioni non valide (fasi scelte più di 2 volte consecutive).
+        """
+        invalid_actions = {}
+        for iid, phase in self.current_phase.items():
+            # Se la fase corrente è stata scelta già 2 volte consecutive (quindi è al suo 2° o più turno),
+            # non può essere scelta una terza volta
+            if self.consecutive_phases.get(iid, 0) >= 2:
+                invalid_actions[iid] = [phase]
+            else:
+                invalid_actions[iid] = []
+        return invalid_actions
 
     def get_original_average_travel_time(self) -> float:
         """Travel time medio originale di CityFlow (solo arrivati)."""

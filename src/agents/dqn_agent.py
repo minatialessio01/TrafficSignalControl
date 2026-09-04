@@ -127,6 +127,7 @@ class DQNAgent:
                        inter_id_to_idx: Dict[str, int],
                        spatial_meta: Optional[Dict[str, np.ndarray]] = None,
                        temporal_meta: Optional[Dict[str, np.ndarray]] = None,
+                       invalid_actions: Optional[Dict[str, List[int]]] = None
                        ) -> Dict[str, int]:
         """
         Seleziona le azioni per tutte le intersezioni con epsilon-greedy.
@@ -138,6 +139,7 @@ class DQNAgent:
             inter_id_to_idx: mappa id -> indice
             spatial_meta:  {inter_id -> spatial_meta_features} (MetaSTGAT)
             temporal_meta: {inter_id -> temporal_meta_features} (MetaSTGAT)
+            invalid_actions: maschera {inter_id -> list_of_invalid_phases}
 
         Returns:
             {inter_id -> phase_index}
@@ -179,10 +181,21 @@ class DQNAgent:
         # Epsilon-greedy
         actions = {}
         for idx, iid in enumerate(inter_ids):
+            invalids = invalid_actions.get(iid, []) if invalid_actions else []
+            valid_list = [a for a in range(self.n_actions) if a not in invalids]
+            
+            # Se tutte le azioni sono invalide (non dovrebbe succedere), ripiega su fallback
+            if not valid_list:
+                valid_list = list(range(self.n_actions))
+                invalids = []
+            
             if random.random() < self.epsilon:
-                actions[iid] = random.randint(0, self.n_actions - 1)
+                actions[iid] = random.choice(valid_list)
             else:
-                actions[iid] = int(q_values[idx].argmax().item())
+                q_vals = q_values[idx].clone()
+                for inv in invalids:
+                    q_vals[inv] = -float('inf')
+                actions[iid] = int(q_vals.argmax().item())
 
         return actions
 

@@ -382,6 +382,7 @@ def run_training(args):
                 inter_id_to_idx=env.inter_id_to_idx,
                 spatial_meta=spatial_meta,
                 temporal_meta=temporal_meta,
+                invalid_actions=env.get_invalid_actions()
             )
 
             # Esegui step nell'ambiente
