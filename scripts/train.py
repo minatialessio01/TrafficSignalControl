@@ -73,8 +73,9 @@ def parse_args():
     # ── Configurazione obbligatoria ─────────────────────────────────────────
     parser.add_argument("--config", type=str, default="configs/benchmark_config.json",
                         help="Path al file config.json di CityFlow")
+    # [LIBSIGNAL ADDITION: Aggiunto CoLight alle scelte]
     parser.add_argument("--model", default="MetaSTGAT",
-                        choices=["MetaSTGAT", "STGAT", "FixedTime"],
+                        choices=["MetaSTGAT", "STGAT", "FixedTime", "CoLight"],
                         help="Modello da allenare")
     parser.add_argument("--output", default="auto",
                         help="Directory di output per checkpoint e log. "
@@ -306,20 +307,30 @@ def run_training(args):
     print(f"[Env] Actions: {env.action_space_n}")
 
     # ── Costruisci modello e agente ─────────────────────────────────────────
-    model = build_model(args, env)
-    agent = DQNAgent(
-        model=model,
-        n_intersections=env.n_intersections,
-        n_actions=env.action_space_n,
-        lr=args.lr,
-        gamma=args.gamma,
-        epsilon_start=args.epsilon_start,
-        epsilon_end=args.epsilon_end,
-        epsilon_decay=args.epsilon_decay,
-        buffer_size=DEFAULTS["buffer_size"],
-        batch_size=args.batch_size,
-        device=device,
-    )
+    # [LIBSIGNAL ADDITION: Gestione specifica per l'agente CoLight]
+    if args.model == "CoLight":
+        from src.agents.colight_agent import CoLightWrapperAgent
+        agent = CoLightWrapperAgent(
+            n_intersections=env.n_intersections,
+            n_actions=env.action_space_n,
+            lr=args.lr,
+            device=device
+        )
+    else:
+        model = build_model(args, env)
+        agent = DQNAgent(
+            model=model,
+            n_intersections=env.n_intersections,
+            n_actions=env.action_space_n,
+            lr=args.lr,
+            gamma=args.gamma,
+            epsilon_start=args.epsilon_start,
+            epsilon_end=args.epsilon_end,
+            epsilon_decay=args.epsilon_decay,
+            buffer_size=DEFAULTS["buffer_size"],
+            batch_size=args.batch_size,
+            device=device,
+        )
 
     # ── Logger ─────────────────────────────────────────────────────────────
     run_name = f"{args.model}_{os.path.basename(args.config).replace('.json', '')}"

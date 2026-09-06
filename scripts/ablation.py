@@ -47,6 +47,7 @@ def parse_args():
     parser.add_argument("--hidden-dim",    type=int, default=64)
     parser.add_argument("--num-heads",     type=int, default=4)
     parser.add_argument("--num-neighbors", type=int, default=4)
+    parser.add_argument("--epsilon-decay", type=float, default=0.995)
     parser.add_argument("--device", default=None)
     return parser.parse_args()
 
@@ -197,7 +198,8 @@ class MetaLSTMModel(nn.Module):
 def train_variant(model_name: str, model: nn.Module, env: CityFlowEnv,
                   edge_index: torch.Tensor, device: torch.device,
                   episodes: int, output_dir: str,
-                  is_meta: bool = False) -> dict:
+                  is_meta: bool = False,
+                  epsilon_decay: float = 0.995) -> dict:
     """Allena una variante del modello e restituisce le metriche finali."""
     print(f"\n{'─'*50}")
     print(f"  Training: {model_name} ({episodes} episodi)")
@@ -207,14 +209,14 @@ def train_variant(model_name: str, model: nn.Module, env: CityFlowEnv,
         model=model,
         n_intersections=env.n_intersections,
         device=device,
+        epsilon_decay=epsilon_decay
     )
     # Forza il flag is_meta in base al tipo
     agent.is_meta = is_meta
 
     running = RunningMetrics(window=10)
     history_len = 5
-
-    for episode in range(1, episodes + 1):
+    def run_episode():
         obs = env.reset()
         agent.reset_hidden()
         state_history = {iid: [] for iid in env.inter_ids}
@@ -230,7 +232,8 @@ def train_variant(model_name: str, model: nn.Module, env: CityFlowEnv,
             actions = agent.select_actions(
                 states=obs, edge_index=edge_index,
                 inter_ids=env.inter_ids, inter_id_to_idx=env.inter_id_to_idx,
-                spatial_meta=spatial_meta, temporal_meta=temporal_meta
+                spatial_meta=spatial_meta, temporal_meta=temporal_meta,
+                invalid_actions=env.get_invalid_actions()
             )
             next_obs, rewards, done, info = env.step(actions)
             agent.store_transitions(
@@ -242,6 +245,19 @@ def train_variant(model_name: str, model: nn.Module, env: CityFlowEnv,
                 if len(state_history[iid]) > history_len:
                     state_history[iid].pop(0)
             obs = next_obs
+        
+        agent.replay_buffer.end_episode()
+            
+    print("\n=== FASE DI WARM-UP (10 episodi casuali per riempire il buffer) ===")
+    old_eps = agent.epsilon
+    agent.epsilon = 1.0
+    for w_ep in range(1, 11):
+        run_episode()
+    agent.epsilon = old_eps
+    print("=== FINE WARM-UP ===\n")
+
+    for episode in range(1, episodes + 1):
+        run_episode()
 
         agent.update(edge_index, n_updates=100, min_buffer_size=100)
         tt = env.get_average_travel_time()
@@ -251,6 +267,15 @@ def train_variant(model_name: str, model: nn.Module, env: CityFlowEnv,
         if episode % 10 == 0 or episode == episodes:
             print(f"    Ep {episode:>4}: TT={tt:.1f}s | TP={tp} | "
                   f"ε={agent.epsilon:.4f}")
+
+        # ── Episodio Random Periodico ──────────────────────────────────────
+        if episode % 10 == 0 and episode < episodes:
+            print(f"    [!] Esecuzione di 1 episodio random per esplorazione...")
+            old_epsilon = agent.epsilon
+            agent.epsilon = 1.0
+            run_episode()
+            agent.epsilon = old_epsilon
+            print(f"    [!] Episodio random completato.")
 
     result = {
         "model": model_name,
@@ -293,7 +318,8 @@ def run_ablation(args):
         model = model.to(device)
         result = train_variant(
             name, model, env, edge_index, device,
-            args.episodes, args.output, is_meta
+            args.episodes, args.output, is_meta,
+            epsilon_decay=args.epsilon_decay
         )
         results.append(result)
         print(f"  [{name}] TT={result['avg_travel_time']}s | TP={result['avg_throughput']}")

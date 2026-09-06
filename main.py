@@ -13,8 +13,9 @@ def main():
     # Argomenti principali per l'orchestratore
     parser.add_argument("--config", type=str, required=True, 
                         help="Percorso al file config.json di CityFlow")
+    # [LIBSIGNAL ADDITION: Aggiunto CoLight alle scelte]
     parser.add_argument("--model", type=str, default="MetaSTGAT", 
-                        choices=["MetaSTGAT", "STGAT", "FixedTime"],
+                        choices=["MetaSTGAT", "STGAT", "FixedTime", "CoLight"],
                         help="Modello da usare")
     parser.add_argument("--episodes", type=int, default=100, 
                         help="Numero totale di episodi di training")
