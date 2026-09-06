@@ -34,6 +34,7 @@ class MetaKnowledgeLearner(nn.Module):
         self.fc1 = nn.Linear(input_dim, hidden_dim)
         self.fc2 = nn.Linear(hidden_dim, output_dim)
         self.activation = nn.ReLU()
+        self.out_activation = nn.Tanh()
 
     def forward(self, features: torch.Tensor) -> torch.Tensor:
         """
@@ -44,7 +45,9 @@ class MetaKnowledgeLearner(nn.Module):
             meta_knowledge: (batch, output_dim)
         """
         h = self.activation(self.fc1(features))
-        out = self.activation(self.fc2(h))
+        # Utilizziamo Tanh per l'ultimo layer così da mappare l'embedding 
+        # nel range [-1, 1], preservando informazioni e direzionalità.
+        out = self.out_activation(self.fc2(h))
         return out
 
 

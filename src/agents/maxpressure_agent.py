@@ -59,6 +59,7 @@ class MaxPressureAgent:
     def select_actions(self,
                        states: Dict[str, np.ndarray],
                        inter_ids: List[str],
+                       env=None,
                        **kwargs) -> Dict[str, int]:
         """
         Seleziona la fase con pressione massima per ogni intersezione.
@@ -79,11 +80,21 @@ class MaxPressureAgent:
             obs = states[iid]
             n_vec = obs[:12].astype(float)   # conteggi corsie in ingresso
 
-            # Pressione per ogni fase = somma veicoli sulle corsie attivate
-            pressures = [
-                float(np.sum(n_vec[lanes]))
-                for lanes in self._phase_lanes
-            ]
+            # 2.5 Calcolo effettivo della pressione: P = n_in - n_out
+            if env is not None:
+                out_count = env._get_outgoing_vehicles_count(iid)
+                out_lanes_count = max(1, len(env._get_outgoing_lanes(iid)))
+                avg_out = out_count / out_lanes_count
+                
+                pressures = [
+                    float(np.sum(n_vec[lanes])) - len(lanes) * avg_out
+                    for lanes in self._phase_lanes
+                ]
+            else:
+                pressures = [
+                    float(np.sum(n_vec[lanes]))
+                    for lanes in self._phase_lanes
+                ]
 
             # In caso di parità, manteniamo la fase con indice minore (stabile)
             actions[iid] = int(np.argmax(pressures))

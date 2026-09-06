@@ -152,9 +152,12 @@ class DQNAgent:
             dtype=torch.float32, device=self.device
         )
 
-        # FIX: Azzera sempre l'hidden state per far combaciare l'esecuzione con l'addestramento
-        # (visto che nel training il replay buffer fornisce sample casuali con h=0)
-        self.h_state, self.c_state = self.model.init_hidden(N, self.device)
+        # Inizializza h solo al primo step dell'episodio (quando reset_hidden() ha posto h=None).
+        # Negli step successivi h porta avanti la memoria accumulata dall'LSTM.
+        # Nel training, la mancanza del vero h iniziale nelle sequenze del buffer
+        # viene compensata dal burn-in (primi burn_in step senza gradiente).
+        if self.h_state is None or self.h_state.size(0) != N:
+            self.h_state, self.c_state = self.model.init_hidden(N, self.device)
 
         # Forward pass
         if self.is_meta:
@@ -200,7 +203,9 @@ class DQNAgent:
         return actions
 
     def reset_hidden(self):
-        """Resetta gli stati nascosti LSTM (all'inizio di ogni episodio)."""
+        """Resetta gli stati nascosti LSTM (chiamato all'inizio di ogni episodio).
+        Impostare h=None forza l'inizializzazione a zero al primo step del nuovo episodio.
+        """
         self.h_state = None
         self.c_state = None
 
@@ -288,9 +293,15 @@ class DQNAgent:
             # Inizializza hidden states LSTM a zero (inizio sequenza)
             h_b = torch.zeros(B * N, self.model.hidden_dim, device=self.device)
             c_b = torch.zeros(B * N, self.model.hidden_dim, device=self.device)
-            
+
+            # Target network sui next states (Double DQN: valutazione Q)
             h_target = torch.zeros(B * N, self.model.hidden_dim, device=self.device)
             c_target = torch.zeros(B * N, self.model.hidden_dim, device=self.device)
+
+            # Rete online sui next states (Double DQN: selezione azione)
+            # Separata da h_b perché viene applicata a nst, non a st
+            h_online_next = torch.zeros(B * N, self.model.hidden_dim, device=self.device)
+            c_online_next = torch.zeros(B * N, self.model.hidden_dim, device=self.device)
 
             q_preds_valid = []
             q_targets_valid = []
@@ -312,23 +323,39 @@ class DQNAgent:
                         if self.is_meta:
                             _, h_b, c_b = self.model(st, batch_edge_index, sm_t, tm_t, h_b, c_b)
                             _, h_target, c_target = self.target_model(nst, batch_edge_index, sm_t, tm_t, h_target, c_target)
+                            _, h_online_next, c_online_next = self.model(nst, batch_edge_index, sm_t, tm_t, h_online_next, c_online_next)
                         else:
                             _, h_b, c_b = self.model(st, batch_edge_index, h_b, c_b)
                             _, h_target, c_target = self.target_model(nst, batch_edge_index, h_target, c_target)
+                            _, h_online_next, c_online_next = self.model(nst, batch_edge_index, h_online_next, c_online_next)
                 else:
-                    # Training phase
+                    # Training phase — Double DQN (van Hasselt et al., AAAI 2016)
+                    # Rete online con gradienti (sui current states st)
                     if self.is_meta:
                         q_pred, h_b, c_b = self.model(st, batch_edge_index, sm_t, tm_t, h_b, c_b)
                         with torch.no_grad():
-                            q_next, h_target, c_target = self.target_model(nst, batch_edge_index, sm_t, tm_t, h_target, c_target)
+                            # Rete online sui next states: seleziona l'azione migliore
+                            q_online_next, h_online_next, c_online_next = self.model(
+                                nst, batch_edge_index, sm_t, tm_t, h_online_next, c_online_next)
+                            # Target network valuta l'azione selezionata dalla rete online
+                            q_next, h_target, c_target = self.target_model(
+                                nst, batch_edge_index, sm_t, tm_t, h_target, c_target)
                     else:
                         q_pred, h_b, c_b = self.model(st, batch_edge_index, h_b, c_b)
                         with torch.no_grad():
-                            q_next, h_target, c_target = self.target_model(nst, batch_edge_index, h_target, c_target)
-                    
-                    q_target = rt + self.gamma * q_next.max(dim=-1).values
+                            q_online_next, h_online_next, c_online_next = self.model(
+                                nst, batch_edge_index, h_online_next, c_online_next)
+                            q_next, h_target, c_target = self.target_model(
+                                nst, batch_edge_index, h_target, c_target)
+
+                    # Double DQN: a* = argmax_{a} Q_online(s', a),  target = r + γ·Q_target(s', a*)
+                    # Riduce il bias di sovrastima del DQN classico
+                    best_next_actions = q_online_next.argmax(dim=-1, keepdim=True)  # (B*N, 1)
+                    q_next_value = q_next.gather(1, best_next_actions).squeeze(-1)  # (B*N,)
+
+                    q_target = rt + self.gamma * q_next_value
                     q_action = q_pred.gather(1, at.unsqueeze(-1)).squeeze(-1)
-                    
+
                     # Rimodella a (B, N)
                     q_preds_valid.append(q_action.view(B, N))
                     q_targets_valid.append(q_target.detach().view(B, N))

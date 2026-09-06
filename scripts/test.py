@@ -287,7 +287,7 @@ def evaluate(args):
             mp_agent.reset(mp_env.inter_ids)
             done = False
             while not done:
-                actions = mp_agent.select_actions(states=obs, inter_ids=mp_env.inter_ids)
+                actions = mp_agent.select_actions(states=obs, inter_ids=mp_env.inter_ids, env=mp_env)
                 obs, _, done, _ = mp_env.step(actions)
             mp_tt_list.append(mp_env.get_average_travel_time())
             mp_tp_list.append(mp_env.get_throughput())

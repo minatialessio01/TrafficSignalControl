@@ -47,7 +47,9 @@ def parse_args():
     parser.add_argument("--hidden-dim",    type=int, default=64)
     parser.add_argument("--num-heads",     type=int, default=4)
     parser.add_argument("--num-neighbors", type=int, default=4)
-    parser.add_argument("--epsilon-decay", type=float, default=0.995)
+    parser.add_argument("--epsilon-start", type=float, default=0.9)
+    parser.add_argument("--epsilon-end",   type=float, default=0.01)
+    parser.add_argument("--epsilon-decay", type=float, default=None)
     parser.add_argument("--device", default=None)
     return parser.parse_args()
 
@@ -57,6 +59,16 @@ class GATOnly(STGAT):
     Variante GAT-only: solo il modulo spaziale (CS), senza LSTM.
     L'hidden state LSTM è sempre zero → degrada a puro GAT.
     """
+    def __init__(self, state_dim, hidden_dim, num_heads, n_actions):
+        super().__init__(state_dim, hidden_dim, num_heads, n_actions)
+        # Fix 7.6: q_head specifico per GATOnly (input_dim = hidden_dim invece di hidden_dim * 2)
+        # per un confronto leale del numero di parametri.
+        self.q_head = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, n_actions)
+        )
+
     def forward(self, states, edge_index, h_prev=None, c_prev=None):
         N = states.size(0)
         device = states.device
@@ -73,10 +85,9 @@ class GATOnly(STGAT):
 
         # Solo modulo CS (spaziale)
         z_cs = self.cs_gat(query=e_j, key=e_j, value=e_j, edge_index=edge_index)
-        z_cst = torch.zeros_like(z_cs)
 
-        z = torch.cat([z_cst, z_cs], dim=-1)
-        q_values = self.q_head(z)
+        # q_head ora prende solo z_cs (dim=hidden_dim)
+        q_values = self.q_head(z_cs)
         return q_values, x_i, c_t
 
 
@@ -295,6 +306,11 @@ def run_ablation(args):
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
     env = CityFlowEnv(args.config, num_neighbors=args.num_neighbors)
     edge_index = env.get_edge_index().to(device)
+
+    # 5.3 & 3.2 Epsilon decay dinamico al 60% del training
+    if args.epsilon_decay is None:
+        eps_target_ep = max(1, int(0.6 * args.episodes))
+        args.epsilon_decay = (args.epsilon_end / args.epsilon_start) ** (1.0 / eps_target_ep)
 
     os.makedirs(args.output, exist_ok=True)
 

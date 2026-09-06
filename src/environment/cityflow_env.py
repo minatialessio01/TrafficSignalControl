@@ -354,17 +354,22 @@ class CityFlowEnv:
         self.current_step += 1
         current_time = self.current_step * STEP_TIME
         
+        # 2.2 Teleported vehicles bug: limit tt to reasonable bounds
+        MAX_PLAUSIBLE_TT = self.config.get("maxStep", float("inf")) * STEP_TIME
         new_vehicles = set(self.engine.get_vehicles(include_waiting=True))
         
+        # 2.1 Travel time offset bug: usa (current_step - 1) * STEP_TIME
+        spawn_time_for_this_step = (self.current_step - 1) * STEP_TIME
         for veh in new_vehicles:
             if veh not in self.spawn_times:
-                self.spawn_times[veh] = current_time
+                self.spawn_times[veh] = spawn_time_for_this_step
                 
         arrived_vehicles = old_vehicles - new_vehicles
         for veh in arrived_vehicles:
             if veh in self.spawn_times:
                 tt = current_time - self.spawn_times[veh]
-                self.arrived_tt.append(tt)
+                if tt <= MAX_PLAUSIBLE_TT:
+                    self.arrived_tt.append(tt)
                 del self.spawn_times[veh]
 
         incoming_t1 = self._get_incoming_vehicles_ids()
@@ -428,7 +433,7 @@ class CityFlowEnv:
                 wait_vec[k] = np.clip(max_wt / 100.0, 0.0, 1.0)
 
             # Normalizza il numero di veicoli
-            n_vec = np.clip(n_vec / 30.0, 0.0, 5.0)
+            n_vec = np.clip(n_vec / 30.0, 0.0, 1.0)
 
             # p_vec: fase corrente (one-hot)
             p_vec = np.zeros(N_PHASES, dtype=np.float32)
@@ -527,6 +532,19 @@ class CityFlowEnv:
                         out_lanes.append(lid)
         return out_lanes
 
+    def _get_outgoing_vehicles_count(self, inter_id: str) -> int:
+        """Restituisce il totale dei veicoli in uscita (entro 167m)."""
+        lane_vehicles = self.engine.get_lane_vehicles()
+        vehicle_distances = self.engine.get_vehicle_distance()
+        out_lanes = self._get_outgoing_lanes(inter_id)
+        count = 0
+        for lid in out_lanes:
+            for veh in lane_vehicles.get(lid, []):
+                # CityFlow distance is from start of road segment
+                if vehicle_distances.get(veh, 0.0) <= 167.0:
+                    count += 1
+        return count
+
     def _is_done(self) -> bool:
         """Controlla se la simulazione è terminata."""
         sim_time = self.current_step * STEP_TIME
@@ -552,9 +570,18 @@ class CityFlowEnv:
         # Lane pressure (veicoli per corsia, normalizzato)
         lane_pressure = np.zeros(N_LANES, dtype=np.float32)
         n_vehicles = np.zeros(N_LANES, dtype=np.float32)
+        out_count = self._get_outgoing_vehicles_count(inter_id)
+        avg_out = out_count / max(1.0, len(self._get_outgoing_lanes(inter_id)))
+
         for k, lid in enumerate(lanes[:N_LANES]):
-            count = len(lane_vehicles.get(lid, []))
-            lane_pressure[k] = count / 30.0
+            count = 0
+            if not lid.startswith("missing_"):
+                road_id = "_".join(lid.split("_")[:-1])
+                cutoff = max(0.0, self.road_lengths.get(road_id, 340.0) - 167.0)
+                for veh in lane_vehicles.get(lid, []):
+                    if self.engine.get_vehicle_distance().get(veh, 0.0) >= cutoff:
+                        count += 1
+            lane_pressure[k] = (count - avg_out) / 30.0
             n_vehicles[k] = count / 30.0
 
         # Distanze dai vicini (ordinate)
@@ -638,31 +665,19 @@ class CityFlowEnv:
 
     def get_average_travel_time(self) -> float:
         """
-        Calcola il travel time medio includendo SIA i veicoli arrivati
-        SIA i veicoli ancora bloccati nel traffico a fine simulazione.
+        Calcola il travel time medio includendo SOLO i veicoli arrivati a destinazione.
         """
-        total_tt = sum(self.arrived_tt)
-        total_vehicles = len(self.arrived_tt)
-        
-        current_time = self.current_step * STEP_TIME
-        
-        for veh, spawn_time in self.spawn_times.items():
-            total_tt += (current_time - spawn_time)
-            total_vehicles += 1
-            
-        if total_vehicles == 0:
+        if not self.arrived_tt:
             return 0.0
-            
-        return float(total_tt / total_vehicles)
+        return float(sum(self.arrived_tt) / len(self.arrived_tt))
 
     def get_invalid_actions(self) -> Dict[str, List[int]]:
         """
         Ritorna una maschera delle azioni non valide (fasi scelte più di 2 volte consecutive).
+        Vincolo applicato per qualunque configurazione/griglia di incroci.
         """
         invalid_actions = {}
         for iid, phase in self.current_phase.items():
-            # Se la fase corrente è stata scelta già 2 volte consecutive (quindi è al suo 2° o più turno),
-            # non può essere scelta una terza volta
             if self.consecutive_phases.get(iid, 0) >= 2:
                 invalid_actions[iid] = [phase]
             else:

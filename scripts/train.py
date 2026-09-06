@@ -285,6 +285,9 @@ def run_training(args):
     # DISABILITA IL REPLAY DURANTE IL TRAINING PER RISPARMIARE SPAZIO
     custom_config["saveReplay"] = False
     
+    # 6.1 Seed propagato al config json (per riproducibilità totale)
+    custom_config["seed"] = args.seed
+    
     base_dir = custom_config.get("dir", "./")
     
     # Calcola il percorso relativo da base_dir (es. data/) a args.output
@@ -318,6 +321,11 @@ def run_training(args):
         )
     else:
         model = build_model(args, env)
+        
+        # 3.2 Epsilon decay dinamico al 60% del training
+        eps_target_ep = max(1, int(0.6 * args.episodes))
+        eps_decay = (args.epsilon_end / args.epsilon_start) ** (1.0 / eps_target_ep)
+        
         agent = DQNAgent(
             model=model,
             n_intersections=env.n_intersections,
@@ -326,7 +334,7 @@ def run_training(args):
             gamma=args.gamma,
             epsilon_start=args.epsilon_start,
             epsilon_end=args.epsilon_end,
-            epsilon_decay=args.epsilon_decay,
+            epsilon_decay=eps_decay,
             buffer_size=DEFAULTS["buffer_size"],
             batch_size=args.batch_size,
             device=device,

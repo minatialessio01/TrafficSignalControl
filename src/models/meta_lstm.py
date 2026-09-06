@@ -137,8 +137,10 @@ class MetaLSTMCell(nn.Module):
         N = e_i.size(0)
         D_h = self.hidden_dim
 
-        # Concatena input e hidden state: [h_{t-1}, e_i] → (N, 2*D_h)
-        combined = torch.cat([h_prev, e_i], dim=-1)  # (N, 2*D_h)
+        # Concatena input e hidden state: [e_i, h_{t-1}] → (N, 2*D_h)
+        # Ordine standard: [input, hidden] — coerente con nn.LSTMCell di PyTorch
+        # e con la notazione del paper: LSTM(e_i^t, h_{t-1})
+        combined = torch.cat([e_i, h_prev], dim=-1)  # (N, 2*D_h)
 
         # Calcola i pre-gate per tutti e 4 i gate simultaneamente
         # W: (N, 4, 2*D_h, D_h)  →  per ogni gate: (N, 2*D_h, D_h)

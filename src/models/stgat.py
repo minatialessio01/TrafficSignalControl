@@ -41,8 +41,9 @@ class StandardGATLayer(nn.Module):
         super().__init__()
         self.hidden_dim = hidden_dim
         self.num_heads = num_heads
-        self.head_dim = hidden_dim
-        self.scale = math.sqrt(hidden_dim)
+        self.head_size = hidden_dim // num_heads
+        # Scala corretta: √(head_size), non √(hidden_dim) (Vaswani et al., 2017)
+        self.scale = math.sqrt(self.head_size)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self,
@@ -83,11 +84,10 @@ class StandardGATLayer(nn.Module):
             out_h.scatter_add_(0, dst.unsqueeze(-1).expand_as(weighted_V), weighted_V)
             attn_heads.append(out_h)
 
-        # Concatena / media le teste (il paper usa media: 1/H Σ_h)
-        out = torch.stack(attn_heads, dim=0).mean(dim=0)  # (N, head_size) → media
-        # (N.B.: con media delle teste head_size = hidden_dim // num_heads,
-        # per uniformità usiamo un output di dimensione hidden_dim)
-        return out.repeat(1, self.num_heads)[:, :self.hidden_dim]  # (N, hidden_dim)
+        # Concatena le teste (standard multi-head): ogni testa contribuisce con head_size
+        # dimensioni distinte → output totale = num_heads * head_size = hidden_dim
+        out = torch.cat(attn_heads, dim=-1)  # (N, hidden_dim)
+        return out
 
     @staticmethod
     def _edge_softmax(scores, dst, num_nodes):

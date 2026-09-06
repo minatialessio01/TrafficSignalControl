@@ -107,98 +107,83 @@ class MetaGATLayer(nn.Module):
         super().__init__()
         self.hidden_dim = hidden_dim
         self.num_heads = num_heads
-        self.head_dim = hidden_dim  # D_h (usiamo full dim per ogni testa)
+        
+        # d_h = D_h / H (es. 64 / 4 = 16)
+        head_size = hidden_dim // num_heads
+        self.head_size = head_size
         self.dropout = dropout
-        self.scale = math.sqrt(self.head_dim)
+        self.scale = math.sqrt(head_size)
 
-        # MetaDense per generare W e b dal meta-embedding (Eq. 14 o 16)
-        self.meta_dense = MetaDense(meta_dim, hidden_dim, hidden_dim)
-
-        # Proiezioni Q, K, V (opzionali: nell'articolo non sono menzionate
-        # proiezioni esplicite; usiamo proiezioni identità per H teste)
-        # Nota: il paper usa Q=e_j, K=x_i, V=x_i direttamente senza proiezione
-        # aggiuntiva — i pesi dinamici sono solo nel dot-product scaling
+        # Generatore di pesi dinamici (MetaDense, Eq. 14/16):
+        #   Meta-embedding → W_h per ogni testa (H × hs × hs) + b_h per testa (H)
+        #   Primo strato FC con ReLU, poi due head lineari per W e b
+        #   ("two-layer fully connected network", Section 4.3.1)
+        self.meta_fc1 = nn.Linear(meta_dim, hidden_dim)
+        self.meta_fc_W = nn.Linear(hidden_dim, num_heads * head_size * head_size)
+        self.meta_fc_b = nn.Linear(hidden_dim, num_heads)
 
         self.dropout_layer = nn.Dropout(dropout)
 
     def forward(self,
-                query: torch.Tensor,          # Q_i: (N, d1)  — e_j o e_j
-                key: torch.Tensor,             # K: (N, d1)    — x_i o e_j
-                value: torch.Tensor,           # V: (N, d1)    — x_i o e_j
+                query: torch.Tensor,          # Q_i: (N, d1)
+                key: torch.Tensor,             # K: (N, d1)
+                value: torch.Tensor,           # V: (N, d1)
                 edge_index: torch.Tensor,      # (2, E)
                 meta_embedding: torch.Tensor,  # SMK(i) o TMK(i): (N, meta_dim)
                 ) -> torch.Tensor:
         """
         Args:
-            query:          (N, d1)  — rappresentazione query per ogni nodo
-            key:            (N, d1)  — rappresentazione key per ogni nodo
-            value:          (N, d1)  — rappresentazione value per ogni nodo
-            edge_index:     (2, E)   — archi del grafo [src, dst]
-            meta_embedding: (N, meta_dim) — embedding meta-knowledge per ogni nodo
+            query:          (N, d1)
+            key:            (N, d1)
+            value:          (N, d1)
+            edge_index:     (2, E)
+            meta_embedding: (N, meta_dim)
 
         Returns:
             out: (N, d1) — aggregazione spaziale pesata dai vicini
         """
         N = query.size(0)
-        E = edge_index.size(1)
-        src, dst = edge_index[0], edge_index[1]  # dst ← src
+        src, dst = edge_index[0], edge_index[1]
 
-        # Genera i pesi dinamici per ogni nodo (Eq. 14 o 16)
-        W, b = self.meta_dense(meta_embedding)   # W: (N, D_h, d1), b: (N, 1)
+        # Genera i pesi dinamici per ogni nodo e per ogni testa (Eq. 14 o 16)
+        # m → W: (N, H, hs, hs)  e  b: (N, H)
+        m = F.relu(self.meta_fc1(meta_embedding))                          # (N, D_h)
+        W_flat = self.meta_fc_W(m)                                          # (N, H*hs*hs)
+        W = W_flat.view(N, self.num_heads, self.head_size, self.head_size)  # (N, H, hs, hs)
+        b = self.meta_fc_b(m)                                               # (N, H)
 
-        # ── Attention score (Eq. 15 o 17) ─────────────────────────────────────
-        # Per ogni arco (src → dst):
-        #   φ(Q_{dst}, K_{src}) = [W_{dst} · (Q_{dst} · K_{src}) + b_{dst}] / √D_h
-
-        Q_dst = query[dst]   # (E, d1)  — query del nodo destinazione
-        K_src = key[src]     # (E, d1)  — key del nodo sorgente (vicino)
-
-        # Dot-product scalare tra Q e K (senza proiezione separata per testa
-        # come nel paper originale, che usa la forma in Eq. 7)
-        # Aggregiamo le H teste come media (Eq. 9: 1/H Σ_h)
-        head_size = self.hidden_dim // self.num_heads
+        # ── Multi-head attention con pesi dinamici (Eq. 15/17) ─────────────
         attn_heads = []
 
         for h in range(self.num_heads):
-            start = h * head_size
-            end = start + head_size
+            start = h * self.head_size
+            end = start + self.head_size
 
-            Q_h = Q_dst[:, start:end]  # (E, head_size)
-            K_h = K_src[:, start:end]  # (E, head_size)
+            Q_h = query[dst, start:end]   # (E, head_size)
+            K_h = key[src, start:end]     # (E, head_size)
+            V_h = value[src, start:end]   # (E, head_size)
 
-            # Applica i pesi dinamici del meta-learner (Eq. 15/17)
-            # W_dst è (N, D_h, d1) → prendiamo la proiezione per questa testa
-            W_h = W[dst, start:end, start:end]   # (E, head_size, head_size)
-            
-            # Trasformiamo la query con la matrice dinamica W_h
-            Q_h_trans = (W_h @ Q_h.unsqueeze(-1)).squeeze(-1)  # (E, head_size)
-            
-            # Dot-product tra la query trasformata e la key
-            dot = (Q_h_trans * K_h).sum(dim=-1)  # (E,)
-            
-            # Scalatura e bias
-            dot_scaled = dot + b[dst].squeeze(-1)  # (E,)
-            dot_scaled = dot_scaled / self.scale  # / √D_h
-            
-            attn_heads.append(dot_scaled)
+            # Trasforma la query con la matrice dinamica W_h (Eq. 15/17)
+            W_h = W[dst, h, :, :]                                        # (E, hs, hs)
+            Q_h_trans = (W_h @ Q_h.unsqueeze(-1)).squeeze(-1)            # (E, hs)
 
-        # Media delle teste (Eq. 9: 1/H Σ_h)
-        attn_score = torch.stack(attn_heads, dim=-1).mean(dim=-1)  # (E,)
+            # Attention score: dot-product scalato + bias scalare per testa
+            dot = (Q_h_trans * K_h).sum(dim=-1) + b[dst, h]             # (E,)
+            dot_scaled = dot / self.scale                                  # (E,)
 
-        # ── Softmax per ogni nodo destinazione ────────────────────────────────
-        # (Eq. 8: exp(φ) / Σ_{u'∈N_i} exp(φ))
-        attn_weight = self._edge_softmax(attn_score, dst, N)  # (E,)
-        attn_weight = self.dropout_layer(attn_weight)
+            # Softmax per nodo destinazione (Eq. 8)
+            attn = self._edge_softmax(dot_scaled, dst, N)                 # (E,)
+            attn = self.dropout_layer(attn)
 
-        # ── Aggregazione dei valori (Eq. 9) ────────────────────────────────────
-        V_src = value[src]  # (E, d1)
-        weighted_V = attn_weight.unsqueeze(-1) * V_src  # (E, d1)
+            # Aggregazione pesata dei valori V (Eq. 9)
+            weighted_V = attn.unsqueeze(-1) * V_h                        # (E, hs)
+            out_h = torch.zeros(N, self.head_size, device=query.device)
+            out_h.scatter_add_(0, dst.unsqueeze(-1).expand_as(weighted_V), weighted_V)
+            attn_heads.append(out_h)
 
-        # Somma per ogni nodo dst
-        out = torch.zeros(N, self.hidden_dim, device=query.device)
-        out.scatter_add_(0, dst.unsqueeze(-1).expand_as(weighted_V), weighted_V)
-
-        return out  # (N, d1) = z_CST o z_CS
+        # Concatena le teste: (N, H * hs) = (N, d1)
+        out = torch.cat(attn_heads, dim=-1)
+        return out
 
     @staticmethod
     def _edge_softmax(scores: torch.Tensor,
@@ -209,16 +194,13 @@ class MetaGATLayer(nn.Module):
 
         Equivale a: α_{i,u} = exp(φ_{i,u}) / Σ_{u'∈N_i} exp(φ_{i,u'})
         """
-        # Sottrai il massimo per stabilità numerica
         max_scores = torch.zeros(num_nodes, device=scores.device)
         max_scores.scatter_reduce_(0, dst, scores, reduce="amax", include_self=True)
         scores_shifted = scores - max_scores[dst]
 
         exp_scores = torch.exp(scores_shifted)
 
-        # Somma per ogni nodo dst
         sum_exp = torch.zeros(num_nodes, device=scores.device)
         sum_exp.scatter_add_(0, dst, exp_scores)
 
-        # Normalizza
         return exp_scores / (sum_exp[dst] + 1e-9)
