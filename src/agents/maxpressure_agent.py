@@ -84,7 +84,8 @@ class MaxPressureAgent:
             if env is not None:
                 out_count = env._get_outgoing_vehicles_count(iid)
                 out_lanes_count = max(1, len(env._get_outgoing_lanes(iid)))
-                avg_out = out_count / out_lanes_count
+                # Normalizziamo anche l'uscita per 30.0 per allinearla a n_vec
+                avg_out = (out_count / out_lanes_count) / 30.0
                 
                 pressures = [
                     float(np.sum(n_vec[lanes])) - len(lanes) * avg_out
