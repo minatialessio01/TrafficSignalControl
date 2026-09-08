@@ -24,17 +24,21 @@ class MetaKnowledgeLearner(nn.Module):
     MLP a 2 strati per apprendere meta-conoscenza spaziale o temporale.
 
     Args:
-        input_dim:  dimensione delle feature in input
-        hidden_dim: dimensione del layer nascosto
-        output_dim: dimensione dell'output (meta-embedding)
+        input_dim:       dimensione delle feature in input
+        hidden_dim:      dimensione del layer nascosto
+        output_dim:      dimensione dell'output (meta-embedding)
+        use_tanh_output: se True applica Tanh all'output (range [-1,1]);
+                         se False nessuna attivazione finale (ablation --no-tanh-meta)
     """
 
-    def __init__(self, input_dim: int, hidden_dim: int = 64, output_dim: int = 64):
+    def __init__(self, input_dim: int, hidden_dim: int = 64, output_dim: int = 64,
+                 use_tanh_output: bool = True):
         super().__init__()
         self.fc1 = nn.Linear(input_dim, hidden_dim)
         self.fc2 = nn.Linear(hidden_dim, output_dim)
         self.activation = nn.ReLU()
-        self.out_activation = nn.Tanh()
+        self.out_activation = nn.Tanh() if use_tanh_output else nn.Identity()
+        self.use_tanh_output = use_tanh_output
 
     def forward(self, features: torch.Tensor) -> torch.Tensor:
         """
@@ -45,8 +49,7 @@ class MetaKnowledgeLearner(nn.Module):
             meta_knowledge: (batch, output_dim)
         """
         h = self.activation(self.fc1(features))
-        # Utilizziamo Tanh per l'ultimo layer così da mappare l'embedding 
-        # nel range [-1, 1], preservando informazioni e direzionalità.
+        # Tanh finale per mappare l'embedding in [-1, 1] (disabilitabile con use_tanh_output=False)
         out = self.out_activation(self.fc2(h))
         return out
 
@@ -66,8 +69,9 @@ class SpatialMetaKnowledgeLearner(MetaKnowledgeLearner):
     def __init__(self,
                  spatial_dim: int,
                  hidden_dim: int = 64,
-                 output_dim: int = 64):
-        super().__init__(spatial_dim, hidden_dim, output_dim)
+                 output_dim: int = 64,
+                 use_tanh_output: bool = True):
+        super().__init__(spatial_dim, hidden_dim, output_dim, use_tanh_output)
 
 
 class TemporalMetaKnowledgeLearner(MetaKnowledgeLearner):
@@ -84,5 +88,6 @@ class TemporalMetaKnowledgeLearner(MetaKnowledgeLearner):
     def __init__(self,
                  temporal_dim: int,
                  hidden_dim: int = 64,
-                 output_dim: int = 64):
-        super().__init__(temporal_dim, hidden_dim, output_dim)
+                 output_dim: int = 64,
+                 use_tanh_output: bool = True):
+        super().__init__(temporal_dim, hidden_dim, output_dim, use_tanh_output)

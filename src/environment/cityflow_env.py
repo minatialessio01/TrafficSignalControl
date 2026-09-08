@@ -45,9 +45,11 @@ except ImportError:
 
 # ─── Costanti (dall'articolo) ──────────────────────────────────────────────────
 N_PHASES = 8                  # fasi semaforiche per intersezione (Fig. 1)
-                              # (NTST, NLSL, NTNL, STSL, WTET, WLEL, ETEL, WTWL)
+                               # (NTST, NLSL, NTNL, STSL, WTET, WLEL, ETEL, WTWL)
 N_LANES = 12                  # corsie per intersezione (Section 3.1)
-STATE_DIM = N_LANES + N_LANES + N_PHASES  # dim stato: 12 (veicoli) + 12 (wait time) + 8 (fasi) = 32
+STATE_DIM_FULL = N_LANES + N_LANES + N_PHASES  # dim stato avanzato: 32 (con wait_vec)
+STATE_DIM_PAPER = N_LANES + N_PHASES            # dim stato originale paper: 20 (senza wait_vec)
+STATE_DIM = STATE_DIM_FULL   # default: usa il completo; sovrascrive con STATE_DIM_PAPER se --no-wait-vec
 
 GREEN_TIME = 10               # durata verde (s)
 YELLOW_TIME = 3               # durata giallo (s)
@@ -80,12 +82,26 @@ class CityFlowEnv:
     per poi selezionare una fase semaforica.
     """
 
-    def __init__(self, config_path: str, num_neighbors: int = 4, alpha: float = 0.5):
+    def __init__(
+        self,
+        config_path: str,
+        num_neighbors: int = 4,
+        alpha: float = 0.5,
+        # ── Ablation flags ──────────────────────────────────────────────────
+        reward_mode: str = "custom",        # "custom" = weighted pressure; "paper" = -P_i
+        use_vision_cutoff: bool = True,     # True = cutoff 167m; False = visibilità globale
+        use_wait_vec: bool = True,          # True = stato a 32 dim; False = 20 dim (no wait)
+        use_action_mask: bool = True,       # True = maschera anti-starvation; False = nessuna
+    ):
         """
         Args:
             config_path: percorso al file config.json di CityFlow
             num_neighbors: numero massimo di intersezioni vicine (paper: 4)
             alpha: iperparametro per la penalità dei ritardi nel reward
+            reward_mode: "custom" (weighted pressure avanzata) o "paper" (-P_i originale)
+            use_vision_cutoff: se True limita la visibilità a 167m dal semaforo
+            use_wait_vec: se True include wait_vec nello stato (dim=32); se False stato a 20 dim
+            use_action_mask: se True abilita la maschera anti-starvation
         """
         if not CITYFLOW_AVAILABLE:
             raise RuntimeError(
@@ -96,6 +112,11 @@ class CityFlowEnv:
         self.config_path = config_path
         self.num_neighbors = num_neighbors
         self.alpha = alpha
+        # Ablation flags
+        self.reward_mode = reward_mode
+        self.use_vision_cutoff = use_vision_cutoff
+        self.use_wait_vec = use_wait_vec
+        self.use_action_mask = use_action_mask
 
         # Carica la configurazione
         with open(config_path, "r") as f:
@@ -391,10 +412,14 @@ class CityFlowEnv:
         """
         Calcola il vettore di osservazione per ogni intersezione.
 
-        s_i^t = [n_vec (12), wait_vec (12), p_vec (8)] (Section 3.2 modificata)
+        Modalità avanzata (use_wait_vec=True, use_vision_cutoff=True):
+          s_i^t = [n_vec (12), wait_vec (12), p_vec (8)] — dim 32
 
-        n_vec: numero di veicoli su ciascuna delle 12 corsie in ingresso (filtrato a 167m dal semaforo)
-        wait_vec: max waiting time normalizzato (0.0 - 1.0) per corsia (filtrato a 167m dal semaforo)
+        Modalità paper (use_wait_vec=False, use_vision_cutoff=False):
+          s_i^t = [n_vec (12), p_vec (8)] — dim 20 (solo conteggio + fase)
+
+        n_vec: numero di veicoli sulle corsie in ingresso
+        wait_vec: max waiting time normalizzato (0.0-1.0) per corsia
         p_vec: fase corrente (one-hot encoding 8 bit)
         """
         lane_vehicles = self.engine.get_lane_vehicles()
@@ -402,35 +427,39 @@ class CityFlowEnv:
         observations = {}
 
         for iid in self.inter_ids:
-            # n_vec: numero veicoli sulle corsie in ingresso
             lanes = self.inter_lanes.get(iid, [])
-            # Padding/tronca a N_LANES corsie
-            n_vec = np.zeros(N_LANES, dtype=np.float32)
+            n_vec   = np.zeros(N_LANES, dtype=np.float32)
             wait_vec = np.zeros(N_LANES, dtype=np.float32)
-            
+
             for k, lane_id in enumerate(lanes[:N_LANES]):
                 if lane_id.startswith("missing_"):
                     continue
                 road_id = "_".join(lane_id.split("_")[:-1])
-                cutoff = max(0.0, self.road_lengths.get(road_id, 340.0) - 167.0)
                 vehicles = lane_vehicles.get(lane_id, [])
-                
-                veicoli_vicini = 0
-                max_wt = 0.0
-                
-                for veh in vehicles:
-                    dist = vehicle_distances.get(veh, 0.0)
-                    # Filtriamo solo i veicoli vicini al semaforo
-                    if dist >= cutoff:
-                        veicoli_vicini += 1
-                        
-                        wt = self.vehicle_wait_times.get(veh, 0.0)
-                        if wt > max_wt:
-                            max_wt = wt
-                            
-                n_vec[k] = veicoli_vicini
-                # Normalizza e clippa tra 0.0 e 1.0 (supponendo 100s come limite ragionevole di saturazione)
-                wait_vec[k] = np.clip(max_wt / 100.0, 0.0, 1.0)
+
+                if self.use_vision_cutoff:
+                    # Avanzato: solo veicoli entro 167m dal semaforo
+                    cutoff = max(0.0, self.road_lengths.get(road_id, 340.0) - 167.0)
+                    veicoli_vicini = 0
+                    max_wt = 0.0
+                    for veh in vehicles:
+                        dist = vehicle_distances.get(veh, 0.0)
+                        if dist >= cutoff:
+                            veicoli_vicini += 1
+                            wt = self.vehicle_wait_times.get(veh, 0.0)
+                            if wt > max_wt:
+                                max_wt = wt
+                    n_vec[k] = veicoli_vicini
+                    wait_vec[k] = np.clip(max_wt / 100.0, 0.0, 1.0)
+                else:
+                    # Paper: conta tutti i veicoli sulla corsia (visibilità globale)
+                    n_vec[k] = float(len(vehicles))
+                    if self.use_wait_vec:  # wait_vec solo se richiesto
+                        max_wt = max(
+                            (self.vehicle_wait_times.get(veh, 0.0) for veh in vehicles),
+                            default=0.0
+                        )
+                        wait_vec[k] = np.clip(max_wt / 100.0, 0.0, 1.0)
 
             # Normalizza il numero di veicoli
             n_vec = np.clip(n_vec / 30.0, 0.0, 1.0)
@@ -439,7 +468,10 @@ class CityFlowEnv:
             p_vec = np.zeros(N_PHASES, dtype=np.float32)
             p_vec[self.current_phase[iid]] = 1.0
 
-            observations[iid] = np.concatenate([n_vec, wait_vec, p_vec])  # dim=32
+            if self.use_wait_vec:
+                observations[iid] = np.concatenate([n_vec, wait_vec, p_vec])  # dim=32
+            else:
+                observations[iid] = np.concatenate([n_vec, p_vec])            # dim=20 (paper)
 
         return observations
 
@@ -448,29 +480,34 @@ class CityFlowEnv:
         lane_vehicles = self.engine.get_lane_vehicles()
         vehicle_distances = self.engine.get_vehicle_distance()
         incoming_ids = {iid: set() for iid in self.inter_ids}
-        
+
         for iid in self.inter_ids:
             lanes = self.inter_lanes.get(iid, [])
             for l in lanes:
                 if l.startswith("missing_"):
                     continue
                 road_id = "_".join(l.split("_")[:-1])
-                cutoff = max(0.0, self.road_lengths.get(road_id, 340.0) - 167.0)
                 for veh in lane_vehicles.get(l, []):
-                    if vehicle_distances.get(veh, 0.0) >= cutoff:
+                    if self.use_vision_cutoff:
+                        cutoff = max(0.0, self.road_lengths.get(road_id, 340.0) - 167.0)
+                        if vehicle_distances.get(veh, 0.0) >= cutoff:
+                            incoming_ids[iid].add(veh)
+                    else:
+                        # Paper: conta tutti i veicoli sulla corsia
                         incoming_ids[iid].add(veh)
         return incoming_ids
 
     def _compute_rewards(self, incoming_t0: Dict[str, set] = None, incoming_t1: Dict[str, set] = None) -> Dict[str, float]:
         """
-        Calcola il reward per ogni intersezione basato sul Throughput reale e i veicoli in attesa.
-        Reward = Passed - Incoming - (alpha * max_red_wait_time)
-        Dove:
-         - Passed: Veicoli presenti al tempo t che non sono più nelle corsie in ingresso al tempo t+1.
-         - Incoming: Veicoli in ingresso al tempo t.
+        Calcola il reward per ogni intersezione.
+
+        reward_mode="custom" (avanzato):
+          Reward = (Passed - Incoming - alpha * max_red_wait_time - wasted_green_penalty) / 100, clip [-20, 5]
+
+        reward_mode="paper" (originale Wang et al. 2022):
+          Reward = -P_i  (negativo della pressione: veicoli in ingresso - veicoli in uscita)
         """
         if incoming_t0 is None or incoming_t1 is None:
-            # Fallback se chiamato fuori da step (es. in init, anche se non succede)
             return {iid: 0.0 for iid in self.inter_ids}
 
         lane_vehicles = self.engine.get_lane_vehicles()
@@ -479,43 +516,42 @@ class CityFlowEnv:
 
         for iid in self.inter_ids:
             lanes = self.inter_lanes.get(iid, [])
-            
             in_t0 = incoming_t0.get(iid, set())
             in_t1 = incoming_t1.get(iid, set())
-            
-            passed = len(in_t0 - in_t1)
-            incoming = len(in_t0)
-            
-            current_phase = self.current_phase[iid]
-            green_lanes = GREEN_LANES_PER_PHASE.get(current_phase, [])
-            
-            max_red_wait_time = 0.0
-            for k, lane_id in enumerate(lanes[:N_LANES]):
-                if k not in green_lanes:
-                    if lane_id.startswith("missing_"):
-                        continue
-                    road_id = "_".join(lane_id.split("_")[:-1])
-                    cutoff = max(0.0, self.road_lengths.get(road_id, 340.0) - 167.0)
-                    vehicles = lane_vehicles.get(lane_id, [])
-                    for veh in vehicles:
-                        # Consideriamo il wait time solo per le auto vicine al semaforo
-                        if vehicle_distances.get(veh, 0.0) >= cutoff:
+
+            if self.reward_mode == "paper":
+                # ── Reward originale del paper: -P_i ───────────────────────────────
+                # P_i = veicoli in ingresso - veicoli in uscita (pressione)
+                outgoing = self._get_outgoing_vehicles_count(iid)
+                pressure = len(in_t1) - outgoing  # veicoli attuali - veicoli usciti
+                rewards[iid] = -float(pressure)
+            else:
+                # ── Reward avanzata: Throughput-based multi-obiettivo ──────────────
+                passed   = len(in_t0 - in_t1)
+                incoming = len(in_t0)
+
+                current_phase = self.current_phase[iid]
+                green_lanes   = GREEN_LANES_PER_PHASE.get(current_phase, [])
+
+                max_red_wait_time = 0.0
+                for k, lane_id in enumerate(lanes[:N_LANES]):
+                    if k not in green_lanes:
+                        if lane_id.startswith("missing_"):
+                            continue
+                        road_id = "_".join(lane_id.split("_")[:-1])
+                        for veh in lane_vehicles.get(lane_id, []):
+                            if self.use_vision_cutoff:
+                                cutoff = max(0.0, self.road_lengths.get(road_id, 340.0) - 167.0)
+                                if vehicle_distances.get(veh, 0.0) < cutoff:
+                                    continue
                             wt = self.vehicle_wait_times.get(veh, 0.0)
                             if wt > max_red_wait_time:
                                 max_red_wait_time = wt
-            wasted_green_penalty = 0.0
-            if passed == 0 and incoming > 0:
-                wasted_green_penalty = 50.0  # Penalità esplicita per aver dato il verde a una corsia vuota mentre c'è traffico altrove
-                            
-            # Formula: Passed - Incoming - (alpha * max_red_wait_time) - wasted_green_penalty
-            raw_reward = float(passed) - float(incoming) - (self.alpha * max_red_wait_time) - wasted_green_penalty
-            
-            # NORMALIZZAZIONE:
-            # Dividiamo per 100.0 per riportare il reward in un range gestibile dalla rete (es. da -10 a +5).
-            normalized_reward = raw_reward / 100.0
-            
-            # CLIPPING di sicurezza contro picchi anomali
-            rewards[iid] = max(min(normalized_reward, 5.0), -20.0)
+
+                wasted_green_penalty = 50.0 if (passed == 0 and incoming > 0) else 0.0
+                raw_reward = float(passed) - float(incoming) - (self.alpha * max_red_wait_time) - wasted_green_penalty
+                normalized_reward = raw_reward / 100.0
+                rewards[iid] = max(min(normalized_reward, 5.0), -20.0)
 
         return rewards
 
@@ -673,9 +709,17 @@ class CityFlowEnv:
 
     def get_invalid_actions(self) -> Dict[str, List[int]]:
         """
-        Ritorna una maschera delle azioni non valide (fasi scelte più di 2 volte consecutive).
-        Vincolo applicato per qualunque configurazione/griglia di incroci.
+        Ritorna una maschera delle azioni non valide.
+
+        Modalità avanzata (use_action_mask=True):
+          Maschera la fase corrente se scelta >= 2 volte consecutive (anti-starvation).
+
+        Modalità paper (use_action_mask=False):
+          Nessun vincolo — restituisce dizionario con liste vuote.
         """
+        if not self.use_action_mask:
+            return {iid: [] for iid in self.inter_ids}
+
         invalid_actions = {}
         for iid, phase in self.current_phase.items():
             if self.consecutive_phases.get(iid, 0) >= 2:
@@ -699,8 +743,8 @@ class CityFlowEnv:
 
     @property
     def observation_dim(self) -> int:
-        """Dimensione del vettore di osservazione per agente."""
-        return STATE_DIM
+        """Dimensione del vettore di osservazione per agente (dipende da use_wait_vec)."""
+        return STATE_DIM_FULL if self.use_wait_vec else STATE_DIM_PAPER
 
     @property
     def spatial_meta_dim(self) -> int:

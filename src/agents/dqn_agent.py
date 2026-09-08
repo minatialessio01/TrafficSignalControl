@@ -77,7 +77,16 @@ class DQNAgent:
                  burn_in: int = 4,
                  target_update_tau: float = 0.01,
                  target_update_freq: int = 100,
-                 device: Optional[torch.device] = None):
+                 device: Optional[torch.device] = None,
+                 # ── Ablation flags ───────────────────────────────────────────
+                 use_double_dqn: bool = True,   # False = DQN standard (target max)
+                 use_per: bool = True,           # False = buffer flat, IS weights = 1.0
+                 use_huber: bool = True,         # False = MSE loss
+                 use_soft_update: bool = True,   # False = hard copy del target network
+                 use_grad_clip: bool = True,     # False = no gradient clipping
+                 use_bptt: bool = True,          # False = single-step L=1, burn_in=0
+                 use_tanh_meta: bool = True,     # False = no Tanh sui meta-learner
+                 ):
 
         self.n_intersections = n_intersections
         self.n_actions = n_actions
@@ -87,11 +96,19 @@ class DQNAgent:
         self.epsilon_end = epsilon_end
         self.epsilon_decay = epsilon_decay
         self.batch_size = batch_size
-        self.seq_len = seq_len
-        self.burn_in = burn_in
+        # Ablation: se no_bptt, forza single-step
+        self.use_bptt = use_bptt
+        self.seq_len  = seq_len if use_bptt else 1
+        self.burn_in  = burn_in if use_bptt else 0
         self.target_update_tau = target_update_tau
         self.target_update_freq = target_update_freq
         self.is_meta = isinstance(model, MetaSTGAT)
+        # Ablation flags (usati in update e _soft_update_target)
+        self.use_double_dqn = use_double_dqn
+        self.use_per        = use_per
+        self.use_huber      = use_huber
+        self.use_soft_update = use_soft_update
+        self.use_grad_clip  = use_grad_clip
 
         self.device = device or torch.device(
             "cuda" if torch.cuda.is_available() else "cpu"
@@ -267,9 +284,13 @@ class DQNAgent:
         self.model.train()
 
         for _ in range(n_updates):
-            # Campiona un batch di sequenze e IS weights dal PER
+            # Campiona batch: con PER usa priorità TD + IS weights; senza PER IS weights = 1.0
             batch, keys, is_weights = self.replay_buffer.sample_sequences(self.batch_size, self.seq_len)
-            is_weights_t = torch.tensor(is_weights, dtype=torch.float32, device=self.device)
+            if self.use_per:
+                is_weights_t = torch.tensor(is_weights, dtype=torch.float32, device=self.device)
+            else:
+                # Campionamento uniforme: tutti i pesi uguali a 1.0 (nessuna correzione IS)
+                is_weights_t = torch.ones(len(batch), dtype=torch.float32, device=self.device)
             
             tensors = self.replay_buffer.to_tensors_seq(batch, self.device)
 
@@ -348,10 +369,14 @@ class DQNAgent:
                             q_next, h_target, c_target = self.target_model(
                                 nst, batch_edge_index, h_target, c_target)
 
-                    # Double DQN: a* = argmax_{a} Q_online(s', a),  target = r + γ·Q_target(s', a*)
-                    # Riduce il bias di sovrastima del DQN classico
-                    best_next_actions = q_online_next.argmax(dim=-1, keepdim=True)  # (B*N, 1)
-                    q_next_value = q_next.gather(1, best_next_actions).squeeze(-1)  # (B*N,)
+                    # Double DQN vs DQN standard (controllato da use_double_dqn)
+                    if self.use_double_dqn:
+                        # Double DQN (van Hasselt et al., 2016): riduce bias di sovrastima
+                        best_next_actions = q_online_next.argmax(dim=-1, keepdim=True)  # (B*N, 1)
+                        q_next_value = q_next.gather(1, best_next_actions).squeeze(-1)  # (B*N,)
+                    else:
+                        # DQN standard: target = r + gamma * max_a' Q_target(s', a')
+                        q_next_value = q_next.max(dim=-1).values  # (B*N,)
 
                     q_target = rt + self.gamma * q_next_value
                     q_action = q_pred.gather(1, at.unsqueeze(-1)).squeeze(-1)
@@ -373,18 +398,21 @@ class DQNAgent:
             seq_errors = torch.mean(td_errors, dim=(1, 2)) # (B,)
             self.replay_buffer.update_priorities(keys, seq_errors.detach().cpu().numpy())
             
-            # Huber Loss (Smooth L1) calcolata per ogni elemento, poi mediata per sequenza
-            loss_per_element = nn.functional.smooth_l1_loss(q_preds_all, q_targets_all, reduction='none')
-            loss_per_seq = torch.mean(loss_per_element, dim=(1, 2)) # (B,)
-            
-            # Moltiplica per IS weights e media sul batch
+            # Huber Loss vs MSE (controllato da use_huber)
+            if self.use_huber:
+                loss_per_element = nn.functional.smooth_l1_loss(q_preds_all, q_targets_all, reduction='none')
+            else:
+                loss_per_element = nn.functional.mse_loss(q_preds_all, q_targets_all, reduction='none')
+            loss_per_seq = torch.mean(loss_per_element, dim=(1, 2))  # (B,)
+
+            # IS weights: 1.0 costante se no_per (campionamento uniforme)
             loss = torch.mean(loss_per_seq * is_weights_t)
 
-            # ── Gradient descent (Algorithm 1, line 12-13) ────────────────────
+            # Gradient descent
             self.optimizer.zero_grad()
             loss.backward()
-            # Gradient clipping (non specificato nel paper, ma pratica standard)
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            if self.use_grad_clip:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.optimizer.step()
 
             total_loss += loss.item()
@@ -392,7 +420,7 @@ class DQNAgent:
 
             # ── Aggiornamento target network (soft update) ────────────────────
             if self.total_steps % self.target_update_freq == 0:
-                self._soft_update_target()
+                self._update_target()
 
         self.model.eval()
 
@@ -403,13 +431,17 @@ class DQNAgent:
 
         return total_loss / n_updates
 
-    def _soft_update_target(self):
-        """Soft update del target network: θ' ← τ·θ + (1-τ)·θ'"""
-        tau = self.target_update_tau
-        for online_p, target_p in zip(
-            self.model.parameters(), self.target_model.parameters()
-        ):
-            target_p.data.copy_(tau * online_p.data + (1 - tau) * target_p.data)
+    def _update_target(self):
+        """Aggiorna il target network: soft (Polyak) o hard copy in base a use_soft_update."""
+        if self.use_soft_update:
+            tau = self.target_update_tau
+            for online_p, target_p in zip(
+                self.model.parameters(), self.target_model.parameters()
+            ):
+                target_p.data.copy_(tau * online_p.data + (1 - tau) * target_p.data)
+        else:
+            # Hard update: copia diretta (come da paper originale)
+            self.target_model.load_state_dict(self.model.state_dict())
 
     # ─── Checkpoint save/load ─────────────────────────────────────────────────
 

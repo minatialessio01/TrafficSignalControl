@@ -54,7 +54,8 @@ class MetaSTGAT(nn.Module):
                  spatial_meta_dim: int = 28,    # N_LANES*2 + num_neighbors = 28
                  temporal_meta_dim: int = 72,   # N_LANES + N_LANES*5 = 72
                  meta_hidden_dim: int = 64,
-                 dropout: float = 0.0):
+                 dropout: float = 0.0,
+                 use_tanh_meta: bool = True):    # Ablation: False = no Tanh sui meta-learner
         super().__init__()
         self.state_dim = state_dim
         self.hidden_dim = hidden_dim
@@ -69,13 +70,15 @@ class MetaSTGAT(nn.Module):
         self.smk_learner = SpatialMetaKnowledgeLearner(
             spatial_dim=spatial_meta_dim,
             hidden_dim=meta_hidden_dim,
-            output_dim=meta_hidden_dim
+            output_dim=meta_hidden_dim,
+            use_tanh_output=use_tanh_meta
         )
         # TMK-Learner: feature temporali → embedding temporale
         self.tmk_learner = TemporalMetaKnowledgeLearner(
             temporal_dim=temporal_meta_dim,
             hidden_dim=meta_hidden_dim,
-            output_dim=meta_hidden_dim
+            output_dim=meta_hidden_dim,
+            use_tanh_output=use_tanh_meta
         )
 
         # ── 3. Meta-LSTM (Section 4.3.3, Eq. 20-21) ───────────────────────────

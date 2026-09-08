@@ -7,17 +7,24 @@ Implementa l'Algorithm 1 dell'articolo con supporto a:
   - Stop a episodio specifico (--stop-at)
   - Interruzione pulita con Ctrl+C (salva automaticamente)
   - Tutti i modelli: MetaSTGAT, STGAT, FixedTime
+  - Flag di ablation per disabilitare singoli componenti del modello avanzato
 
 Uso:
-  # Training standard
-  python scripts/train.py --config configs/synthetic_4x4_config_4x4_200m_1.3k_flat.json --model MetaSTGAT
+  # Training standard (modello avanzato completo)
+  python scripts/train.py --config configs/config_4x4_200m_2k_flat.json
+
+  # Training con preset ablation (Proposta 1 – Sottosistemi Funzionali)
+  python scripts/train.py --config configs/config_4x4_200m_2k_flat.json --ablation environment
+  python scripts/train.py --config configs/config_4x4_200m_2k_flat.json --ablation temporal
+  python scripts/train.py --config configs/config_4x4_200m_2k_flat.json --ablation rl_core
+  python scripts/train.py --config configs/config_4x4_200m_2k_flat.json --ablation replay_stability
+  python scripts/train.py --config configs/config_4x4_200m_2k_flat.json --ablation paper
+
+  # Output in cartella specifica
+  python scripts/train.py --config configs/config_4x4_200m_2k_flat.json --output-dir results/metastgat_full
 
   # Fermarsi all'episodio 50
-  python scripts/train.py --config configs/synthetic_4x4_config_4x4_200m_1.3k_flat.json --stop-at 50
-
-  # Riprendere da un checkpoint
-  python scripts/train.py --config configs/synthetic_4x4_config_4x4_200m_1.3k_flat.json \\
-      --resume results/metastgat_config1/checkpoint_ep0050.pt
+  python scripts/train.py --config configs/config_4x4_200m_2k_flat.json --stop-at 50
 
   # Premi Ctrl+C in qualsiasi momento per interrompere — viene salvato un checkpoint
 """
@@ -104,6 +111,52 @@ def parse_args():
     parser.add_argument("--epsilon-end",   type=float, default=DEFAULTS["epsilon_end"])
     parser.add_argument("--epsilon-decay", type=float, default=DEFAULTS["epsilon_decay"])
 
+    # ── Ablation – Preset ────────────────────────────────────────────────────
+    parser.add_argument(
+        "--ablation",
+        default="full",
+        choices=["full", "paper", "environment", "temporal", "rl_core", "replay_stability"],
+        help="Preset ablation (imposta automaticamente i flag --no-*). "
+             "full=modello avanzato completo, paper=replica originale, "
+             "environment=senza reward+visibilità+wait+mask, temporal=senza BPTT, "
+             "rl_core=senza Double DQN, replay_stability=senza PER/Huber/grad-clip/warmup"
+    )
+
+    # ── Ablation – Flag Atomici (possono sovrascrivere il preset) ───────────
+    parser.add_argument("--reward-mode", default=None,
+                        choices=["custom", "paper"],
+                        help="Formula reward: custom (weighted pressure) o paper (-P_i). "
+                             "Se non specificato, usa il default del preset.")
+    parser.add_argument("--no-vision-cutoff",     action="store_true",
+                        help="Rimuove il cutoff 167m dal campo visivo (visibilità globale come nel paper)")
+    parser.add_argument("--no-wait-vec",          action="store_true",
+                        help="Stato a 20 dim senza wait_vec (solo n_vec + p_vec)")
+    parser.add_argument("--no-action-mask",       action="store_true",
+                        help="Rimuove la maschera anti-starvation (consente stessa fase ≥3 volte)")
+    parser.add_argument("--no-bptt",              action="store_true",
+                        help="Training single-step senza BPTT e senza burn-in (L=1)")
+    parser.add_argument("--no-double-dqn",        action="store_true",
+                        help="Usa DQN standard invece di Double DQN")
+    parser.add_argument("--no-per",               action="store_true",
+                        help="Buffer FIFO flat da 10k, campionamento uniforme, no IS weights")
+    parser.add_argument("--no-huber",             action="store_true",
+                        help="Usa MSE loss invece di Huber Loss")
+    parser.add_argument("--no-soft-update",       action="store_true",
+                        help="Hard copy del target network invece di Polyak averaging")
+    parser.add_argument("--no-grad-clip",         action="store_true",
+                        help="Disabilita gradient clipping")
+    parser.add_argument("--no-warmup",            action="store_true",
+                        help="Salta i 10 episodi di warm-up iniziali")
+    parser.add_argument("--no-cyclic-exploration", action="store_true",
+                        help="Salta l'episodio random periodico ogni 10 ep")
+    parser.add_argument("--no-tanh-meta",         action="store_true",
+                        help="Rimuove la Tanh finale dai meta-learner SMK/TMK")
+
+    # ── Output directory esplicita ───────────────────────────────────────────
+    parser.add_argument("--output-dir", default=None,
+                        help="Cartella di output per checkpoint e log (sovrascrive --output). "
+                             "Se non specificato, usa --output (default: auto-timestamp).")
+
     # ── Misc ────────────────────────────────────────────────────────────────
     parser.add_argument("--seed",    type=int, default=42)
     parser.add_argument("--device",  default=None,
@@ -122,6 +175,97 @@ def set_seed(seed: int):
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
+
+
+def apply_ablation_preset(args):
+    """
+    Applica il preset --ablation impostando i flag --no-* corretti.
+    I flag esplicitamente specificati dall'utente hanno la precedenza sul preset.
+
+    Mappa preset (Proposta 1 – Sottosistemi Funzionali):
+      full             → nessun flag (modello avanzato completo)
+      paper            → tutti i --no-* + reward-mode paper
+      environment      → --reward-mode paper + --no-vision-cutoff + --no-wait-vec + --no-action-mask
+      temporal         → --no-bptt
+      rl_core          → --no-double-dqn
+      replay_stability → --no-per + --no-huber + --no-soft-update + --no-grad-clip
+                         + --no-warmup + --no-cyclic-exploration + --no-tanh-meta
+    """
+    preset = args.ablation
+
+    def _set_if_not_explicit(attr, value):
+        """Imposta l'attributo solo se l'utente non lo ha già specificato."""
+        # store_true args partono da False; se sono True l'utente li ha esplicitamente settati.
+        # reward_mode parte da None; se è None l'utente non l'ha specificato.
+        if attr == "reward_mode":
+            if getattr(args, attr) is None:
+                setattr(args, attr, value)
+        else:
+            if not getattr(args, attr, False):
+                setattr(args, attr, value)
+
+    if preset == "full":
+        # Nessun flag da impostare — già tutti False di default
+        if args.reward_mode is None:
+            args.reward_mode = "custom"
+
+    elif preset == "paper":
+        if args.reward_mode is None:
+            args.reward_mode = "paper"
+        _set_if_not_explicit("no_vision_cutoff",      True)
+        _set_if_not_explicit("no_wait_vec",           True)
+        _set_if_not_explicit("no_action_mask",        True)
+        _set_if_not_explicit("no_bptt",               True)
+        _set_if_not_explicit("no_double_dqn",         True)
+        _set_if_not_explicit("no_per",                True)
+        _set_if_not_explicit("no_huber",              True)
+        _set_if_not_explicit("no_soft_update",        True)
+        _set_if_not_explicit("no_grad_clip",          True)
+        _set_if_not_explicit("no_warmup",             True)
+        _set_if_not_explicit("no_cyclic_exploration", True)
+        _set_if_not_explicit("no_tanh_meta",          True)
+
+    elif preset == "environment":
+        # Ablation 1: spegne M1 (reward), M2 (cutoff 167m), M3 (wait_vec), M4 (action mask)
+        if args.reward_mode is None:
+            args.reward_mode = "paper"
+        _set_if_not_explicit("no_vision_cutoff", True)
+        _set_if_not_explicit("no_wait_vec",      True)
+        _set_if_not_explicit("no_action_mask",   True)
+
+    elif preset == "temporal":
+        # Ablation 2: spegne M5 (BPTT + burn-in)
+        _set_if_not_explicit("no_bptt", True)
+        if args.reward_mode is None:
+            args.reward_mode = "custom"
+
+    elif preset == "rl_core":
+        # Ablation 3: spegne M6 (Double DQN)
+        _set_if_not_explicit("no_double_dqn", True)
+        if args.reward_mode is None:
+            args.reward_mode = "custom"
+
+    elif preset == "replay_stability":
+        # Ablation 4: spegne M7 (PER+IS), M8 (Huber+grad+soft), M9 (warmup+cyclic), M10 (Tanh)
+        _set_if_not_explicit("no_per",                True)
+        _set_if_not_explicit("no_huber",              True)
+        _set_if_not_explicit("no_soft_update",        True)
+        _set_if_not_explicit("no_grad_clip",          True)
+        _set_if_not_explicit("no_warmup",             True)
+        _set_if_not_explicit("no_cyclic_exploration", True)
+        _set_if_not_explicit("no_tanh_meta",          True)
+        if args.reward_mode is None:
+            args.reward_mode = "custom"
+
+    # Normalizza i nomi con trattino → underscore (argparse converte automaticamente,
+    # ma li stampiamo per debug)
+    print(f"[Ablation] preset='{preset}' | reward_mode={args.reward_mode} | "
+          f"no_vision_cutoff={args.no_vision_cutoff} | no_wait_vec={args.no_wait_vec} | "
+          f"no_action_mask={args.no_action_mask} | no_bptt={args.no_bptt} | "
+          f"no_double_dqn={args.no_double_dqn} | no_per={args.no_per} | "
+          f"no_huber={args.no_huber} | no_soft_update={args.no_soft_update} | "
+          f"no_grad_clip={args.no_grad_clip} | no_warmup={args.no_warmup} | "
+          f"no_cyclic_exploration={args.no_cyclic_exploration} | no_tanh_meta={args.no_tanh_meta}")
 
 
 def format_eta(seconds: float) -> str:
@@ -231,6 +375,7 @@ def build_model(args, env: CityFlowEnv) -> torch.nn.Module:
             spatial_meta_dim=env.spatial_meta_dim,
             temporal_meta_dim=env.temporal_meta_dim,
             meta_hidden_dim=args.hidden_dim,
+            use_tanh_meta=not args.no_tanh_meta,
         )
     elif args.model == "STGAT":
         model = STGAT(
@@ -249,14 +394,20 @@ def build_model(args, env: CityFlowEnv) -> torch.nn.Module:
 
 def run_training(args):
     """Loop principale di training."""
+    # ── Applica preset ablation (prima di qualsiasi altra cosa) ───────────────
+    apply_ablation_preset(args)
+
     set_seed(args.seed)
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
 
-    # ── Cartella di output auto-timestampata se non specificata ────────────────
-    if args.output == "auto":
+    # ── Cartella di output: --output-dir > --output > auto-timestamp ──────────
+    if args.output_dir:
+        args.output = args.output_dir
+    elif args.output == "auto":
         from datetime import datetime
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        args.output = f"results/{args.model.lower()}_{ts}"
+        ablation_tag = args.ablation if args.ablation != "full" else "full"
+        args.output = f"results/{ablation_tag}_{ts}"
 
     os.makedirs(args.output, exist_ok=True)
     
@@ -302,7 +453,14 @@ def run_training(args):
         json.dump(custom_config, f, indent=4)
 
     print("[Env] Inizializzazione CityFlow...")
-    env = CityFlowEnv(custom_config_path, num_neighbors=args.num_neighbors)
+    env = CityFlowEnv(
+        custom_config_path,
+        num_neighbors=args.num_neighbors,
+        reward_mode=args.reward_mode,
+        use_vision_cutoff=not args.no_vision_cutoff,
+        use_wait_vec=not args.no_wait_vec,
+        use_action_mask=not args.no_action_mask,
+    )
     edge_index = env.get_edge_index().to(device)
 
     print(f"[Env] Intersezioni: {env.n_intersections}")
@@ -326,6 +484,8 @@ def run_training(args):
         eps_target_ep = max(1, int(0.6 * args.episodes))
         eps_decay = (args.epsilon_end / args.epsilon_start) ** (1.0 / eps_target_ep)
         
+        # Dimensione buffer: paper usa 10k flat; il nostro avanzato usa 2400 seq
+        buffer_sz = 10_000 if args.no_per else DEFAULTS["buffer_size"]
         agent = DQNAgent(
             model=model,
             n_intersections=env.n_intersections,
@@ -335,9 +495,17 @@ def run_training(args):
             epsilon_start=args.epsilon_start,
             epsilon_end=args.epsilon_end,
             epsilon_decay=eps_decay,
-            buffer_size=DEFAULTS["buffer_size"],
+            buffer_size=buffer_sz,
             batch_size=args.batch_size,
             device=device,
+            # ── Ablation flags ──────────────────────────────────────────────
+            use_double_dqn=not args.no_double_dqn,
+            use_per=not args.no_per,
+            use_huber=not args.no_huber,
+            use_soft_update=not args.no_soft_update,
+            use_grad_clip=not args.no_grad_clip,
+            use_bptt=not args.no_bptt,
+            use_tanh_meta=not args.no_tanh_meta,
         )
 
     # ── Logger ─────────────────────────────────────────────────────────────
@@ -444,7 +612,7 @@ def run_training(args):
 
 
     # === FASE DI WARM-UP ===
-    if start_episode == 0:
+    if start_episode == 0 and not args.no_warmup:
         print("\n=== FASE DI WARM-UP (10 episodi casuali per riempire il buffer) ===")
         agent.epsilon = 1.0
         for w_ep in range(1, 11):
@@ -452,6 +620,8 @@ def run_training(args):
             print(f"  Warm-up Ep {w_ep}/10 completato. (Buffer size: {len(agent.replay_buffer)})")
         agent.epsilon = args.epsilon_start
         print("=== FINE WARM-UP ===\n")
+    elif start_episode == 0 and args.no_warmup:
+        print("[Ablation] Warm-up disabilitato (--no-warmup).")
 
     # ── Loop di training principale (Algorithm 1) ────────────────────────────
     for episode in range(start_episode + 1, end_episode + 1):
@@ -545,7 +715,7 @@ def run_training(args):
         )
 
         # ── Episodio Random Periodico ──────────────────────────────────────
-        if episode % 10 == 0 and episode < args.episodes:
+        if not args.no_cyclic_exploration and episode % 10 == 0 and episode < args.episodes:
             print(f"\n[!] Esecuzione di 1 episodio random (senza aggiornamento pesi) per esplorazione...")
             old_epsilon = agent.epsilon
             agent.epsilon = 1.0
@@ -579,13 +749,24 @@ def run_training(args):
 
     # ── Fine training ──────────────────────────────────────────────────────
     logger.close()
+
+    # Salva final_model.pth (checkpoint dell'ultimo episodio — usato come primario per il test)
+    final_model_path = os.path.join(args.output, "final_model.pth")
+    agent.save_checkpoint(
+        path=final_model_path,
+        episode=episode,
+        travel_time=travel_time,
+        extra_info={"ablation": args.ablation, "is_final": True}
+    )
+
     print(f"\n{'='*60}")
     print(f"  TRAINING COMPLETATO")
     print(f"  Episodi completati: {episode}")
     print(f"  Best travel time: {running_metrics.best_travel_time:.2f}s")
     print(f"  Last 10 avg travel time: {running_metrics.last_n_avg_travel_time:.2f}s")
     print(f"  Best throughput: {running_metrics.best_throughput}")
-    print(f"  Modello migliore salvato in: {logger.best_path}")
+    print(f"  Modello finale salvato in: {final_model_path}")
+    print(f"  Modello best salvato in:   {logger.best_path}")
     print(f"  Log salvato in: {logger.csv_path}")
     print(f"{'='*60}\n")
 
