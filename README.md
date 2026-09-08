@@ -93,14 +93,14 @@ Scarica automaticamente i dataset dal repository CoLight (gli stessi usati nell'
 ```bash
 # Training MetaSTGAT su dataset sintetico Config 1
 python scripts/train.py \
-    --config configs/synthetic_4x4_config1.json \
+    --config configs/synthetic_4x4_config_4x4_200m_1.3k_flat.json \
     --model MetaSTGAT \
     --episodes 200 \
     --output results/metastgat_config1
 
 # Riprendere training da un checkpoint
 python scripts/train.py \
-    --config configs/synthetic_4x4_config1.json \
+    --config configs/synthetic_4x4_config_4x4_200m_1.3k_flat.json \
     --model MetaSTGAT \
     --episodes 200 \
     --resume results/metastgat_config1/checkpoint_ep050.pt \
@@ -108,7 +108,7 @@ python scripts/train.py \
 
 # Fermarsi a un episodio specifico (es. episodio 50)
 python scripts/train.py \
-    --config configs/synthetic_4x4_config1.json \
+    --config configs/synthetic_4x4_config_4x4_200m_1.3k_flat.json \
     --model MetaSTGAT \
     --episodes 200 \
     --stop-at 50 \
@@ -140,7 +140,7 @@ python scripts/train.py \
 
 ```bash
 python scripts/test.py \
-    --config configs/synthetic_4x4_config1.json \
+    --config configs/synthetic_4x4_config_4x4_200m_1.3k_flat.json \
     --checkpoint results/metastgat_config1/best_model.pt \
     --model MetaSTGAT
 ```

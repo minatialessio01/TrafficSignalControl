@@ -7,7 +7,7 @@ calcolando le metriche finali (travel time, throughput) come da Section 5.4:
 
 Uso:
   python scripts/test.py \\
-      --config configs/synthetic_4x4_config1.json \\
+      --config configs/synthetic_4x4_config_4x4_200m_1.3k_flat.json \\
       --checkpoint results/metastgat_config1/best_model.pt \\
       --model MetaSTGAT
 

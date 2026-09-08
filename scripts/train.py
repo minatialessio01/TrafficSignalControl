@@ -10,13 +10,13 @@ Implementa l'Algorithm 1 dell'articolo con supporto a:
 
 Uso:
   # Training standard
-  python scripts/train.py --config configs/synthetic_4x4_config1.json --model MetaSTGAT
+  python scripts/train.py --config configs/synthetic_4x4_config_4x4_200m_1.3k_flat.json --model MetaSTGAT
 
   # Fermarsi all'episodio 50
-  python scripts/train.py --config configs/synthetic_4x4_config1.json --stop-at 50
+  python scripts/train.py --config configs/synthetic_4x4_config_4x4_200m_1.3k_flat.json --stop-at 50
 
   # Riprendere da un checkpoint
-  python scripts/train.py --config configs/synthetic_4x4_config1.json \\
+  python scripts/train.py --config configs/synthetic_4x4_config_4x4_200m_1.3k_flat.json \\
       --resume results/metastgat_config1/checkpoint_ep0050.pt
 
   # Premi Ctrl+C in qualsiasi momento per interrompere — viene salvato un checkpoint
