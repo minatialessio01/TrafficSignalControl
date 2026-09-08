@@ -4,163 +4,149 @@
 >
 > **Vincoli rispettati**:
 > - Ogni proposta include un **massimo di 6 modelli** (incluso il modello Full).
-> - **Tutte le modifiche introdotte** rispetto al paper originale sono mappate e rappresentate in modo coerente e scientificamente solido.
+> - **Tutte le modifiche introdotte** rispetto al paper originale (incluse le 9 note di implementazione specifiche) sono mappate e rappresentate in modo coerente e scientificamente solido.
 > - Vengono fornite **4 proposte alternative**, ciascuna con una specifica razionale metodologica, vantaggi, svantaggi e impatto per la stesura della tesi.
 
 ---
 
-## 1. Mappatura Completa delle Modifiche rispetto al Paper
+## 1. Mappatura Completa di Tutte le Modifiche rispetto al Paper
 
-Prima di strutturare i raggruppamenti, ricapitoliamo le **8 modifiche concrete** apportate all'architettura e alla pipeline:
+Ecco il censimento sistematico di tutte le modifiche introdotte nel progetto rispetto al modello base descritto in letteratura (*Wang et al., 2022*):
 
-| ID | Componente | Paper Originale (Wang et al., 2022) | Nostro Modello Avanzato (Codice Tesi) | Razionale / Ruolo |
-|:--:|:-----------|:------------------------------------|:--------------------------------------|:-------------------|
-| **M1** | **Funzione di Reward** | Pura pressione: $r_i = -P_i$ (veicoli in ingresso - in uscita) | Throughput-based multi-obiettivo: `passed - incoming - alpha*wait - wasted_penalty`, clip `[-20, 5]` | Incentiva l'effettivo deflusso e previene lo stallo di corsie secondarie. |
-| **M2** | **Vettore di Stato (`wait_vec`)** | Dim = 20: `[n_vec (12), p_vec (8)]` (solo conteggi veicoli e fase attiva) | Dim = 32: `[n_vec (12), wait_vec (12), p_vec (8)]` (aggiunto tempo max di attesa per corsia) | Fornisce alla rete l'urgenza temporale dei veicoli in coda. |
-| **M3** | **Maschera Azioni (Anti-Starvation)** | Nessun vincolo: una fase può essere scelta indefinitamente | `get_invalid_actions`: maschera una fase se selezionata $\ge 2$ volte consecutive | Impedisce il fenomeno del "verde fisso infinito" tipico nelle prime fasi di training. |
-| **M4** | **Temporal Training (BPTT + Burn-in)** | Single-step transitions: training DQN convenzionale senza sequenza | Approccio R2D2: sequenze $L=8$ con **burn-in=4** (hidden state warm-up) e BPTT su 4 step | Risolve il problema dell'*hidden state staleness* nella componente ricorrente Meta-LSTM. |
-| **M5** | **Algoritmo Q-Learning (Double DQN)** | DQN Standard: $y = r + \gamma \max_{a'} Q(s', a'; \theta^-)$ | Double DQN: $y = r + \gamma Q(s', \arg\max_{a'} Q(s', a'; \theta); \theta^-)$ | Mitiga la sistematica sovrastima dei Q-value tipica del DQN classico. |
-| **M6** | **Experience Replay (PER + IS)** | Buffer FIFO piatto (10.000), campionamento uniforme | Prioritized Experience Replay (2.400) con pesi Importance Sampling (IS) e $\beta$-annealing | Campiona con frequenza maggiore le transizioni con alto TD-error. |
-| **M7** | **Stabilizzatori di Training** | Loss MSE ($L2$), hard target update, no gradient clipping | Huber Loss (Smooth L1) pesata, Soft Polyak Update ($\tau=0.01$), Grad Clip (`max_norm=1.0`) | Previene esplosioni del gradiente e rende l'apprendimento monotonicamente più stabile. |
-| **M8** | **Regolarizzazione Meta-Learner (Tanh)** | MLP lineare senza attivazione delimitata per gli embedding | `nn.Tanh()` finale su SMK e TMK (range `[-1, 1]`) | Mantiene limitati i pesi sintetizzati dalle hypernetwork Meta-GAT e Meta-LSTM. |
-
-*(Nota: Le formalizzazioni matematiche necessarie per il funzionamento delle GNN/LSTM, come i 4 gate dell'LSTM e la matrice di proiezione $W \cdot Q$, rimangono attive in tutti i modelli in quanto implementazioni necessarie del paper).*
+| ID | Modifica / Meccanismo | Paper Originale (Wang et al., 2022) | Nostro Modello Avanzato (Codice Tesi) | Razionale / Ruolo Metodologico |
+|:--:|:----------------------|:------------------------------------|:--------------------------------------|:-------------------------------|
+| **M1** | **Reward Multi-Obiettivo Pesata** | Pura pressione: $r_i = -P_i$ (veicoli in ingresso - in uscita) | Weighted Pressure: throughput passato - veicoli entranti - $\alpha \cdot \text{max\_red\_wait}$ - penalità verde a vuoto (-50), normalizzata /100 e clippata in `[-20, 5]` | Incentiva l'effettivo deflusso, previene lo stallo di corsie secondarie e punisce fasi verdi concesse a corsie vuote. |
+| **M2** | **Campo Visivo Limitato (Cutoff 167m)** | Visibilità teorica infinita (tutta la lunghezza della strada) | Solo veicoli entro 167m dal semaforo (`cutoff = max(0, road_len - 167m)`) sia per conteggi che per code | Simula la portata reale dei sensori/telecamere fisiche all'incrocio ed evita di penalizzare veicoli lontani centinaia di metri. |
+| **M3** | **Stato Concatenato a 3 Componenti** | Dim = 20: `[n_vec (12) \|\| p_vec (8)]` (solo conteggi veicoli e fase attiva) | Dim = 32: `[n_vec (12) \|\| wait_vec (12) \|\| p_vec (8)]` con tempi massimi di attesa normalizzati (0-1) | Fornisce alla rete l'urgenza temporale dei veicoli fermi in coda oltre alla loro semplice presenza. |
+| **M4** | **Maschera Azioni Anti-Starvation** | Nessun vincolo: una fase può essere mantenuta all'infinito | `get_invalid_actions`: maschera una fase se selezionata $\ge 2$ volte consecutive (evita la stessa fase per 3 o più volte di fila) | Impedisce il collasso della policy nel "verde fisso permanente", forzando una rotazione minima delle fasi. |
+| **M5** | **Aggiornamento Pesi LSTM & BPTT con Burn-in** | Single-step DQN standard (no BPTT, transizioni isolate, stato LSTM azzerato o fisso) | Training R2D2 su sequenze $L=8$: **Burn-in di 4 step** (allineamento di $h, c$ senza gradiente) + BPTT sui 4 step successivi; pesi generati per tutti e 4 i gate ($f, i, o, c$) | Risolve l'*hidden state staleness*, garantendo che la memoria temporale della LSTM sia fisicamente consistente durante l'aggiornamento. |
+| **M6** | **Double DQN (Stima del Valore)** | DQN Standard: $y = r + \gamma \max_{a'} Q(s', a'; \theta^-)$ | Double DQN: $y = r + \gamma Q(s', \arg\max_{a'} Q(s', a'; \theta); \theta^-)$ | Elimina la sistematica sovrastima dei Q-value tipica dell'operatore max nel Q-learning classico. |
+| **M7** | **Experience Replay (PER con IS) & Buffer Size** | Buffer uniforme FIFO piatto da 10.000 transizioni singole | Prioritized Experience Replay (2.400 sequenze) con campionamento pesato su TD-error e correzione Importance Sampling (IS weights con $\beta$-annealing) | Campiona con frequenza maggiore le transizioni più informative/critiche correggendo il bias con i pesi IS. |
+| **M8** | **Huber Loss con Gradient Clipping & Soft Update** | MSE Loss ($L2$), nessun clipping, hard update periodico | Smooth L1 (Huber Loss) pesata da IS, Gradient Clipping (`max_norm=1.0`), Soft Polyak Update ($\tau=0.01$) | Stabilizza numericamente la convergenza, proteggendo la rete da gradienti esplosivi in presenza di picchi di traffico. |
+| **M9** | **Esplorazione Ciclica e Warmup** | Epsilon decay passivo indefinito senza warmup | **Warm-up**: 10 episodi iniziali random ($\epsilon=1.0$) per pre-popolare il buffer; **Ciclica**: 1 episodio random forzato ogni 10 episodi per rompere minimi locali | Evita aggiornamenti su buffer vuoto/povero e garantisce l'esplorazione di stati rari anche a training avanzato. |
+| **M10**| **Regolarizzazione Meta-Learner (Tanh)** | MLP lineare senza attivazione delimitata | `nn.Tanh()` finale per confinare gli embedding dei pesi sintetizzati in `[-1, 1]` | Previene la divergenza dei parametri generati dalle hypernetwork Meta-GAT e Meta-LSTM. |
 
 ---
 
 ## 2. Proposta 1: Raggruppamento per "Sottosistemi Funzionali" (Macro-Aree Logiche)
 
 ### Concetto Guida
-Si raggruppano le 8 modifiche in **4 macro-aree funzionali ad alta coesione**. Ciascun modello di ablazione disattiva un intero sottosistema per quantificare il valore aggiunto di quell'area logica rispetto al paper.
+Le 10 modifiche vengono aggregate in **4 macro-aree funzionali omogenee**. Ciascun modello di ablazione disattiva un intero sottosistema per quantificare il valore aggiunto di quell'area logica rispetto al paper.
 
 ### Composizione del Gruppo (6 Modelli)
 
-| # | Nome Modello | Modifiche Attive | Modifiche Rimosse (Disattivate) | Domanda Scientifica a cui Risponde |
-|:--|:-------------|:-----------------|:--------------------------------|:-----------------------------------|
-| **1** | **MetaSTGAT-Full** | Tutte (M1..M8) | Nessuna (Modello completo) | Benchmark di riferimento delle massime prestazioni raggiungibili. |
-| **2** | **Abl-MDP** *(Environment)* | M4, M5, M6, M7, M8 | **M1, M2, M3** (Torna a reward $-P_i$, stato 20 dim senza `wait_vec`, no action mask) | *Quanto incide la nuova formulazione dell'ambiente/MDP (reward + stato arricchito + anti-starvation) sulle prestazioni?* |
-| **3** | **Abl-Temporal** *(Recurrence)* | M1, M2, M3, M5, M6, M7, M8 | **M4** (Torna a training single-step senza BPTT né burn-in) | *L'addestramento R2D2 (BPTT sequenziale + burn-in) è davvero necessario per sfruttare la memoria LSTM, o basta il training standard?* |
-| **4** | **Abl-RLCore** *(Value Estimation)* | M1, M2, M3, M4, M6, M7, M8 | **M5** (Torna a DQN standard invece di Double DQN) | *Quanto giova l'uso di Double DQN nell'eliminare la sovrastima dei Q-value in questo ambiente di traffico?* |
-| **5** | **Abl-Optimization** *(Sampling & Stability)* | M1, M2, M3, M4, M5 | **M6, M7, M8** (Torna a Replay uniforme 10k, MSE loss, hard target update, no grad clip) | *L'insieme delle tecniche di campionamento prioritario (PER) e stabilizzazione numerica fa una reale differenza sui tempi di convergenza?* |
-| **6** | **MetaSTGAT-Paper** | Nessuna | **Tutte (M1..M8)** | Replicazione fedele del modello originale di Wang et al. (2022). |
+| # | Nome Modello | Modifiche Attive | Modifiche Disattivate (Ablate) | Domanda Scientifica a cui Risponde |
+|:--|:-------------|:-----------------|:-------------------------------|:-----------------------------------|
+| **1** | **MetaSTGAT-Full** | Tutte (M1..M10) | Nessuna (Modello avanzato completo) | Benchmark di riferimento delle massime prestazioni raggiungibili. |
+| **2** | **Abl-Environment** *(MDP & Sensori)* | M5..M10 | **M1, M2, M3, M4** (Torna a reward pura pressione $-P_i$, visibilità infinita, stato a 20 dim senza `wait_vec`, no action mask) | *Quanto incide l'ingegnerizzazione dell'ambiente (reward pesata, cutoff sensori 167m, wait times e anti-starvation) sul controllo del traffico?* |
+| **3** | **Abl-TemporalLSTM** *(Recurrence & BPTT)* | M1..M4, M6..M10 | **M5** (Torna a training single-step senza BPTT né burn-in; LSTM senza warm-up dinamico) | *L'addestramento R2D2 (BPTT sequenziale + burn-in per allineare l'hidden state) è indispensabile per valorizzare la memoria LSTM?* |
+| **4** | **Abl-RLCore** *(Value Estimation)* | M1..M5, M7..M10 | **M6** (Torna a DQN standard invece di Double DQN) | *Quanto incide la sovrastima dei Q-value sulle decisioni semaforiche agli incroci?* |
+| **5** | **Abl-ReplayStability** *(Sampling & Ottimizzazione)* | M1..M6 | **M7, M8, M9, M10** (Buffer uniforme 10k senza PER/IS, MSE loss senza grad clip, no warmup/esplorazione ciclica) | *L'infrastruttura di memoria (PER + IS), l'ottimizzazione robusta (Huber + clip) e il regime di esplorazione garantiscono una convergenza superiore?* |
+| **6** | **MetaSTGAT-Paper** | Nessuna | **Tutte (M1..M10)** | Replicazione fedele dell'architettura e della procedura del paper originale. |
 
-### Vantaggi e Svantaggi per la Tesi
-- **Vantaggi**:
-  - Copre esattamente il 100% delle modifiche senza lasciarne fuori nessuna.
-  - Narrazione accademica molto lineare: capitoli dedicati a *"Modellazione MDP"*, *"Dinamica Temporale Recurrent"*, *"Algoritmo di Controllo"* e *"Stabilizzazione del Training"*.
-  - Include direttamente il confronto con il modello del Paper all'interno dei 6 modelli.
-- **Svantaggi**:
-  - In `Abl-MDP` e `Abl-Optimization` sono aggregate più modifiche assieme: se una di queste componenti crea un effetto opposto a un'altra, l'effetto netto potrebbe nascondere dettagli secondari.
+### Vantaggi e Svantaggi
+- **Vantaggi**: Copertura al 100% di tutte le modifiche; narrazione per la tesi impeccabile (capitoli: Ambiente/MDP, Ricorrenza Temporale, Algoritmo RL, Stabilità & Memoria).
+- **Svantaggi**: I blocchi Ambiente e ReplayStability aggregano più componenti strettamente cooperanti.
 
 ---
 
 ## 3. Proposta 2: Raggruppamento "Leave-One-Out ad Alto Impatto" (Isolamento Puntuale)
 
 ### Concetto Guida
-Nello standard dei paper di Deep RL (es. ICLR / NeurIPS), la prassi metodologica più rigorosa è il **Leave-One-Out (LOO)**: si parte dal modello migliore (Full) e si disattiva **un singolo componente isolato alla volta**.
-Per non superare i 6 modelli, le tecniche di regolarizzazione di base (M7: Huber/GradClip e M8: Tanh) e l'Action Masking (M3) vengono considerate standard infrastrutturali comuni e mantenute attive come "baseline robusta", mentre si testano i 4 veri "motori" algoritmici.
+Lo standard scientifico dei paper di riferimento (NeurIPS, ICLR, AAAI) prevede di testare il **Leave-One-Out (LOO)** sui singoli fattori chiave. Gli stabilizzatori di base (M8: Huber/clip, M9: warmup, M10: Tanh, M4: maschera) vengono mantenuti come standard condiviso di robustezza, mentre si isolano i 4 grandi driver metodologici.
 
 ### Composizione del Gruppo (6 Modelli)
 
 | # | Nome Modello | Modifica Disattivata | Descrizione Configurazione | Domanda Scientifica a cui Risponde |
 |:--|:-------------|:---------------------|:---------------------------|:-----------------------------------|
-| **1** | **MetaSTGAT-Full** | Nessuna | Modello Avanzato completo (M1..M8) | Benchmark di riferimento. |
-| **2** | **Abl-NoCustomReward** | **M1** (Reward) | Usa la reward originale $-P_i$ (pressione), ma mantiene stato dim=32, Double DQN, PER, BPTT | *La nuova funzione di reward throughput-based supera davvero la reward di pressione originale a parità di rete e training?* |
-| **3** | **Abl-NoWaitState** | **M2** (Stato) | Rimuove `wait_vec`: stato a dimensione 20 (solo veicoli e fase), tutto il resto invariato | *L'informazione del tempo di attesa nello stato apporta effettivo valore decisionale alla rete neurale?* |
-| **4** | **Abl-NoDoubleDQN** | **M5** (DQN) | Usa Vanilla DQN standard (target max), tutto il resto invariato | *Qual è l'apporto isolato del meccanismo Double DQN sul controllo del traffico?* |
-| **5** | **Abl-NoBPTT** | **M4** (BPTT) | Rimuove BPTT su sequenze e burn-in: training su singole transizioni ($L=1$) | *Quanto degrada la componente temporale Meta-LSTM se addestrata senza finestre sequenziali di BPTT?* |
-| **6** | **Abl-NoPER** | **M6** (Replay) | Replay buffer uniforme standard (no TD-priority, no IS weights) | *Il campionamento prioritario (PER) accelera o migliora le performance rispetto al campionamento casuale uniforme?* |
+| **1** | **MetaSTGAT-Full** | Nessuna | Modello Avanzato completo (M1..M10) | Benchmark di riferimento. |
+| **2** | **Abl-NoCustomReward** | **M1, M2** (Reward & Visibilità) | Torna alla pressione pura $-P_i$ e campo visivo globale, mantenendo stato a 32 dim, Double DQN, PER, BPTT | *La formulazione della reward multi-obiettivo con visibilità limitata a 167m supera la pressione teorica pura a parità di rete?* |
+| **3** | **Abl-NoWaitState** | **M3** (Stato) | Rimuove `wait_vec`: stato a 20 dim (solo veicoli e fase), tutto il resto invariato | *L'informazione sul tempo massimo di attesa delle corsie apporta un reale vantaggio decisionale?* |
+| **4** | **Abl-NoBPTT-LSTM** | **M5** (BPTT & Burn-in) | Training standard single-step ($L=1$ senza burn-in per la LSTM) | *Qual è l'impatto dell'hidden state staleness sulla capacità di previsione temporale della rete?* |
+| **5** | **Abl-NoDoubleDQN** | **M6** (DQN) | Q-learning standard con target max, tutto il resto invariato | *Qual è l'apporto netto del Double DQN nel prevenire la divergenza delle stime di valore?* |
+| **6** | **Abl-NoPER** | **M7** (PER & IS) | Buffer con campionamento uniforme (senza priorità TD e senza pesi IS) | *Il campionamento prioritario (PER) con pesi IS produce traiettorie di apprendimento migliori rispetto al replay casuale?* |
 
-### Vantaggi e Svantaggi per la Tesi
-- **Vantaggi**:
-  - **Massima purezza scientifica**: nessun problema di attribuzione ("attribution bias"). Qualsiasi variazione di travel time è attribuibile al 100% a quel singolo componente.
-  - Tabelle e grafici a barre chiarissimi nella discussione dei risultati: un istogramma in cui ogni barra mostra la perdita di prestazione causata dalla rimozione di quello specifico componente.
-- **Svantaggi**:
-  - M7 (stabilizzatori numerici) e M3 (maschera) rimangono attivi come parte integrante dell'infrastruttura condivisa e non vengono spenti individualmente (anche se possono essere discussi come *default engineering choices*).
+### Vantaggi e Svantaggi
+- **Vantaggi**: **Massima purezza e rigore accademico**. Non esiste ambiguità di attribuzione: il calo di prestazioni è dovuto esclusivamente al singolo fattore disattivato.
+- **Svantaggi**: Lascia invariati gli aspetti di ottimizzazione numerica (Huber, grad clip, warmup), considerati "buone pratiche ingegneristiche" di default.
 
 ---
 
 ## 4. Proposta 3: Raggruppamento "Ingegneria del Dominio vs Algoritmi di Intelligenza Artificiale"
 
 ### Concetto Guida
-Separa chiaramente le modifiche in base alla loro natura concettuale:
-1. **Ingegneria del Dominio (Traffic & Transportation Engineering)**: cosa abbiamo detto alla rete sul problema del traffico (Reward, Stato con attese, Vincolo sulle fasi consecutive).
-2. **Intelligenza Artificiale (Deep RL & Machine Learning)**: come la rete impara ed elabora le informazioni (Double DQN, Recurrent Temporal Training, Prioritized Experience Replay).
+Separa chiaramente i contributi tra:
+1. **Ingegneria del Problema di Traffico (Domain Engineering)**: Reward pesata, visibilità limitata dei sensori, attese nello stato, vincolo di rotazione fasi.
+2. **Ingegneria del Machine Learning (Deep RL & Architecture)**: BPTT + Burn-in, Double DQN, PER con pesi IS, stabilizzatori di training.
 
 ### Composizione del Gruppo (6 Modelli)
 
-| # | Nome Modello | Settore Ablato | Dettaglio Modifiche | Valore per la Tesi |
-|:--|:-------------|:---------------|:--------------------|:-------------------|
+| # | Nome Modello | Settore Disattivato | Dettaglio Tecnico | Valore Aggiunto per la Tesi |
+|:--|:-------------|:--------------------|:------------------|:----------------------------|
 | **1** | **MetaSTGAT-Full** | Nessuno | Sistema completo al 100% | Configurazione di punta della tesi. |
-| **2** | **Abl-TrafficEnv** | Dominio Traffico (M1, M2, M3) | Ambiente Paper puro (stato 20, reward $-P_i$, no mask) + Motore RL Avanzato | Risponde a: *"Se applichiamo il Deep RL più moderno ma manteniamo l'ambiente grezzo del paper, quanto otteniamo?"* |
-| **3** | **Abl-RecurrentLearning** | Apprendimento Temporale (M4) | Rimuove BPTT sequenziale e burn-in (training single-step) | Risponde a: *"La gestione esplicita della memoria a lungo termine tramite BPTT è il fattore determinante per l'LSTM?"* |
-| **4** | **Abl-ValueEstimator** | Teoria RL (M5) | Sostituisce Double DQN con Vanilla DQN | Risponde a: *"L'overestimation bias compromette la convergenza dei semafori?"* |
-| **5** | **Abl-ExperienceMemory** | Memoria e Campionamento (M6, M7) | Sostituisce PER con buffer piatto uniforme e loss MSE | Risponde a: *"Il replay uniforme standard è sufficiente per compiti cooperativi multi-incrocio?"* |
-| **6** | **MetaSTGAT-Paper** | Entrambi i settori (M1..M8) | Ripristina il modello originale del paper | Baseline di confronto originaria da superare. |
+| **2** | **Abl-TrafficDomain** | Dominio Traffico (M1, M2, M3, M4) | Ambiente Paper originale (stato 20, reward $-P_i$, visibilità globale, no mask) + Motore RL Avanzato completo | *Se applichiamo il Deep RL più evoluto ma manteniamo la modellazione del traffico grezza del paper, quanto si perde?* |
+| **3** | **Abl-RecurrentDynamics** | Dinamica LSTM (M5) | Rimuove BPTT su sequenze e burn-in (training single-step per LSTM) | *La gestione esplicita della continuità temporale tramite BPTT è il fattore abilitante per la Meta-LSTM?* |
+| **4** | **Abl-ValueEstimator** | Teoria RL (M6) | Sostituisce Double DQN con Vanilla DQN | *Quanto pesa il bias di sovrastima nelle decisioni coordinate della rete?* |
+| **5** | **Abl-MemoryAndExploration**| Memoria & Esplorazione (M7, M8, M9) | Rimuove PER/IS (buffer uniforme piatto), MSE loss, no warmup/esplorazione ciclica | *Quanto contano le strategie avanzate di replay e di diversificazione dell'esplorazione per evitare minimi locali?* |
+| **6** | **MetaSTGAT-Paper** | Entrambi i settori (M1..M10) | Ripristina il modello originale del paper | Benchmark originario di partenza da superare. |
 
-### Vantaggi e Svantaggi per la Tesi
-- **Vantaggi**:
-  - Molto apprezzata dai docenti e dalle commissioni di laurea perché dimostra che la tesi non è solo un esercizio di programmazione, ma affronta criticamente sia l'**ingegneria del problema reale (trasporti)** sia la **teoria del machine learning**.
-  - Permette di trarre conclusioni chiare su quale delle due aree porti il maggiore beneficio.
-- **Svantaggi**:
-  - `Abl-ExperienceMemory` accoppia PER e stabilizzatori, pur essendo entrambi appartenenti all'area del campionamento e dell'ottimizzazione.
+### Vantaggi e Svantaggi
+- **Vantaggi**: Divide in modo eccellente il lavoro della tesi tra "comprensione dei trasporti urbani" e "innovazione metodologica di intelligenza artificiale".
+- **Svantaggi**: Richiede di spiegare bene la distinzione concettuale tra le due sfere.
 
 ---
 
 ## 5. Proposta 4: Raggruppamento "Incrementale a Stadi" (Evoluzione Cumulativa dal Paper al Full)
 
 ### Concetto Guida
-Invece di procedere per sottrazione (top-down), si dimostra l'evoluzione **bottom-up**: si parte dal Paper originale e si aggiunge un "blocco di innovazione" alla volta fino a completare il modello Full. Questo approccio è ideale per grafici temporali e curve a gradini ("progressione delle prestazioni").
+Approccio *bottom-up*: si parte dal modello originale del Paper e si aggiunge un livello di innovazione alla volta. Questo approccio è ideale per mostrare una curva a gradini delle prestazioni dove ogni aggiunta dimostra una riduzione sistematica del Travel Time.
 
 ### Composizione del Gruppo (5 Modelli)
 
 ```
-[M0: Paper Originale]
-       ↓ + (Reward throughput + wait_vec + action mask)
-[M1: + Nuova Modellazione Traffico (MDP)]
-       ↓ + (BPTT su sequenze L=8 + Burn-in=4)
-[M2: + Addestramento Temporale Recurrent]
-       ↓ + (Double DQN + Huber Loss + Polyak update)
-[M3: + Stabilizzazione RL e Value Target]
-       ↓ + (Prioritized Experience Replay - PER)
-[M4: MetaSTGAT Avanzato Completo]
+[Stage 0: MetaSTGAT Paper Originale]
+       ↓ + (Reward weighted pressure + Cutoff 167m + wait_vec + Anti-starvation mask)
+[Stage 1: + Modellazione del Problema di Traffico (MDP)]
+       ↓ + (BPTT su sequenze L=8 + Burn-in=4 + Warmup pesi LSTM)
+[Stage 2: + Addestramento Temporale Recurrent]
+       ↓ + (Double DQN + Huber Loss + Gradient Clipping + Soft Target Update)
+[Stage 3: + Algoritmo RL Robusto & Stima del Valore]
+       ↓ + (Prioritized Experience Replay con IS + Esplorazione Ciclica)
+[Stage 4: MetaSTGAT Avanzato Completo]
 ```
 
-| # | Modello | Descrizione Tecnica Cumulativa | Delta introdotto rispetto al precedente |
-|:--|:--------|:-------------------------------|:----------------------------------------|
-| **1** | **Stage-0 (Paper Base)** | Il modello originale del paper (Stato 20, reward $-P_i$, no mask, DQN standard, buffer uniforme, single-step). | Baseline di partenza. |
-| **2** | **Stage-1 (+ MDP Design)** | Stage-0 + **M1 (Reward), M2 (wait_vec), M3 (Action Mask)**. | Misura il guadagno della sola ridefinizione del problema di traffico. |
-| **3** | **Stage-2 (+ Recurrence)** | Stage-1 + **M4 (BPTT sequenziale $L=8$ + Burn-in=4)**. | Aggiunge la corretta dinamica temporale per l'LSTM. |
-| **4** | **Stage-3 (+ RL Engine)** | Stage-2 + **M5 (Double DQN) + M7 (Huber Loss, Soft Update)**. | Aggiunge l'algoritmo di stima del valore avanzato e la stabilità dei gradienti. |
-| **5** | **Stage-4 (Full Model)** | Stage-3 + **M6 (Prioritized Experience Replay)** + **M8 (Tanh)**. | Modello finale avanzato completo. |
+| # | Modello | Descrizione Tecnica Cumulativa | Innovazione rispetto allo stadio precedente |
+|:--|:--------|:-------------------------------|:--------------------------------------------|
+| **1** | **Stage-0 (Paper Base)** | Il modello originale del paper (Stato 20, reward $-P_i$, visibilità infinita, no mask, DQN standard, buffer uniforme, single-step). | Baseline di partenza di Wang et al. |
+| **2** | **Stage-1 (+ Traffic Design)** | Stage-0 + **M1 (Weighted Reward), M2 (Cutoff 167m), M3 (wait_vec), M4 (Anti-starvation)**. | Isola il guadagno derivante dalla sola corretta formulazione del traffico urbano. |
+| **3** | **Stage-2 (+ Recurrent Dynamics)** | Stage-1 + **M5 (BPTT $L=8$ + Burn-in=4 + Allineamento hidden state LSTM)**. | Integra la reale comprensione delle serie storiche temporali. |
+| **4** | **Stage-3 (+ RL Engine & Stability)** | Stage-2 + **M6 (Double DQN) + M8 (Huber Loss, Grad Clip, Soft Update)**. | Elimina la sovrastima e stabilizza i gradienti. |
+| **5** | **Stage-4 (Full Model)** | Stage-3 + **M7 (PER con pesi IS) + M9 (Warmup & Esplorazione Ciclica) + M10 (Tanh)**. | Modello finale avanzato completo. |
 
-### Vantaggi e Svantaggi per la Tesi
+### Vantaggi e Svantaggi
 - **Vantaggi**:
-  - Conta solo **5 modelli** (risparmio di tempo di calcolo e GPU!).
-  - Costruisce un "filo rosso" narrativo perfetto nella tesi: ogni capitolo dimostra un miglioramento incrementale del travel time ($Stage_0 \to Stage_1 \to Stage_2 \to Stage_3 \to Stage_4$).
-  - Dimostra che ogni singola scelta progettuale è stata aggiunta per risolvere un limite tangibile della versione precedente.
+  - Conta solo **5 modelli** (massima efficienza nei tempi di calcolo!).
+  - Costruisce una progressione narrativa naturale: ogni stadio risolve un collo di bottiglia specifico del precedente.
 - **Svantaggi**:
-  - Non è un'ablazione "pura" di tipo Leave-One-Out (non isola l'effetto di un componente da solo sul modello full, ma ne misura l'impatto progressivo).
+  - L'effetto di ogni blocco è misurato in sequenza cumulativa, non isolato in senso "Leave-One-Out".
 
 ---
 
-## 6. Tabella Comparativa delle 4 Proposte
+## 6. Tabella di Raffronto delle 4 Proposte
 
 | Criterio | Proposta 1 (Sottosistemi) | Proposta 2 (Leave-One-Out) | Proposta 3 (Dominio vs AI) | Proposta 4 (Incrementale a Stadi) |
 |:---------|:-------------------------:|:--------------------------:|:--------------------------:|:---------------------------------:|
-| **Numero di Modelli** | 6 modelli | 6 modelli | 6 modelli | **5 modelli** |
+| **Numero Totale Modelli** | 6 modelli | 6 modelli | 6 modelli | **5 modelli** |
 | **Copertura Modifiche** | 100% esaustiva | 100% (con base comune) | 100% esaustiva | 100% cumulativa |
-| **Rigorosità Scientifica** | Alta | **Massima (Top-tier)** | Alta | Molto buona |
-| **Facilità di Spiegazione in Tesi** | Molto alta | Alta | **Eccellente** | **Intuitiva al 100%** |
-| **Isolamento dei Singoli Effetti** | Medio-Alto | **Puro (Singolo fattore)** | Medio-Alto | Incrementale |
-| **Presenza Baseline Paper** | Sì (inclusa) | Modello Full al centro | Sì (inclusa) | Sì (punto di partenza) |
+| **Rigorosità Scientifica** | Molto alta | **Massima (Top-tier)** | Molto alta | Ottima |
+| **Narrativa della Tesi** | Lineare per macro-aree | Analitica fattore per fattore | **Ideale per commissione mista** | **Evoluzione passo-passo** |
+| **Isolamento Effetti** | Per sottosistema | **Singolo fattore puro** | Per macro-settore | Incrementale cumulativo |
+| **Costo Computazionale** | Standard (6 run) | Standard (6 run) | Standard (6 run) | **Minimo (5 run)** |
 
 ---
 
-## 7. Raccomandazione Finale
+## 7. Raccomandazione per la Tesi
 
-Per massimizzare l'impatto accademico della tesi in base ai tuoi obiettivi:
-
-1. **Se vuoi il massimo rigore scientifico e isolamento causale**: Scegli la **Proposta 2 (Leave-One-Out)**. Permette di affermare senza ombra di dubbio: *"La rimozione di X dal modello completo ha causato un degrado del Y% nel travel time"*.
-2. **Se vuoi la massima chiarezza concettuale e coesione tematica**: Scegli la **Proposta 1 (Sottosistemi Funzionali)**. Suddivide perfettamente l'analisi tra Ambiente, Ricorrenza, Algoritmo RL e Ottimizzazione.
-3. **Se vuoi ottimizzare i tempi di calcolo con una narrazione fluida**: Scegli la **Proposta 4 (Incrementale)**. Con soli 5 modelli mostri l'evoluzione passo-passo che giustifica l'intero lavoro di tesi.
+- Se intendi dimostrare che il lavoro ha seguito il metodo scientifico più rigoroso per isolare le singole componenti: **Scegli la Proposta 2 (Leave-One-Out)**.
+- Se vuoi strutturare i capitoli della tesi in modo pulito e bilanciato tra trasporti e machine learning: **Scegli la Proposta 1 o la Proposta 3**.
+- Se vuoi ridurre i tempi di addestramento mantenendo una narrazione impeccabile dell'evoluzione del progetto: **Scegli la Proposta 4**.
