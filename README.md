@@ -27,9 +27,11 @@ CodiceTesi/
 ├── scripts/
 │   ├── generate_synthetic_data.py
 │   ├── download_real_data.py
-│   ├── train.py              # Training principale
-│   ├── test.py               # Valutazione
-│   └── ablation.py           # Ablation study
+│   ├── main.py                # Punto di ingresso unico: train + test + plot (1 o N modelli)
+│   ├── train.py                # Training (su un'unica configurazione)
+│   ├── test.py                # Valutazione
+│   ├── plot_results.py         # Grafici e tabelle di confronto
+│   └── legacy/                 # Script superati, tenuti come riferimento
 └── results/                  # Checkpoint, log, metriche (creato automaticamente)
 ```
 
@@ -149,16 +151,20 @@ Output: travel time medio (s) e throughput (veicoli) — stesse metriche dell'ar
 
 ---
 
-## Ablation study
+## Pipeline sperimentale completa (Pro / Paper / Ablation / Baseline)
 
 ```bash
-python scripts/ablation.py \
-    --config configs/synthetic_4x4_config2.json \
-    --episodes 100 \
-    --output results/ablation
+# Un solo modello (comodo per il debug, esegue tutto in-process)
+python scripts/main.py --model metastgat_pro
+
+# Tutti gli 8 modelli (Pro, Paper, 4 ablation, FixedTime, MaxPressure):
+# allenamento su 2 config in curriculum, test sulle 8 config di generalizzazione,
+# grafici e tabelle finali in results/plots/
+python scripts/main.py --models all
 ```
 
-Allena in sequenza: `GAT-only`, `STGAT`, `MetaGAT`, `MetaLSTM`, `MetaSTGAT` e confronta i risultati.
+Vedi `descrizione_scripts.md` per il dettaglio di `main.py`/`train.py`/`test.py`/`plot_results.py`,
+e `implementation_plan.md`/`task.md` per la definizione completa dei modelli e delle config confrontate.
 
 ---
 

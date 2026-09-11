@@ -103,7 +103,7 @@ rewards[iid] = max(min(normalized_reward, 5.0), -20.0)
 | Penalita' attesa corsie rosse | Non presente | `-alpha·max_red_wait_time` (alpha=0.5) |
 | Penalita' verde sprecato | Non presente | `-50.0` se nessun veicolo passa |
 | Normalizzazione | Non presente | Divisione /100, clip [-20, +5] |
-| Finestra veicoli | Intera intersezione | Solo entro 167m dal semaforo |
+| Finestra veicoli | Intera intersezione | Solo entro VISION_CUTOFF_M dal semaforo (~144m) |
 
 > **Motivazione**: Il reward originale (pura pressione) puo' essere instabile. La formula
 > riscritta promuove throughput esplicito e penalizza attese prolungate.

@@ -4,7 +4,9 @@ Generazione parametrica dei dataset sintetici per MetaSTGAT.
 
 Crea una griglia rettangolare MxN di intersezioni con configurazioni di traffico
 calcolate "al contrario" in base a un target esatto di veicoli.
-Supporta distribuzione flat, peak (3 fasi) e peak2 (5 fasi, opzionale).
+Supporta distribuzione flat, peak (3 fasi), peaks (5 fasi double-peak) e
+workday (5 fasce a durata e intensita' asimmetriche, tipo giornata lavorativa:
+flat_basso -> peak_basso -> flat_alto -> peak_alto -> flat_basso).
 """
 
 import json
@@ -119,7 +121,14 @@ PHASE_ROADLINKS = [
 ]
 
 def build_lightphases():
-    return [{'time': DELTA_T, 'availableRoadLinks': indices} for indices in PHASE_ROADLINKS]
+    phases = [{'time': DELTA_T, 'availableRoadLinks': indices} for indices in PHASE_ROADLINKS]
+    # 9a fase di tutto-rosso (nessun movimento abilitato), indice = len(PHASE_ROADLINKS) = 8.
+    # Mai selezionabile dall'agente: cityflow_env.py la usa internamente per RED_TIME
+    # secondi tra un'azione e la successiva (vedi ALL_RED_PHASE in cityflow_env.py).
+    # Necessaria in OGNI roadnet generato, altrimenti CityFlow va in out_of_range
+    # non appena l'ambiente prova a impostarla.
+    phases.append({'time': 2, 'availableRoadLinks': []})
+    return phases
 
 def get_inter_id(r, c): return f"intersection_{r}_{c}"
 def get_road_id(from_r, from_c, to_r, to_c): return f"road_{from_r}_{from_c}_to_{to_r}_{to_c}"
@@ -218,7 +227,8 @@ def make_simple_roadnet(grid_r: int, grid_c: int, road_length: int) -> dict:
 # ============================================================
 
 def make_flow(target_vehicles: int, variance_type: str,
-              grid_r: int, grid_c: int, duration: int = SIMULATION_DURATION, seed: int = 42) -> list:
+              grid_r: int, grid_c: int, duration: int = SIMULATION_DURATION, seed: int = 42,
+              workday_rates: dict = None) -> list:
     rng = random.Random(seed)
     flows = []
     
@@ -276,10 +286,11 @@ def make_flow(target_vehicles: int, variance_type: str,
     }
 
     for route, weight in all_paths:
-        v_route = target_vehicles * (weight / total_weight)
-        if v_route < 1: continue
+        frac = weight / total_weight
 
-        if variance_type == "flat": 
+        if variance_type == "flat":
+            v_route = target_vehicles * frac
+            if v_route < 1: continue
             interval = duration / v_route
             flows.append({
                 "vehicle": veh_params,
@@ -288,48 +299,77 @@ def make_flow(target_vehicles: int, variance_type: str,
                 "startTime": 0,
                 "endTime": duration
             })
-            
-        elif variance_type == "peak": 
-            # Low (25%) -> Peak (50%) -> Low (25%)
+
+        elif variance_type == "peak":
+            # Low (25%) -> Peak (50%) -> Low (25%). Confini a 1/3 e 2/3 della
+            # durata (generalizzato: prima erano assoluti 600/1200, validi
+            # solo per duration=1800).
+            v_route = target_vehicles * frac
+            if v_route < 1: continue
+            t1, t2 = duration / 3.0, 2.0 * duration / 3.0
             v_bg1 = v_route * 0.25
             v_pk  = v_route * 0.50
             v_bg2 = v_route * 0.25
-            
+
             if v_bg1 > 0.5:
-                interval_bg1 = 600 / v_bg1
-                flows.append({"vehicle": veh_params, "route": route, "interval": float(max(1.0, interval_bg1 + rng.gauss(0, interval_bg1*0.1))), "startTime": 0, "endTime": 600})
+                interval_bg1 = t1 / v_bg1
+                flows.append({"vehicle": veh_params, "route": route, "interval": float(max(1.0, interval_bg1 + rng.gauss(0, interval_bg1*0.1))), "startTime": 0, "endTime": round(t1)})
             if v_pk > 0.5:
-                interval_pk = 600 / v_pk
-                flows.append({"vehicle": veh_params, "route": route, "interval": float(max(1.0, interval_pk + rng.gauss(0, interval_pk*0.1))), "startTime": 600, "endTime": 1200})
+                interval_pk = (t2 - t1) / v_pk
+                flows.append({"vehicle": veh_params, "route": route, "interval": float(max(1.0, interval_pk + rng.gauss(0, interval_pk*0.1))), "startTime": round(t1), "endTime": round(t2)})
             if v_bg2 > 0.5:
-                interval_bg2 = (duration - 1200) / v_bg2
-                flows.append({"vehicle": veh_params, "route": route, "interval": float(max(1.0, interval_bg2 + rng.gauss(0, interval_bg2*0.1))), "startTime": 1200, "endTime": duration})
+                interval_bg2 = (duration - t2) / v_bg2
+                flows.append({"vehicle": veh_params, "route": route, "interval": float(max(1.0, interval_bg2 + rng.gauss(0, interval_bg2*0.1))), "startTime": round(t2), "endTime": duration})
 
         elif variance_type == "peaks":
             # 5 Fasi: Low(9%) -> Peak1(36.5%) -> Low(9%) -> Peak2(36.5%) -> Low(9%)
-            # Ogni fascia dura 360 secondi
+            # Ogni fascia dura duration/5 secondi (generalizzato: prima erano
+            # blocchi assoluti da 360s, validi solo per duration=1800).
+            v_route = target_vehicles * frac
+            if v_route < 1: continue
             w_low = 1.0 / 11.0
             w_pk = 4.0 / 11.0
-            
-            v_low1 = v_route * w_low
-            v_pk1  = v_route * w_pk
-            v_low2 = v_route * w_low
-            v_pk2  = v_route * w_pk
-            v_low3 = v_route * w_low
-            
-            segments = [
-                (0, 360, v_low1), (360, 720, v_pk1), (720, 1080, v_low2),
-                (1080, 1440, v_pk2), (1440, duration, v_low3)
-            ]
-            
-            for start, end, v_seg in segments:
+            bounds = [round(duration * k / 5.0) for k in range(6)]
+            weights_list = [w_low, w_pk, w_low, w_pk, w_low]
+
+            for i, w in enumerate(weights_list):
+                v_seg = v_route * w
                 if v_seg > 0.5:
+                    start, end = bounds[i], bounds[i + 1]
                     seg_dur = end - start
                     interval = seg_dur / v_seg
                     flows.append({
                         "vehicle": veh_params, "route": route,
                         "interval": float(max(1.0, interval + rng.gauss(0, interval*0.1))),
                         "startTime": start, "endTime": end
+                    })
+
+        elif variance_type == "workday":
+            # 5 fasce asimmetriche che mappano una giornata lavorativa di 24h
+            # sulla durata della simulazione (default 3600s -> 150s/ora):
+            #   00-07 flat_basso, 07-09 peak_basso, 09-16 flat_alto,
+            #   16-19 peak_alto, 19-24 flat_basso.
+            # Ogni intensita' e' un "rate" espresso in veicoli equivalenti per
+            # 1800s (stessa unita' delle altre config), convertito in veicoli
+            # assoluti per la fascia in base alla sua durata reale.
+            r = workday_rates
+            day_fracs = [
+                (0/24, 7/24,  r["basso"]),
+                (7/24, 9/24,  r["peak_basso"]),
+                (9/24, 16/24, r["alto"]),
+                (16/24, 19/24, r["peak_alto"]),
+                (19/24, 24/24, r["basso"]),
+            ]
+            for f_start, f_end, rate in day_fracs:
+                seg_start, seg_end = f_start * duration, f_end * duration
+                seg_dur = seg_end - seg_start
+                v_seg = rate * (seg_dur / 1800.0) * frac
+                if v_seg > 0.5:
+                    interval = seg_dur / v_seg
+                    flows.append({
+                        "vehicle": veh_params, "route": route,
+                        "interval": float(max(1.0, interval + rng.gauss(0, interval*0.1))),
+                        "startTime": round(seg_start), "endTime": round(seg_end)
                     })
 
     return flows
@@ -358,9 +398,32 @@ if __name__ == "__main__":
     parser.add_argument("--output-dir", default="data", help="Directory per i dati")
     parser.add_argument("--config-dir", default="configs", help="Directory per le config")
     parser.add_argument("--grid", type=str, required=True, help="Dimensione griglia (es. 4x4, 3x5)")
-    parser.add_argument("--road-length", type=int, default=200, help="Lunghezza delle strade in metri")
-    parser.add_argument("--vehicles", type=str, required=True, help="Quantità di veicoli esatta o in k (es. 8000, 8k, 1.3k)")
-    parser.add_argument("--variance", type=str, required=True, choices=["flat", "peak", "peaks"], help="Distribuzione (peaks è la double_peak)")
+    parser.add_argument("--road-length", type=int, default=200, help="Lunghezza delle strade in metri (parametro fisico: la distanza reale tra incroci e' road-length + 60)")
+    parser.add_argument("--road-length-label", type=str, default=None,
+                        help="Etichetta da usare nei nomi file al posto di --road-length "
+                             "(es. --road-length 107 --road-length-label 100: nome 'pulito' "
+                             "per una rete la cui distanza reale, 107+60=167m, e' calibrata "
+                             "per l'onda verde). Default: uguale a --road-length.")
+    parser.add_argument("--duration", type=int, default=SIMULATION_DURATION,
+                        help=f"Durata simulazione in secondi (default {SIMULATION_DURATION}; "
+                             "usare 3600 per --variance workday).")
+    parser.add_argument("--vehicles", type=str, default=None,
+                        help="Quantità di veicoli esatta o in k (es. 8000, 8k, 1.3k). "
+                             "Obbligatorio per flat/peak/peaks, ignorato per workday.")
+    parser.add_argument("--variance", type=str, required=True, choices=["flat", "peak", "peaks", "workday"],
+                        help="Distribuzione: flat (costante), peak (3 fasi), peaks (5 fasi double-peak), "
+                             "workday (5 fasce a durata/intensita' asimmetriche, tipo giornata lavorativa).")
+    parser.add_argument("--rate-basso", type=float, default=2160,
+                        help="[solo --variance workday] intensita' 'bassa' (veicoli equiv./1800s) = 1.2 veic./s. Default 2160.")
+    parser.add_argument("--rate-peak-basso", type=float, default=4500,
+                        help="[solo --variance workday] intensita' 'picco basso' (veicoli equiv./1800s) = 2.5 veic./s. Default 4500.")
+    parser.add_argument("--rate-alto", type=float, default=6300,
+                        help="[solo --variance workday] intensita' 'alta' (veicoli equiv./1800s) = 3.5 veic./s, "
+                             "la stessa densita' sostenuta di config_4x4_100m_6k_flat (validata: MaxPressure regge "
+                             "l'intero episodio a questo ritmo). Default 6300.")
+    parser.add_argument("--rate-peak-alto", type=float, default=7560,
+                        help="[solo --variance workday] intensita' 'picco alto' (veicoli equiv./1800s) = 4.2 veic./s "
+                             "(+20% su 'alto', entro il range gia' validato da config_4x4_100m_6k_peak). Default 7560.")
     args = parser.parse_args()
 
     # Parse grid
@@ -370,44 +433,61 @@ if __name__ == "__main__":
     except:
         parser.error("Formato --grid non valido. Usa MxN (es. 4x4 o 3x5).")
 
+    if args.variance != "workday" and args.vehicles is None:
+        parser.error("--vehicles e' obbligatorio per --variance flat/peak/peaks.")
+
     # Parse vehicles
-    v_str = args.vehicles.lower()
-    if v_str.endswith('k'):
-        target_vehicles = int(float(v_str[:-1]) * 1000)
-    else:
-        target_vehicles = int(v_str)
+    target_vehicles = None
+    if args.vehicles is not None:
+        v_str = args.vehicles.lower()
+        if v_str.endswith('k'):
+            target_vehicles = int(float(v_str[:-1]) * 1000)
+        else:
+            target_vehicles = int(v_str)
+
+    road_length_label = args.road_length_label if args.road_length_label is not None else str(args.road_length)
 
     os.makedirs(args.output_dir, exist_ok=True)
     os.makedirs(args.config_dir, exist_ok=True)
 
-    # 1. Genera Roadnet
+    # 1. Genera Roadnet (la geometria usa sempre la distanza FISICA reale,
+    #    l'etichetta influisce solo sui nomi dei file)
     roadnet = make_simple_roadnet(grid_r, grid_c, args.road_length)
-    roadnet_filename = f"roadnet_{grid_r}x{grid_c}_{args.road_length}m.json"
+    roadnet_filename = f"roadnet_{grid_r}x{grid_c}_{road_length_label}m.json"
     with open(os.path.join(args.output_dir, roadnet_filename), "w", encoding='utf-8') as f:
         json.dump(roadnet, f, indent=2)
 
     # 2. Genera Flow
-    flow = make_flow(target_vehicles, args.variance, grid_r, grid_c, SIMULATION_DURATION, seed=42)
-    
-    # Formatta k_val con una cifra decimale o precisa se intero, per il nome del file
-    k_val_str = f"{target_vehicles / 1000.0:g}k" 
+    workday_rates = None
+    if args.variance == "workday":
+        workday_rates = {
+            "basso": args.rate_basso,
+            "peak_basso": args.rate_peak_basso,
+            "alto": args.rate_alto,
+            "peak_alto": args.rate_peak_alto,
+        }
+    flow = make_flow(target_vehicles, args.variance, grid_r, grid_c, args.duration, seed=42,
+                      workday_rates=workday_rates)
 
     # Configurazione del nome in base alla varianza
-    if args.variance == "peaks":
-        name_variance = "peaks"
-    elif args.variance == "peak":
-        name_variance = "peak"
+    if args.variance == "workday":
+        flow_filename = f"flow_{grid_r}x{grid_c}_train.json"
     else:
-        name_variance = "flat"
-    
-    flow_filename = f"flow_{grid_r}x{grid_c}_{k_val_str}_{name_variance}.json"
+        # Formatta k_val con una cifra decimale o precisa se intero, per il nome del file
+        k_val_str = f"{target_vehicles / 1000.0:g}k"
+        name_variance = args.variance  # "flat" | "peak" | "peaks"
+        flow_filename = f"flow_{grid_r}x{grid_c}_{k_val_str}_{name_variance}.json"
+
     with open(os.path.join(args.output_dir, flow_filename), "w", encoding='utf-8') as f:
         json.dump(flow, f, indent=2)
 
     # 3. Genera Config
-    cfg = make_cityflow_config(roadnet_filename, flow_filename, SIMULATION_DURATION, "data/")
-    cfg_filename = f"config_{grid_r}x{grid_c}_{args.road_length}m_{k_val_str}_{name_variance}.json"
-    
+    cfg = make_cityflow_config(roadnet_filename, flow_filename, args.duration, "data/")
+    if args.variance == "workday":
+        cfg_filename = f"config_{grid_r}x{grid_c}_{road_length_label}m_train.json"
+    else:
+        cfg_filename = f"config_{grid_r}x{grid_c}_{road_length_label}m_{k_val_str}_{name_variance}.json"
+
     with open(os.path.join(args.config_dir, cfg_filename), "w", encoding='utf-8') as f:
         json.dump(cfg, f, indent=2)
 
@@ -415,10 +495,11 @@ if __name__ == "__main__":
     print(f"  - Roadnet: {os.path.join(args.output_dir, roadnet_filename)}")
     print(f"  - Flow:    {os.path.join(args.output_dir, flow_filename)}")
     print(f"  - Config:  {os.path.join(args.config_dir, cfg_filename)}")
-    
+
     # Conferma conteggio
     actual_vehicles = 0
     for item in flow:
-        s, e, i = item.get("startTime", 0), item.get("endTime", SIMULATION_DURATION), item.get("interval", 1)
+        s, e, i = item.get("startTime", 0), item.get("endTime", args.duration), item.get("interval", 1)
         if i > 0: actual_vehicles += math.ceil((e - s) / i)
-    print(f"  - Veicoli effettivi generati: {actual_vehicles} (Target: {target_vehicles})")
+    target_str = str(target_vehicles) if target_vehicles is not None else "workday (vedi --rate-*)"
+    print(f"  - Veicoli effettivi generati: {actual_vehicles} (Target: {target_str})")

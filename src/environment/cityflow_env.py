@@ -52,13 +52,31 @@ STATE_DIM_PAPER = N_LANES + N_PHASES            # dim stato originale paper: 20 
 STATE_DIM = STATE_DIM_FULL   # default: usa il completo; sovrascrive con STATE_DIM_PAPER se --no-wait-vec
 
 GREEN_TIME = 10               # durata verde (s)
-YELLOW_TIME = 3               # durata giallo (s)
-RED_TIME = 2                  # durata rosso (s)
+YELLOW_TIME = 3               # durata giallo (s) — trattato come verde (vedi nota sotto)
+RED_TIME = 2                  # durata tutto-rosso reale (s)
 STEP_TIME = GREEN_TIME + YELLOW_TIME + RED_TIME  # 15s per ciclo
 
 # Fasi standard: in CityFlow le fasi si mappano a indici 0..7
 # La svolta a destra è controllata dal semaforo (non più sempre verde).
 ALL_PHASES = list(range(N_PHASES))
+
+# Fase di tutto-rosso (nessun movimento abilitato), aggiunta come 9° elemento di
+# "lightphases" in ciascun roadnet (vedi data/roadnet_*.json, indice = N_PHASES).
+# Non è mai scelta dall'agente (lo spazio delle azioni resta 0..7): step() la
+# imposta internamente per RED_TIME secondi tra un'azione e la successiva, per
+# svuotare l'incrocio prima che il prossimo verde liberi un movimento conflittuale.
+ALL_RED_PHASE = N_PHASES
+
+# ─── Campo visivo (cutoff) ──────────────────────────────────────────────────
+# Raggio entro cui un veicolo in avvicinamento è "rilevante" per lo stato/reward
+# dell'intersezione: la distanza che un veicolo può percorrere nella finestra di
+# tempo in cui la fase può ancora farlo muovere prima del prossimo cambio, cioè
+# GREEN_TIME + YELLOW_TIME (il tutto-rosso, RED_TIME, non fa avanzare nessuno,
+# quindi non allunga la portata utile). VEHICLE_SPEED_MS ~40 km/h, velocità
+# urbana di riferimento. Se GREEN_TIME/YELLOW_TIME cambiano, questo valore si
+# ricalcola da solo — non è più un numero fisso scollegato dalla dinamica reale.
+VEHICLE_SPEED_MS = 11.1                                    # ~40 km/h
+VISION_CUTOFF_M = (GREEN_TIME + YELLOW_TIME) * VEHICLE_SPEED_MS  # 13 * 11.1 = 144.3 m
 
 # Mappatura delle corsie con semaforo verde per ogni fase (indici 0-11, ordinamento canonico)
 GREEN_LANES_PER_PHASE = {
@@ -89,7 +107,7 @@ class CityFlowEnv:
         alpha: float = 0.5,
         # ── Ablation flags ──────────────────────────────────────────────────
         reward_mode: str = "custom",        # "custom" = weighted pressure; "paper" = -P_i
-        use_vision_cutoff: bool = True,     # True = cutoff 167m; False = visibilità globale
+        use_vision_cutoff: bool = True,     # True = cutoff VISION_CUTOFF_M; False = visibilità globale
         use_wait_vec: bool = True,          # True = stato a 32 dim; False = 20 dim (no wait)
         use_action_mask: bool = True,       # True = maschera anti-starvation; False = nessuna
     ):
@@ -99,7 +117,7 @@ class CityFlowEnv:
             num_neighbors: numero massimo di intersezioni vicine (paper: 4)
             alpha: iperparametro per la penalità dei ritardi nel reward
             reward_mode: "custom" (weighted pressure avanzata) o "paper" (-P_i originale)
-            use_vision_cutoff: se True limita la visibilità a 167m dal semaforo
+            use_vision_cutoff: se True limita la visibilità a VISION_CUTOFF_M dal semaforo
             use_wait_vec: se True include wait_vec nello stato (dim=32); se False stato a 20 dim
             use_action_mask: se True abilita la maschera anti-starvation
         """
@@ -148,6 +166,11 @@ class CityFlowEnv:
         # Distanze e lunghezze strade
         self.road_lengths = self._get_road_lengths()
         self.inter_distances = self._compute_distances()
+
+        # Movimenti (lane-link) abilitati per fase, dal roadnet — usati da
+        # MaxPressureAgent per la pressione classica (Varaiya 2013), vedi
+        # _build_phase_lanelinks().
+        self.phase_lanelinks = self._build_phase_lanelinks()
 
         # Stato corrente
         self.current_step = 0
@@ -271,15 +294,82 @@ class CityFlowEnv:
         return inter_lanes
 
     def _get_road_lengths(self) -> Dict[str, float]:
+        """
+        Lunghezza REALE (percorribile) di ogni corsia, non la distanza grezza tra i
+        punti dichiarati nel roadnet (che e' centro-incrocio a centro-incrocio).
+
+        CityFlow tronca get_vehicle_distance() alla 'width' dell'intersezione ad
+        ENTRAMBE le estremita' (un veicolo transita nell'incrocio, e quindi lascia
+        la corsia, gia' 'width' metri prima del punto centrale dichiarato) — verificato
+        empiricamente: su una corsia interna tra due incroci reali (width=20 ciascuno)
+        con punti a distanza 167m, i veicoli non superano mai ~127m (167-20-20).
+        Usare la distanza grezza (167m) qui sovrastimerebbe la corsia reale e
+        renderebbe VISION_CUTOFF_M (basato su questa lunghezza) troppo restrittivo
+        di quanto dovrebbe essere.
+        """
         import math
+        widths = {i["id"]: float(i.get("width", 0.0)) for i in self.roadnet.get("intersections", [])}
         lengths = {}
         for r in self.roadnet.get("roads", []):
             pts = r.get("points", [])
-            length = 0.0
+            raw_length = 0.0
             for i in range(len(pts)-1):
-                length += math.dist((pts[i]["x"], pts[i]["y"]), (pts[i+1]["x"], pts[i+1]["y"]))
-            lengths[r["id"]] = length
+                raw_length += math.dist((pts[i]["x"], pts[i]["y"]), (pts[i+1]["x"], pts[i+1]["y"]))
+            w_start = widths.get(r.get("startIntersection"), 0.0)
+            w_end = widths.get(r.get("endIntersection"), 0.0)
+            lengths[r["id"]] = max(0.0, raw_length - w_start - w_end)
         return lengths
+
+    def _build_phase_lanelinks(self) -> Dict[str, List[List[Tuple[str, str]]]]:
+        """
+        Per ogni intersezione e ogni fase, la lista di coppie (corsia_in, corsia_out)
+        dei movimenti (lane-link) abilitati da quella fase, letta direttamente dal
+        roadnet (`roadLinks[i].laneLinks[j].startLaneIndex/endLaneIndex`).
+
+        Usata da MaxPressureAgent per calcolare la pressione esattamente come
+        l'implementazione di riferimento LibSignal (Varaiya 2013): per ogni fase,
+        pressione = somma su tutti i movimenti abilitati di
+        (veicoli sulla corsia di provenienza - veicoli sulla corsia di destinazione).
+        Nessun cutoff di visibilita' qui: la formula classica usa la corsia intera,
+        vedi get_lane_vehicle_count().
+        """
+        result: Dict[str, List[List[Tuple[str, str]]]] = {}
+        for inter in self.roadnet.get("intersections", []):
+            iid = inter.get("id")
+            if iid not in self.inter_id_to_idx:
+                continue
+
+            # Coppie (corsia_in, corsia_out) per ciascun roadLink dell'intersezione
+            # (un roadLink puo' avere piu' lane-link, es. una strada a 3 corsie che
+            # confluisce su una strada a 2: li teniamo tutti, non solo il primo).
+            pairs_per_roadlink: List[List[Tuple[str, str]]] = []
+            for rl in inter.get("roadLinks", []):
+                start_road = rl.get("startRoad")
+                end_road = rl.get("endRoad")
+                pairs = [
+                    (f"{start_road}_{ll['startLaneIndex']}", f"{end_road}_{ll['endLaneIndex']}")
+                    for ll in rl.get("laneLinks", [])
+                ]
+                pairs_per_roadlink.append(pairs)
+
+            phase_pairs: List[List[Tuple[str, str]]] = []
+            for phase in inter.get("trafficLight", {}).get("lightphases", []):
+                pairs: List[Tuple[str, str]] = []
+                for rl_idx in phase.get("availableRoadLinks", []):
+                    if 0 <= rl_idx < len(pairs_per_roadlink):
+                        pairs.extend(pairs_per_roadlink[rl_idx])
+                phase_pairs.append(pairs)
+
+            result[iid] = phase_pairs
+        return result
+
+    def get_lane_vehicle_count(self) -> Dict[str, int]:
+        """
+        Conteggio veicoli per corsia, nativo del motore CityFlow, sulla corsia
+        INTERA (nessun cutoff di visibilita' — a differenza di n_vec/_get_observations,
+        pensati per lo stato RL). Usato dalla pressione classica di MaxPressure.
+        """
+        return self.engine.get_lane_vehicle_count()
 
     def _compute_distances(self) -> Dict[Tuple[str, str], float]:
         """Distanza euclidea normalizzata tra coppie di intersezioni vicine."""
@@ -349,15 +439,28 @@ class CityFlowEnv:
         incoming_t0 = self._get_incoming_vehicles_ids()
         old_vehicles = set(self.engine.get_vehicles(include_waiting=True))
 
-        # Esegui GREEN_TIME secondi di simulazione verde
-        for _ in range(GREEN_TIME):
+        # Esegui GREEN_TIME + YELLOW_TIME secondi sulla fase scelta dall'agente.
+        # Il giallo non è modellato come stato fisico separato (CityFlow non ce
+        # l'ha nativamente): per YELLOW_TIME secondi il movimento resta abilitato
+        # esattamente come in verde. Scelta esplicita e accettata: il giallo
+        # "vale" verde ai fini della simulazione.
+        for _ in range(GREEN_TIME + YELLOW_TIME):
             self.engine.next_step()
 
-        # Esegui YELLOW_TIME secondi di simulazione giallo
-        # In CityFlow non esiste 'giallo' come stato separato, lo simuliamo
-        # con una fase che non permette nuove partenze (convenzionale)
-        for _ in range(YELLOW_TIME + RED_TIME):
+        # Esegui RED_TIME secondi di tutto-rosso reale: nessun movimento abilitato
+        # per nessuna intersezione, cosi' l'incrocio si svuota prima che il
+        # prossimo step liberi un movimento potenzialmente conflittuale. Fase
+        # dedicata (indice ALL_RED_PHASE), mai selezionabile dall'agente.
+        for iid in actions:
+            self.engine.set_tl_phase(iid, ALL_RED_PHASE)
+        for _ in range(RED_TIME):
             self.engine.next_step()
+
+        # Ripristina la fase verde scelta: il prossimo step() leggera' current_phase
+        # (es. per action mask/anti-starvation) assumendo sia ancora quella verde,
+        # non il tutto-rosso appena usato internamente.
+        for iid, phase in actions.items():
+            self.engine.set_tl_phase(iid, phase)
 
         self.all_spawned_vehicles.update(self.engine.get_vehicles())
 
@@ -438,8 +541,8 @@ class CityFlowEnv:
                 vehicles = lane_vehicles.get(lane_id, [])
 
                 if self.use_vision_cutoff:
-                    # Avanzato: solo veicoli entro 167m dal semaforo
-                    cutoff = max(0.0, self.road_lengths.get(road_id, 340.0) - 167.0)
+                    # Avanzato: solo veicoli entro VISION_CUTOFF_M dal semaforo
+                    cutoff = max(0.0, self.road_lengths.get(road_id, 340.0) - VISION_CUTOFF_M)
                     veicoli_vicini = 0
                     max_wt = 0.0
                     for veh in vehicles:
@@ -450,6 +553,7 @@ class CityFlowEnv:
                             if wt > max_wt:
                                 max_wt = wt
                     n_vec[k] = veicoli_vicini
+                    # 100s come tetto di saturazione: non derivato, vedi analisi_bug.md #8.
                     wait_vec[k] = np.clip(max_wt / 100.0, 0.0, 1.0)
                 else:
                     # Paper: conta tutti i veicoli sulla corsia (visibilità globale)
@@ -461,7 +565,13 @@ class CityFlowEnv:
                         )
                         wait_vec[k] = np.clip(max_wt / 100.0, 0.0, 1.0)
 
-            # Normalizza il numero di veicoli
+            # Normalizza il numero di veicoli. 30 e' una capacita' di corsia
+            # plausibile ma non derivata a partire da lunghezza corsia reale /
+            # (lunghezza veicolo + minGap) — vedi analisi_bug.md #8: con una
+            # corsia da 127m, lunghezza veicolo 5m e minGap 2.5m la capacita'
+            # fisica e' ~127/7.5=~17, quindi 30 e' un limite conservativo che
+            # in pratica non taglia mai nulla (nessuna evidenza che sia sbagliato,
+            # solo che non e' documentato/derivato esplicitamente finora).
             n_vec = np.clip(n_vec / 30.0, 0.0, 1.0)
 
             # p_vec: fase corrente (one-hot)
@@ -489,7 +599,7 @@ class CityFlowEnv:
                 road_id = "_".join(l.split("_")[:-1])
                 for veh in lane_vehicles.get(l, []):
                     if self.use_vision_cutoff:
-                        cutoff = max(0.0, self.road_lengths.get(road_id, 340.0) - 167.0)
+                        cutoff = max(0.0, self.road_lengths.get(road_id, 340.0) - VISION_CUTOFF_M)
                         if vehicle_distances.get(veh, 0.0) >= cutoff:
                             incoming_ids[iid].add(veh)
                     else:
@@ -505,7 +615,23 @@ class CityFlowEnv:
           Reward = (Passed - Incoming - alpha * max_red_wait_time - wasted_green_penalty) / 100, clip [-20, 5]
 
         reward_mode="paper" (originale Wang et al. 2022):
-          Reward = -P_i  (negativo della pressione: veicoli in ingresso - veicoli in uscita)
+          Reward = -P_i / 100  (negativo della pressione: veicoli in ingresso - veicoli in
+          uscita, riscalata; vedi nota sotto)
+
+        Nota sulla riscalatura di "paper" (/100):
+          La definizione di P_i (pressione) e' quella originale, invariata. La divisione per
+          100 e' una pura riparametrizzazione numerica, non una modifica dell'obiettivo: per
+          una MDP scontata, moltiplicare tutti i reward per una costante positiva moltiplica
+          tutti i Q-value per la stessa costante e lascia identica la policy argmax. Serve
+          solo a riportare la scala del segnale nello stesso ordine di grandezza gia' usato
+          dal reward "custom" (anch'esso diviso per 100 sopra). Senza questa riscalatura, il
+          preset "paper" (che disabilita Huber loss, gradient clipping, Double DQN e soft
+          update tutti insieme) diverge: target TD dell'ordine di decine/centinaia con MSE
+          loss e nessun freno producono aggiornamenti enormi e la loss cresce invece di
+          scendere (osservato empiricamente: loss 92->780 e travel time 260s->846s in 18
+          episodi). Non tocchiamo i flag no_huber/no_grad_clip/no_double_dqn/no_soft_update
+          (sono l'identita' dell'ablation "paper", vanno lasciati esattamente com'erano) ne'
+          la definizione di P_i: solo l'unita' di misura del reward cambia.
         """
         if incoming_t0 is None or incoming_t1 is None:
             return {iid: 0.0 for iid in self.inter_ids}
@@ -524,9 +650,21 @@ class CityFlowEnv:
                 # P_i = veicoli in ingresso - veicoli in uscita (pressione)
                 outgoing = self._get_outgoing_vehicles_count(iid)
                 pressure = len(in_t1) - outgoing  # veicoli attuali - veicoli usciti
-                rewards[iid] = -float(pressure)
+                rewards[iid] = -float(pressure) / 100.0  # riscalatura numerica, vedi docstring
             else:
                 # ── Reward avanzata: Throughput-based multi-obiettivo ──────────────
+                # Nota (analisi_bug.md #6): "passed" non distingue un veicolo
+                # realmente transitato da uno rimosso dal motore per il noto bug
+                # dei veicoli "teletrasportati" in gridlock (vedi il commento
+                # analogo su MAX_PLAUSIBLE_TT in step()). Non e' un problema con
+                # i preset attuali: questo ramo "custom" viene eseguito solo se
+                # reward_mode=="custom", e in tutti e 6 i preset definiti
+                # (apply_ablation_preset in train.py) reward_mode=="custom"
+                # implica sempre use_vision_cutoff=True — quindi in_t0/in_t1
+                # contengono gia' solo veicoli vicini al semaforo, dove la
+                # teletrasportazione per gridlock e' meno plausibile. Il rischio
+                # esiste solo se si combinano manualmente i flag atomici
+                # --reward-mode custom --no-vision-cutoff, bypassando i preset.
                 passed   = len(in_t0 - in_t1)
                 incoming = len(in_t0)
 
@@ -541,13 +679,16 @@ class CityFlowEnv:
                         road_id = "_".join(lane_id.split("_")[:-1])
                         for veh in lane_vehicles.get(lane_id, []):
                             if self.use_vision_cutoff:
-                                cutoff = max(0.0, self.road_lengths.get(road_id, 340.0) - 167.0)
+                                cutoff = max(0.0, self.road_lengths.get(road_id, 340.0) - VISION_CUTOFF_M)
                                 if vehicle_distances.get(veh, 0.0) < cutoff:
                                     continue
                             wt = self.vehicle_wait_times.get(veh, 0.0)
                             if wt > max_red_wait_time:
                                 max_red_wait_time = wt
 
+                # 50.0 e' scelto per essere comparabile in scala a (passed-incoming),
+                # tipicamente decine di veicoli — non derivato analiticamente, vedi
+                # analisi_bug.md #8.
                 wasted_green_penalty = 50.0 if (passed == 0 and incoming > 0) else 0.0
                 raw_reward = float(passed) - float(incoming) - (self.alpha * max_red_wait_time) - wasted_green_penalty
                 normalized_reward = raw_reward / 100.0
@@ -569,7 +710,7 @@ class CityFlowEnv:
         return out_lanes
 
     def _get_outgoing_vehicles_count(self, inter_id: str) -> int:
-        """Restituisce il totale dei veicoli in uscita (entro 167m)."""
+        """Restituisce il totale dei veicoli in uscita (entro VISION_CUTOFF_M)."""
         lane_vehicles = self.engine.get_lane_vehicles()
         vehicle_distances = self.engine.get_vehicle_distance()
         out_lanes = self._get_outgoing_lanes(inter_id)
@@ -577,7 +718,7 @@ class CityFlowEnv:
         for lid in out_lanes:
             for veh in lane_vehicles.get(lid, []):
                 # CityFlow distance is from start of road segment
-                if vehicle_distances.get(veh, 0.0) <= 167.0:
+                if vehicle_distances.get(veh, 0.0) <= VISION_CUTOFF_M:
                     count += 1
         return count
 
@@ -613,7 +754,7 @@ class CityFlowEnv:
             count = 0
             if not lid.startswith("missing_"):
                 road_id = "_".join(lid.split("_")[:-1])
-                cutoff = max(0.0, self.road_lengths.get(road_id, 340.0) - 167.0)
+                cutoff = max(0.0, self.road_lengths.get(road_id, 340.0) - VISION_CUTOFF_M)
                 for veh in lane_vehicles.get(lid, []):
                     if self.engine.get_vehicle_distance().get(veh, 0.0) >= cutoff:
                         count += 1
@@ -655,7 +796,7 @@ class CityFlowEnv:
             # Padding se meno di history_len steps disponibili
             pad = history_len - len(hist_array)
             if pad > 0:
-                hist_array = np.vstack([np.zeros((pad, STATE_DIM)), hist_array])
+                hist_array = np.vstack([np.zeros((pad, self.observation_dim)), hist_array])
             hist_flat = hist_array[:, :N_LANES].flatten()  # solo n_vec
         else:
             hist_flat = np.zeros(N_LANES * history_len, dtype=np.float32)
@@ -699,13 +840,36 @@ class CityFlowEnv:
         edge_index = torch.tensor([src_list, dst_list], dtype=torch.long)
         return edge_index
 
-    def get_average_travel_time(self) -> float:
+    def get_average_travel_time(self, include_unfinished: bool = True) -> float:
         """
-        Calcola il travel time medio includendo SOLO i veicoli arrivati a destinazione.
+        Calcola il travel time medio.
+
+        Con include_unfinished=True (default, metrica usata per training/ranking):
+        include anche i veicoli ancora in rete al momento della chiamata, contando
+        il tempo gia' trascorso da quando sono entrati (un lower bound del loro vero
+        travel time, che sarebbe solo peggiore se la simulazione continuasse).
+
+        Senza questo, un modello che ingolfa la rete e lascia passare solo pochi
+        veicoli "fortunati" su corsie libere risulterebbe premiato (travel time
+        basso calcolato su un campione piccolissimo e non rappresentativo) invece
+        che penalizzato — nel caso estremo di ZERO veicoli arrivati, la versione
+        "solo arrivati" restituirebbe 0.0, il punteggio migliore possibile.
+
+        Con include_unfinished=False si ottiene la vecchia metrica "solo arrivati"
+        (usa la stessa lista self.arrived_tt su cui l'engine C++ di CityFlow basa
+        get_original_average_travel_time(), utile per confronti diretti col paper).
         """
-        if not self.arrived_tt:
+        times = list(self.arrived_tt)
+        if include_unfinished and self.spawn_times:
+            current_time = self.current_step * STEP_TIME
+            times += [current_time - spawn_t for spawn_t in self.spawn_times.values()]
+        if not times:
             return 0.0
-        return float(sum(self.arrived_tt) / len(self.arrived_tt))
+        return float(sum(times) / len(times))
+
+    def get_completed_only_travel_time(self) -> float:
+        """Travel time medio solo sui veicoli arrivati (vedi get_average_travel_time)."""
+        return self.get_average_travel_time(include_unfinished=False)
 
     def get_invalid_actions(self) -> Dict[str, List[int]]:
         """
@@ -729,7 +893,12 @@ class CityFlowEnv:
         return invalid_actions
 
     def get_original_average_travel_time(self) -> float:
-        """Travel time medio originale di CityFlow (solo arrivati)."""
+        """
+        Travel time medio nativo del motore CityFlow (solo veicoli arrivati).
+        Stessa convenzione "solo arrivati" del paper originale: usare SOLO per un
+        confronto diretto col numero riportato in letteratura (~430-470s), non per
+        il ranking tra i propri modelli — vedi get_average_travel_time().
+        """
         return self.engine.get_average_travel_time()
 
     def get_throughput(self) -> int:

@@ -4,14 +4,15 @@ FixedTime Agent — baseline tradizionale.
 Assegna fasi cicliche con durata fissa (come da letteratura).
 Serve come lower-bound di confronto (Section 5.3).
 
-Strategia: fase ciclica con durata fissa FIXED_GREEN_TIME = 30s per fase
-(= 3 volte il green time dell'agente RL per avere cicli comparabili).
+Strategia: fase ciclica che cambia ogni singolo step di decisione (15s), la
+stessa cadenza di tutti gli altri modelli (RL e MaxPressure) — comparabilità
+diretta, nessun fattore di scala arbitrario tra i cicli dei diversi controllori.
 """
 
 from typing import Dict, List
 
 
-FIXED_GREEN_TIME = 1   # step RL per fase (1 step = 15s simulati, prima erano 2)
+FIXED_GREEN_TIME = 1   # step RL per fase (1 step = 15s simulati, come tutti gli altri modelli)
 
 
 class FixedTimeAgent:

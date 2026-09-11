@@ -8,23 +8,44 @@ Implementa l'Algorithm 1 dell'articolo con supporto a:
   - Interruzione pulita con Ctrl+C (salva automaticamente)
   - Tutti i modelli: MetaSTGAT, STGAT, FixedTime
   - Flag di ablation per disabilitare singoli componenti del modello avanzato
+  - Selezione automatica finale tra ultimo modello e best model, valutati su
+    --select-best-config (config di validazione)
+
+Training su una singola configurazione, warmup ed esplorazione:
+  warmup_episodes episodi casuali non loggati (riempiono il buffer, non
+  allenano nulla) -> episodi di training con epsilon che decade da
+  epsilon_start a epsilon_end entro eps_fraction degli episodi totali -> ogni
+  10 episodi, 1 episodio casuale non loggato (esplorazione ciclica).
+  Warmup ed esplorazione ciclica sono disattivati da --no-warmup e
+  --no-cyclic-exploration (attivi di default nei preset "paper" e
+  "replay_stability", che replicano la procedura originale del paper senza
+  queste aggiunte).
 
 Uso:
   # Training standard (modello avanzato completo)
-  python scripts/train.py --config configs/config_4x4_200m_2k_flat.json
+  python scripts/train.py --config configs/config_4x4_100m_train.json
+
+  # Con selezione automatica finale su una config di validazione: a fine
+  # training confronta final_model.pth col best_model.pt (valutati su
+  # --select-best-config) e salva il vincitore come selected_model.pth
+  # (usato in automatico da scripts/test.py).
+  python scripts/train.py \\
+      --config configs/config_4x4_100m_train.json --episodes 200 \\
+      --select-best-config configs/config_4x4_100m_6k_flat.json \\
+      --output-dir results/metastgat_pro
 
   # Training con preset ablation (Proposta 1 – Sottosistemi Funzionali)
-  python scripts/train.py --config configs/config_4x4_200m_2k_flat.json --ablation environment
-  python scripts/train.py --config configs/config_4x4_200m_2k_flat.json --ablation temporal
-  python scripts/train.py --config configs/config_4x4_200m_2k_flat.json --ablation rl_core
-  python scripts/train.py --config configs/config_4x4_200m_2k_flat.json --ablation replay_stability
-  python scripts/train.py --config configs/config_4x4_200m_2k_flat.json --ablation paper
+  python scripts/train.py --config configs/config_4x4_100m_train.json --ablation environment
+  python scripts/train.py --config configs/config_4x4_100m_train.json --ablation temporal
+  python scripts/train.py --config configs/config_4x4_100m_train.json --ablation rl_core
+  python scripts/train.py --config configs/config_4x4_100m_train.json --ablation replay_stability
+  python scripts/train.py --config configs/config_4x4_100m_train.json --ablation paper
 
   # Output in cartella specifica
-  python scripts/train.py --config configs/config_4x4_200m_2k_flat.json --output-dir results/metastgat_full
+  python scripts/train.py --config configs/config_4x4_100m_train.json --output-dir results/metastgat_pro
 
   # Fermarsi all'episodio 50
-  python scripts/train.py --config configs/config_4x4_200m_2k_flat.json --stop-at 50
+  python scripts/train.py --config configs/config_4x4_100m_train.json --stop-at 50
 
   # Premi Ctrl+C in qualsiasi momento per interrompere — viene salvato un checkpoint
 """
@@ -35,6 +56,7 @@ import json
 import os
 import sys
 import time
+from typing import Optional
 
 # Aggiunge la root del progetto al path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -53,12 +75,13 @@ from src.utils.metrics import EpisodeMetrics, RunningMetrics
 
 # ─── Iperparametri (dall'articolo, Section 5.1) ───────────────────────────────
 DEFAULTS = {
-    "episodes":            100,    # numero totale di episodi (default test: 100)
-    "updates_per_ep":      100,    # aggiornamenti per episodio
+    "episodes":            50,     # numero totale di episodi
+    "updates_per_ep":      100,    # aggiornamenti per episodio (tornato a 100: config di training di
+                                    # nuovo a 1800s, come il valore originale del paper)
     "batch_size":          20,     # batch size (paper: 20)
     "gamma":               0.85,   # discount factor (paper: 0.85)
     "lr":                  1e-3,   # learning rate (non spec. → 1e-3)
-    "buffer_size":         2_400,  # replay buffer (modificato per limitarlo a 2400 come richiesto)
+    "buffer_size":         4_800,  # replay buffer (~40 episodi di storia con la config da 1800s)
     "min_buffer_size":     1_000,  # minimum size prima del training (paper: 1,000)
     "hidden_dim":          64,     # hidden dim (non spec. → 64)
     "num_heads":           4,      # teste attenzione (Fig. 10b → 4)
@@ -68,7 +91,16 @@ DEFAULTS = {
     "epsilon_decay":       0.7985, # decay per episodio (raggiunge 0.01 in 20 episodi)
     "history_len":         5,      # lunghezza storico TMK (non spec. → 5)
     "checkpoint_interval": 10,     # salva ogni N episodi (non spec. → 10)
+    # ── Warmup ed epsilon decay ────────────────────────────────────────────
+    "warmup_episodes":     10,     # episodi random non loggati prima del training (riempiono il buffer)
+    "eps_fraction":        0.6,    # l'agente raggiunge epsilon_end al 60% degli episodi totali
 }
+
+
+def _eps_decay_for(n_episodes: int, fraction: float, eps_start: float, eps_end: float) -> float:
+    """Tasso di decadimento epsilon per raggiungere eps_end a `fraction` degli episodi."""
+    target_ep = max(1, int(fraction * n_episodes))
+    return (eps_end / eps_start) ** (1.0 / target_ep)
 
 
 def parse_args():
@@ -100,6 +132,18 @@ def parse_args():
                         help="Percorso del checkpoint da cui riprendere "
                              "(es. results/run/checkpoint_ep0050.pt)")
 
+    # ── Selezione finale del modello (config di validazione) ──────────────────
+    parser.add_argument("--select-best-config", default="configs/config_4x4_100m_6k_flat.json",
+                        help="Config di validazione usata a fine training per scegliere tra "
+                             "final_model.pth e best_model.pt.")
+    parser.add_argument("--select-best-episodes", type=int, default=1,
+                        help="Numero di episodi di valutazione (epsilon=0) per la selezione finale. "
+                             "Default 1: stessa ragione di --n-eval in test.py — a epsilon=0, con "
+                             "flow/seed CityFlow fissi, ripetere l'episodio non aggiunge varianza "
+                             "da mediare, raddoppia solo il tempo (la selezione valuta 2 candidati).")
+    parser.add_argument("--no-select-best", action="store_true",
+                        help="Disattiva la selezione automatica finale tra final_model e best_model.")
+
     # ── Iperparametri ───────────────────────────────────────────────────────
     parser.add_argument("--batch-size",    type=int,   default=DEFAULTS["batch_size"])
     parser.add_argument("--lr",            type=float, default=DEFAULTS["lr"])
@@ -114,10 +158,10 @@ def parse_args():
     # ── Ablation – Preset ────────────────────────────────────────────────────
     parser.add_argument(
         "--ablation",
-        default="full",
-        choices=["full", "paper", "environment", "temporal", "rl_core", "replay_stability"],
+        default="pro",
+        choices=["pro", "paper", "environment", "temporal", "rl_core", "replay_stability"],
         help="Preset ablation (imposta automaticamente i flag --no-*). "
-             "full=modello avanzato completo, paper=replica originale, "
+             "pro=modello avanzato completo, paper=replica originale, "
              "environment=senza reward+visibilità+wait+mask, temporal=senza BPTT, "
              "rl_core=senza Double DQN, replay_stability=senza PER/Huber/grad-clip/warmup"
     )
@@ -128,7 +172,7 @@ def parse_args():
                         help="Formula reward: custom (weighted pressure) o paper (-P_i). "
                              "Se non specificato, usa il default del preset.")
     parser.add_argument("--no-vision-cutoff",     action="store_true",
-                        help="Rimuove il cutoff 167m dal campo visivo (visibilità globale come nel paper)")
+                        help="Rimuove il cutoff dal campo visivo (VISION_CUTOFF_M, ~144m) (visibilità globale come nel paper)")
     parser.add_argument("--no-wait-vec",          action="store_true",
                         help="Stato a 20 dim senza wait_vec (solo n_vec + p_vec)")
     parser.add_argument("--no-action-mask",       action="store_true",
@@ -183,7 +227,7 @@ def apply_ablation_preset(args):
     I flag esplicitamente specificati dall'utente hanno la precedenza sul preset.
 
     Mappa preset (Proposta 1 – Sottosistemi Funzionali):
-      full             → nessun flag (modello avanzato completo)
+      pro              → nessun flag (modello avanzato completo)
       paper            → tutti i --no-* + reward-mode paper
       environment      → --reward-mode paper + --no-vision-cutoff + --no-wait-vec + --no-action-mask
       temporal         → --no-bptt
@@ -204,7 +248,7 @@ def apply_ablation_preset(args):
             if not getattr(args, attr, False):
                 setattr(args, attr, value)
 
-    if preset == "full":
+    if preset == "pro":
         # Nessun flag da impostare — già tutti False di default
         if args.reward_mode is None:
             args.reward_mode = "custom"
@@ -226,7 +270,7 @@ def apply_ablation_preset(args):
         _set_if_not_explicit("no_tanh_meta",          True)
 
     elif preset == "environment":
-        # Ablation 1: spegne M1 (reward), M2 (cutoff 167m), M3 (wait_vec), M4 (action mask)
+        # Ablation 1: spegne M1 (reward), M2 (cutoff campo visivo), M3 (wait_vec), M4 (action mask)
         if args.reward_mode is None:
             args.reward_mode = "paper"
         _set_if_not_explicit("no_vision_cutoff", True)
@@ -324,9 +368,13 @@ def generate_comparison_plots(args, env, rl_agent, edge_index, logger):
             out.append(float(np.mean(data[max(0, i - w + 1): i + 1])))
         return out
 
+    # ── Titolo: solo il nome della config di training ────────────────────────
+    config_name = os.path.basename(args.config)
+    title_config_line = f"Config: {config_name}"
+
     # ── Grafico 1: curve di training ──────────────────────────────────────────
     fig, axes = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
-    fig.suptitle(f"Training Progress — {args.model}\nConfig: {os.path.basename(args.config)}", fontsize=14, fontweight="bold")
+    fig.suptitle(f"Training Progress — {args.model}\n{title_config_line}", fontsize=14, fontweight="bold")
 
     # Travel Time
     ax = axes[0]
@@ -362,6 +410,130 @@ def generate_comparison_plots(args, env, rl_agent, edge_index, logger):
     plt.close(fig)
     print(f"[Plot] Curve di training  → {curves_path}")
     print("[Plot] (La valutazione delle baseline è stata delegata allo script test.py)")
+
+
+def _prepare_cityflow_env(config_path: str, args, tmp_name: str = "cityflow_config.json") -> CityFlowEnv:
+    """
+    Prepara il file di config temporaneo (replay/roadnet log rediretti in args.output)
+    e costruisce il CityFlowEnv corrispondente, con i flag di ablation correnti.
+    """
+    with open(config_path, 'r') as f:
+        custom_config = json.load(f)
+
+    # DISABILITA IL REPLAY DURANTE IL TRAINING PER RISPARMIARE SPAZIO
+    custom_config["saveReplay"] = False
+    custom_config["seed"] = args.seed
+
+    base_dir = custom_config.get("dir", "./")
+    rel_out_dir = os.path.relpath(args.output, base_dir)
+    custom_config["replayLogFile"] = os.path.join(rel_out_dir, "replay.txt").replace("\\", "/")
+    custom_config["roadnetLogFile"] = os.path.join(rel_out_dir, "roadnet.log").replace("\\", "/")
+
+    custom_config_path = os.path.join(args.output, tmp_name)
+    with open(custom_config_path, 'w') as f:
+        json.dump(custom_config, f, indent=4)
+
+    env = CityFlowEnv(
+        custom_config_path,
+        num_neighbors=args.num_neighbors,
+        reward_mode=args.reward_mode,
+        use_vision_cutoff=not args.no_vision_cutoff,
+        use_wait_vec=not args.no_wait_vec,
+        use_action_mask=not args.no_action_mask,
+    )
+    return env
+
+
+def run_final_selection(args, final_model_path: str, best_model_path: str, device) -> Optional[dict]:
+    """
+    Confronta a fine training final_model.pth (ultimo episodio in assoluto) e
+    best_model.pt (miglior travel time di tutto il training) su
+    --select-best-episodes episodi di --select-best-config, e salva il
+    vincitore come selected_model.pth.
+
+    scripts/test.py cerca selected_model.pth con priorita' massima, quindi il
+    risultato di questa funzione e' gia' "pronto" per essere testato senza
+    ulteriori argomenti.
+    """
+    import shutil
+
+    if args.no_select_best:
+        print("[Select] Selezione finale disattivata (--no-select-best).")
+        return None
+
+    if args.model not in ("MetaSTGAT", "STGAT"):
+        print(f"[Select] Selezione finale non supportata per --model {args.model}. Salto.")
+        return None
+
+    selected_path = os.path.join(args.output, "selected_model.pth")
+
+    if not os.path.exists(best_model_path):
+        print("[Select] Nessun best_model.pt trovato per questo stage: uso final_model.pth.")
+        shutil.copy(final_model_path, selected_path)
+        return {"selected": "final_model", "reason": "no_best_model", "selected_path": selected_path}
+
+    print(f"\n{'='*60}")
+    print(f"  SELEZIONE MODELLO FINALE")
+    print(f"  {args.select_best_episodes} episodi di valutazione su "
+          f"{os.path.basename(args.select_best_config)}")
+    print(f"{'='*60}")
+
+    from scripts.test import evaluate  # import locale: evita import circolare a livello di modulo
+
+    candidates = {"final_model": final_model_path, "best_model": best_model_path}
+    scores = {}
+    for name, ckpt in candidates.items():
+        eval_args = argparse.Namespace(
+            config=args.select_best_config,
+            model=args.model,
+            model_id=f"selection_{name}",
+            checkpoint=ckpt,
+            output_dir=os.path.join(args.output, "selection_eval", name),
+            ablation=args.ablation,
+            reward_mode=args.reward_mode,
+            no_vision_cutoff=args.no_vision_cutoff,
+            no_wait_vec=args.no_wait_vec,
+            no_action_mask=args.no_action_mask,
+            no_tanh_meta=args.no_tanh_meta,
+            n_eval=args.select_best_episodes,
+            hidden_dim=args.hidden_dim,
+            num_heads=args.num_heads,
+            num_neighbors=args.num_neighbors,
+            device=str(device),
+        )
+        try:
+            summary = evaluate(eval_args)
+            scores[name] = summary["avg_travel_time"]
+            print(f"  [Select] {name:<12} TT medio = {scores[name]:.2f}s  ({ckpt})")
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print(f"[Select] Errore durante la valutazione di '{name}': {e}")
+
+    if not scores:
+        print("[Select] Nessuna valutazione riuscita: uso final_model.pth come fallback.")
+        shutil.copy(final_model_path, selected_path)
+        return {"selected": "final_model", "reason": "evaluation_failed", "selected_path": selected_path}
+
+    winner = min(scores, key=scores.get)
+    winner_path = candidates[winner]
+    shutil.copy(winner_path, selected_path)
+
+    result = {
+        "final_model_tt": scores.get("final_model"),
+        "best_model_tt": scores.get("best_model"),
+        "selected": winner,
+        "selected_source": winner_path,
+        "selected_path": selected_path,
+        "eval_config": args.select_best_config,
+        "n_eval_episodes": args.select_best_episodes,
+    }
+    with open(os.path.join(args.output, "selection_summary.json"), "w") as f:
+        json.dump(result, f, indent=4)
+
+    print(f"\n[Select] Vincitore: {winner} (TT={scores[winner]:.2f}s) → salvato in {selected_path}")
+    print(f"{'='*60}\n")
+    return result
 
 
 def build_model(args, env: CityFlowEnv) -> torch.nn.Module:
@@ -406,8 +578,7 @@ def run_training(args):
     elif args.output == "auto":
         from datetime import datetime
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        ablation_tag = args.ablation if args.ablation != "full" else "full"
-        args.output = f"results/{ablation_tag}_{ts}"
+        args.output = f"results/{args.ablation}_{ts}"
 
     os.makedirs(args.output, exist_ok=True)
     
@@ -428,44 +599,17 @@ def run_training(args):
         run_fixedtime(args, device)
         return
 
-    # ── Inizializza ambiente ────────────────────────────────────────────────
+    # ── Inizializza ambiente ──────────────────────────────────────────────────
     print("\n[Env] Preparazione configurazione CityFlow...")
-    with open(args.config, 'r') as f:
-        custom_config = json.load(f)
-    
-    # DISABILITA IL REPLAY DURANTE IL TRAINING PER RISPARMIARE SPAZIO
-    custom_config["saveReplay"] = False
-    
-    # 6.1 Seed propagato al config json (per riproducibilità totale)
-    custom_config["seed"] = args.seed
-    
-    base_dir = custom_config.get("dir", "./")
-    
-    # Calcola il percorso relativo da base_dir (es. data/) a args.output
-    rel_out_dir = os.path.relpath(args.output, base_dir)
-    
-    # Non modifichiamo "dir", roadnetFile e flowFile per non confondere il motore C++
-    custom_config["replayLogFile"] = os.path.join(rel_out_dir, "replay.txt").replace("\\", "/")
-    custom_config["roadnetLogFile"] = os.path.join(rel_out_dir, "roadnet.log").replace("\\", "/")
-    
-    custom_config_path = os.path.join(args.output, "cityflow_config.json")
-    with open(custom_config_path, 'w') as f:
-        json.dump(custom_config, f, indent=4)
-
-    print("[Env] Inizializzazione CityFlow...")
-    env = CityFlowEnv(
-        custom_config_path,
-        num_neighbors=args.num_neighbors,
-        reward_mode=args.reward_mode,
-        use_vision_cutoff=not args.no_vision_cutoff,
-        use_wait_vec=not args.no_wait_vec,
-        use_action_mask=not args.no_action_mask,
-    )
+    env = _prepare_cityflow_env(args.config, args, tmp_name="cityflow_config.json")
     edge_index = env.get_edge_index().to(device)
 
     print(f"[Env] Intersezioni: {env.n_intersections}")
     print(f"[Env] State dim: {env.observation_dim}")
     print(f"[Env] Actions: {env.action_space_n}")
+
+    # ── Episodi totali (singola configurazione) ─────────────────────────────
+    total_episodes = args.episodes
 
     # ── Costruisci modello e agente ─────────────────────────────────────────
     # [LIBSIGNAL ADDITION: Gestione specifica per l'agente CoLight]
@@ -479,11 +623,11 @@ def run_training(args):
         )
     else:
         model = build_model(args, env)
-        
-        # 3.2 Epsilon decay dinamico al 60% del training
-        eps_target_ep = max(1, int(0.6 * args.episodes))
-        eps_decay = (args.epsilon_end / args.epsilon_start) ** (1.0 / eps_target_ep)
-        
+
+        # Epsilon decay: raggiunge epsilon_end a eps_fraction degli episodi totali.
+        eps_decay = _eps_decay_for(args.episodes, DEFAULTS["eps_fraction"],
+                                    args.epsilon_start, args.epsilon_end)
+
         # Dimensione buffer: paper usa 10k flat; il nostro avanzato usa 2400 seq
         buffer_sz = 10_000 if args.no_per else DEFAULTS["buffer_size"]
         agent = DQNAgent(
@@ -520,8 +664,8 @@ def run_training(args):
         print(f"[Resume] Ripresa dall'episodio {start_episode + 1}")
 
     # ── Calcola l'episodio finale ───────────────────────────────────────────
-    end_episode = args.stop_at if args.stop_at else args.episodes
-    end_episode = min(end_episode, args.episodes)
+    end_episode = args.stop_at if args.stop_at else total_episodes
+    end_episode = min(end_episode, total_episodes)
 
     if start_episode >= end_episode:
         print(f"[!] Training già completato fino all'episodio {start_episode}.")
@@ -607,17 +751,18 @@ def run_training(args):
                 print(f"    Step {n_steps}: TT={info['avg_travel_time']:.1f}s")
 
         # ── Chiusura Traiettoria ───────────────────────────────────────────────
-        agent.replay_buffer.end_episode()
+        agent.replay_buffer.end_episode(seq_len=agent.seq_len)
         return ep_metrics
 
 
     # === FASE DI WARM-UP ===
+    n_warmup = DEFAULTS["warmup_episodes"]
     if start_episode == 0 and not args.no_warmup:
-        print("\n=== FASE DI WARM-UP (10 episodi casuali per riempire il buffer) ===")
+        print(f"\n=== FASE DI WARM-UP ({n_warmup} episodi casuali per riempire il buffer) ===")
         agent.epsilon = 1.0
-        for w_ep in range(1, 11):
+        for w_ep in range(1, n_warmup + 1):
             run_episode()
-            print(f"  Warm-up Ep {w_ep}/10 completato. (Buffer size: {len(agent.replay_buffer)})")
+            print(f"  Warm-up Ep {w_ep}/{n_warmup} completato. (Buffer size: {len(agent.replay_buffer)})")
         agent.epsilon = args.epsilon_start
         print("=== FINE WARM-UP ===\n")
     elif start_episode == 0 and args.no_warmup:
@@ -675,26 +820,12 @@ def run_training(args):
             buffer_size=len(agent.replay_buffer)
         )
 
-        # ── Copia Live per CityFlow Frontend ───────────────────────────────
-        try:
-            import shutil
-            base_dir = env.config.get("dir", "./")
-            
-            # CityFlow engine lavora rispetto al CWD, quindi path_cwd è corretto.
-            replay_path = os.path.join(base_dir, env.config.get("replayLogFile", "replay.txt"))
-            roadnet_log_path = os.path.join(base_dir, env.config.get("roadnetLogFile", "roadnet.log"))
-            
-            # Crea la cartella frontend se non esiste
-            frontend_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "CityFlow", "frontend")
-            os.makedirs(frontend_dir, exist_ok=True)
-            
-            if os.path.exists(replay_path):
-                shutil.copy(replay_path, os.path.join(frontend_dir, "replay.txt"))
-            if os.path.exists(roadnet_log_path):
-                # Il frontend web di default cerca "roadnet.json" per il log pre-renderizzato
-                shutil.copy(roadnet_log_path, os.path.join(frontend_dir, "roadnet.json"))
-        except Exception as e:
-            pass
+        # (Rimossa qui la vecchia copia "live" del replay nel frontend CityFlow:
+        # durante il training saveReplay e' sempre False, quindi CityFlow non
+        # scrive mai quei file — il blocco non ha mai fatto nulla, vedi
+        # analisi_bug.md #7. Per ispezionare un replay vero usare scripts/test.py
+        # o scripts/inspect_replay.py con saveReplay attivo.)
+
         # ETA: media mobile del tempo per episodio × episodi rimanenti
         elapsed = time.time() - training_start_time
         episodes_done = episode - start_episode
@@ -704,7 +835,7 @@ def run_training(args):
 
         logger.print_episode(
             episode=episode,
-            total_episodes=args.episodes,
+            total_episodes=total_episodes,
             travel_time=travel_time,
             throughput=throughput,
             loss=loss,
@@ -715,7 +846,7 @@ def run_training(args):
         )
 
         # ── Episodio Random Periodico ──────────────────────────────────────
-        if not args.no_cyclic_exploration and episode % 10 == 0 and episode < args.episodes:
+        if not args.no_cyclic_exploration and episode % 10 == 0 and episode < total_episodes:
             print(f"\n[!] Esecuzione di 1 episodio random (senza aggiornamento pesi) per esplorazione...")
             old_epsilon = agent.epsilon
             agent.epsilon = 1.0
@@ -774,12 +905,22 @@ def run_training(args):
     if not logger.interrupted:
         generate_comparison_plots(args, env, agent, edge_index, logger)
 
+    # ── Selezione finale: final_model vs best_model dell'ultimo stage ─────────
+    # (solo se il training e' arrivato in fondo, non se e' stato interrotto)
+    if not logger.interrupted:
+        run_final_selection(
+            args,
+            final_model_path=final_model_path,
+            best_model_path=logger.best_path,
+            device=device,
+        )
+
     # ── Pulizia file temporanei (config engine) ───────────────
     try:
         temp_config = os.path.join(args.output, "cityflow_config.json")
         if os.path.exists(temp_config):
             os.remove(temp_config)
-        
+
         # Rinominiamo roadnet.log in roadnet_log.json per chiarezza (è quello richiesto dal frontend)
         temp_roadnet_log = os.path.join(args.output, "roadnet.log")
         if os.path.exists(temp_roadnet_log):

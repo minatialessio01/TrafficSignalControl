@@ -73,8 +73,8 @@ class DQNAgent:
                  epsilon_decay: float = 0.7985,  # ε: 0.9→0.01 in 20 episodi
                  buffer_size: int = 2400,
                  batch_size: int = 16,
-                 seq_len: int = 8,
-                 burn_in: int = 4,
+                 seq_len: int = 4,
+                 burn_in: int = 2,
                  target_update_tau: float = 0.01,
                  target_update_freq: int = 100,
                  device: Optional[torch.device] = None,
@@ -162,6 +162,24 @@ class DQNAgent:
             {inter_id -> phase_index}
         """
         N = len(inter_ids)
+
+        # Corto circuito epsilon=1.0 (warm-up / esplorazione ciclica): ogni
+        # intersezione sceglierebbe comunque un'azione casuale (vedi il ciclo
+        # epsilon-greedy sotto: random.random() < 1.0 e' sempre vero), quindi
+        # il forward pass della rete (il costo dominante per step su CPU) e'
+        # puro spreco — i suoi risultati verrebbero scartati. Saltarlo non
+        # altera nulla: lo stato nascosto LSTM non serve (durante il warm-up
+        # non c'e' alcun aggiornamento via BPTT — il replay buffer salva solo
+        # stato/azione/reward, l'hidden state viene ricalcolato col burn-in al
+        # momento del training vero) e ogni episodio riparte comunque da
+        # reset_hidden() la prossima volta.
+        if self.epsilon >= 1.0:
+            actions = {}
+            for iid in inter_ids:
+                invalids = invalid_actions.get(iid, []) if invalid_actions else []
+                valid_list = [a for a in range(self.n_actions) if a not in invalids] or list(range(self.n_actions))
+                actions[iid] = random.choice(valid_list)
+            return actions
 
         # Costruisci il tensore degli stati: (N, state_dim)
         state_tensor = torch.tensor(
@@ -275,9 +293,9 @@ class DQNAgent:
             loss media dell'episodio, o None se buffer insufficiente
         """
 
-        # Min size rimosso come vincolo rigido per i primi episodi (ci pensa il controllo < 10)
-        # Ma verifichiamo comunque che ci siano sequenze valide.
-        if not self.replay_buffer.is_ready(1, self.seq_len):
+        # Non allenare finche' il buffer non ha almeno min_buffer_size transizioni
+        # (e comunque almeno una sequenza valida di lunghezza seq_len).
+        if not self.replay_buffer.is_ready(min_buffer_size, self.seq_len):
             return None
 
         total_loss = 0.0
@@ -451,7 +469,10 @@ class DQNAgent:
         Salva un checkpoint completo del training.
 
         Il checkpoint contiene tutto il necessario per riprendere il training
-        dall'episodio `episode`.
+        dall'episodio `episode`, incluso il replay buffer: senza di esso un
+        `--resume` ripartirebbe con un buffer vuoto (bug corretto il 2026-09-11,
+        vedi analisi_bug.md #1), rendendo inefficaci sia la diversita' del
+        campionamento PER sia il gate min_buffer_size.
 
         Args:
             path:        percorso del file .pt
@@ -473,6 +494,9 @@ class DQNAgent:
             "epsilon": self.epsilon,
             "best_travel_time": self.best_travel_time,
             "travel_time": travel_time,
+
+            # Replay buffer (necessario per un resume corretto, vedi analisi_bug.md #1)
+            "replay_buffer_state": self.replay_buffer.state_dict(),
 
             # Tipo di modello
             "model_class": type(self.model).__name__,
@@ -497,7 +521,10 @@ class DQNAgent:
         if not os.path.exists(path):
             raise FileNotFoundError(f"Checkpoint non trovato: '{path}'")
 
-        checkpoint = torch.load(path, map_location=self.device)
+        # weights_only=False: dal checkpoint carichiamo anche il replay buffer
+        # (oggetti Transition, non solo tensori) — sicuro perche' i nostri stessi
+        # checkpoint, mai file di terzi non fidati.
+        checkpoint = torch.load(path, map_location=self.device, weights_only=False)
 
         self.model.load_state_dict(checkpoint["model_state_dict"])
         self.target_model.load_state_dict(checkpoint["target_model_state_dict"])
@@ -506,6 +533,16 @@ class DQNAgent:
         self.total_steps = checkpoint.get("total_steps", 0)
         self.epsilon = checkpoint.get("epsilon", self.epsilon)
         self.best_travel_time = checkpoint.get("best_travel_time", float("inf"))
+
+        # Ripristina il replay buffer se presente (checkpoint pre-fix: bug #1 in
+        # analisi_bug.md, non l'avevano mai salvato — restano compatibili, il
+        # buffer parte semplicemente vuoto come accadeva prima della correzione).
+        buffer_state = checkpoint.get("replay_buffer_state")
+        if buffer_state is not None:
+            self.replay_buffer.load_state_dict(buffer_state)
+            print(f"         Replay buffer ripristinato: {len(self.replay_buffer)} transizioni")
+        else:
+            print("         [WARN] Checkpoint senza replay buffer salvato (pre-fix): riparte vuoto.")
 
         episode = checkpoint.get("episode", 0)
         print(f"  [CKPT] Checkpoint caricato da '{path}'")
