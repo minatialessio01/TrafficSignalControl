@@ -1,5 +1,22 @@
 # Proposte di Raggruppamento per lo Studio di Ablation
 
+> 📖 **Per capire quali modelli sono stati testati e in cosa differiscono, parti da
+> [`descrizione_modelli.md`](descrizione_modelli.md)** (12/9/2026): quel documento fonde questo
+> file con `metastgat_diff_analysis.md` in un unico catalogo. Questo file resta il riferimento di
+> dettaglio per la razionale scientifica del raggruppamento (le 4 proposte alternative complete di
+> vantaggi/svantaggi), che `descrizione_modelli.md` §3 riassume solo per la Proposta 1 (implementata).
+>
+> ✅ **Stato implementativo (11/9/2026)**: la **Proposta 1** (Sottosistemi Funzionali, §2) è quella
+> effettivamente implementata nel codice. `scripts/train.py --ablation {pro,paper,environment,
+> temporal,rl_core,replay_stability}` corrisponde esattamente alle 6 righe della tabella in §2
+> (`MetaSTGAT-Full`→`pro`, `Abl-Environment`→`environment`, `Abl-TemporalLSTM`→`temporal`,
+> `Abl-RLCore`→`rl_core`, `Abl-ReplayStability`→`replay_stability`, `MetaSTGAT-Paper`→`paper`),
+> orchestrati insieme da `scripts/main.py` (`MODEL_REGISTRY`). Le Proposte 2-4 restano alternative
+> di design **non implementate**, incluse per completezza metodologica e come possibile
+> discussione in tesi ("perché la Proposta 1 e non le altre"). Dettaglio dei flag per preset in
+> [descrizione_scripts.md](descrizione_scripts.md); mappa modello→ablation in
+> [descrizione_scripts.md](descrizione_scripts.md) (`MODEL_REGISTRY`).
+>
 > **Contesto**: Questo documento formalizza le proposte per lo **studio di ablazione (Ablation Study)** della tesi, basandosi sull'analisi comparativa tra il modello **MetaSTGAT Avanzato** (implementazione corrente) e il modello **MetaSTGAT Originale** del paper (*Wang et al., 2022*), dettagliata in [`metastgat_diff_analysis.md`](file:///c:/Users/user/Documents/Antigravity/CodiceTesi/metastgat_diff_analysis.md).
 >
 > **Vincoli rispettati**:
@@ -19,7 +36,7 @@ Ecco il censimento sistematico di tutte le modifiche introdotte nel progetto ris
 | **M2** | **Campo Visivo Limitato (Cutoff VISION_CUTOFF_M, ~144m)** | Visibilità teorica infinita (tutta la lunghezza della strada) | Solo veicoli entro VISION_CUTOFF_M dal semaforo (`cutoff = max(0, road_len - VISION_CUTOFF_M)`, ~144m) sia per conteggi che per code | Simula la portata reale dei sensori/telecamere fisiche all'incrocio ed evita di penalizzare veicoli lontani centinaia di metri. |
 | **M3** | **Stato Concatenato a 3 Componenti** | Dim = 20: `[n_vec (12) \|\| p_vec (8)]` (solo conteggi veicoli e fase attiva) | Dim = 32: `[n_vec (12) \|\| wait_vec (12) \|\| p_vec (8)]` con tempi massimi di attesa normalizzati (0-1) | Fornisce alla rete l'urgenza temporale dei veicoli fermi in coda oltre alla loro semplice presenza. |
 | **M4** | **Maschera Azioni Anti-Starvation** | Nessun vincolo: una fase può essere mantenuta all'infinito | `get_invalid_actions`: maschera una fase se selezionata $\ge 2$ volte consecutive (evita la stessa fase per 3 o più volte di fila) | Impedisce il collasso della policy nel "verde fisso permanente", forzando una rotazione minima delle fasi. |
-| **M5** | **Aggiornamento Pesi LSTM & BPTT con Burn-in** | Single-step DQN standard (no BPTT, transizioni isolate, stato LSTM azzerato o fisso) | Training R2D2 su sequenze $L=8$: **Burn-in di 4 step** (allineamento di $h, c$ senza gradiente) + BPTT sui 4 step successivi; pesi generati per tutti e 4 i gate ($f, i, o, c$) | Risolve l'*hidden state staleness*, garantendo che la memoria temporale della LSTM sia fisicamente consistente durante l'aggiornamento. |
+| **M5** | **Aggiornamento Pesi LSTM & BPTT con Burn-in** | Single-step DQN standard (no BPTT, transizioni isolate, stato LSTM azzerato o fisso) | Training R2D2 su sequenze $L=4$: **Burn-in di 2 step** (allineamento di $h, c$ senza gradiente) + BPTT sui 2 step successivi; pesi generati per tutti e 4 i gate ($f, i, o, c$) | Risolve l'*hidden state staleness*, garantendo che la memoria temporale della LSTM sia fisicamente consistente durante l'aggiornamento. |
 | **M6** | **Double DQN (Stima del Valore)** | DQN Standard: $y = r + \gamma \max_{a'} Q(s', a'; \theta^-)$ | Double DQN: $y = r + \gamma Q(s', \arg\max_{a'} Q(s', a'; \theta); \theta^-)$ | Elimina la sistematica sovrastima dei Q-value tipica dell'operatore max nel Q-learning classico. |
 | **M7** | **Experience Replay (PER con IS) & Buffer Size** | Buffer uniforme FIFO piatto da 10.000 transizioni singole | Prioritized Experience Replay (2.400 sequenze) con campionamento pesato su TD-error e correzione Importance Sampling (IS weights con $\beta$-annealing) | Campiona con frequenza maggiore le transizioni più informative/critiche correggendo il bias con i pesi IS. |
 | **M8** | **Huber Loss con Gradient Clipping & Soft Update** | MSE Loss ($L2$), nessun clipping, hard update periodico | Smooth L1 (Huber Loss) pesata da IS, Gradient Clipping (`max_norm=1.0`), Soft Polyak Update ($\tau=0.01$) | Stabilizza numericamente la convergenza, proteggendo la rete da gradienti esplosivi in presenza di picchi di traffico. |
@@ -107,7 +124,7 @@ Approccio *bottom-up*: si parte dal modello originale del Paper e si aggiunge un
 [Stage 0: MetaSTGAT Paper Originale]
        ↓ + (Reward weighted pressure + Cutoff VISION_CUTOFF_M (~144m) + wait_vec + Anti-starvation mask)
 [Stage 1: + Modellazione del Problema di Traffico (MDP)]
-       ↓ + (BPTT su sequenze L=8 + Burn-in=4 + Warmup pesi LSTM)
+       ↓ + (BPTT su sequenze L=4 + Burn-in=2 + Warmup pesi LSTM)
 [Stage 2: + Addestramento Temporale Recurrent]
        ↓ + (Double DQN + Huber Loss + Gradient Clipping + Soft Target Update)
 [Stage 3: + Algoritmo RL Robusto & Stima del Valore]
@@ -119,7 +136,7 @@ Approccio *bottom-up*: si parte dal modello originale del Paper e si aggiunge un
 |:--|:--------|:-------------------------------|:--------------------------------------------|
 | **1** | **Stage-0 (Paper Base)** | Il modello originale del paper (Stato 20, reward $-P_i$, visibilità infinita, no mask, DQN standard, buffer uniforme, single-step). | Baseline di partenza di Wang et al. |
 | **2** | **Stage-1 (+ Traffic Design)** | Stage-0 + **M1 (Weighted Reward), M2 (Cutoff VISION_CUTOFF_M (~144m)), M3 (wait_vec), M4 (Anti-starvation)**. | Isola il guadagno derivante dalla sola corretta formulazione del traffico urbano. |
-| **3** | **Stage-2 (+ Recurrent Dynamics)** | Stage-1 + **M5 (BPTT $L=8$ + Burn-in=4 + Allineamento hidden state LSTM)**. | Integra la reale comprensione delle serie storiche temporali. |
+| **3** | **Stage-2 (+ Recurrent Dynamics)** | Stage-1 + **M5 (BPTT $L=4$ + Burn-in=2 + Allineamento hidden state LSTM)**. | Integra la reale comprensione delle serie storiche temporali. |
 | **4** | **Stage-3 (+ RL Engine & Stability)** | Stage-2 + **M6 (Double DQN) + M8 (Huber Loss, Grad Clip, Soft Update)**. | Elimina la sovrastima e stabilizza i gradienti. |
 | **5** | **Stage-4 (Full Model)** | Stage-3 + **M7 (PER con pesi IS) + M9 (Warmup & Esplorazione Ciclica) + M10 (Tanh)**. | Modello finale avanzato completo. |
 

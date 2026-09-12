@@ -1,0 +1,262 @@
+\chapter{Background}
+\label{cap:background}
+
+\section{Reinforcement Learning}
+\label{sec:background-rl}
+
+Un problema di decisione sequenziale in ambiente stocastico si formalizza,
+nella trattazione ormai standard del campo \citep{suttonbarto2018}, come
+processo decisionale di Markov (MDP), una tupla
+$\mathcal{M} = (\mathcal{S}, \mathcal{A}, P, R, \gamma)$ dove $\mathcal{S}$ è
+lo spazio degli stati, $\mathcal{A}$ lo spazio delle azioni, $P(s' \mid s,a)$
+la probabilità di transizione (la proprietà di Markov richiede che dipenda
+solo dallo stato e dall'azione corrente, non dalla storia precedente),
+$R(s,a)$ la ricompensa attesa e $\gamma \in [0,1)$ il fattore di sconto, che
+pesa meno le ricompense più lontane nel tempo e garantisce che il ritorno
+resti finito anche su un orizzonte infinito. Un agente segue una politica
+$\pi(a \mid s)$, una distribuzione di probabilità sulle azioni condizionata
+allo stato corrente; il suo obiettivo è massimizzare il ritorno atteso
+$G_t = \sum_{k=0}^{\infty} \gamma^k r_{t+k}$, la somma scontata delle
+ricompense future a partire dall'istante $t$. La funzione valore-stato
+$V^\pi(s) = \mathbb{E}_\pi[G_t \mid s_t = s]$ e la funzione valore-azione
+$Q^\pi(s,a) = \mathbb{E}_\pi[G_t \mid s_t=s, a_t=a]$ misurano rispettivamente
+quanto ritorno atteso si ottiene seguendo $\pi$ da uno stato, o da una
+coppia stato-azione; soddisfano l'equazione di Bellman, che esprime il
+valore di uno stato in funzione del valore atteso degli stati successivi
+(un'equazione ricorsiva, non una formula chiusa):
+\begin{equation}
+  V^\pi(s) = \sum_a \pi(a\mid s) \sum_{s'} P(s'\mid s,a) \big[R(s,a) + \gamma V^\pi(s')\big]
+\end{equation}
+Per la politica ottima $\pi^*$, quella che massimizza $V^\pi(s)$ per ogni
+stato simultaneamente, vale l'analoga equazione di Bellman di ottimalità:
+\begin{equation}
+  Q^*(s,a) = \mathbb{E}_{s' \sim P(\cdot \mid s,a)}\left[
+    R(s,a) + \gamma \max_{a'} Q^*(s', a')
+  \right]
+  \label{eq:bellman-optimal}
+\end{equation}
+Il Q-learning tabellare approssima $Q^*$ per iterazione a punto fisso
+dell'Equazione~\ref{eq:bellman-optimal}, ma richiede una tabella con una
+entry per ogni coppia $(s,a)$: impraticabile non appena $\mathcal{S}$ diventa
+continuo o anche solo troppo grande da enumerare, com'è il caso di un vettore
+di stato che descrive occupazione delle corsie e fase corrente di
+un'intersezione.
+
+\paragraph{Deep Q-Network.} \citet{mnih2015dqn} sostituiscono la tabella con
+una rete neurale $Q(s,a;\theta)$ e stabilizzano il training di questo
+approssimatore, altrimenti instabile per la correlazione tra transizioni
+successive e per il bersaglio mobile della propria stessa stima, con due
+accorgimenti: un \emph{replay buffer} da cui campionare mini-batch di
+transizioni $(s,a,r,s')$ in ordine indipendente dalla traiettoria in cui sono
+state raccolte (rompendo la correlazione temporale tra transizioni
+consecutive, che violerebbe altrimenti l'assunzione di campioni
+indipendenti su cui si basa la discesa del gradiente stocastico), e una
+\emph{target network} $Q(\cdot;\theta^-)$ i cui pesi sono copiati
+periodicamente da quelli della rete online, usata per calcolare il bersaglio
+$y = r + \gamma \max_{a'} Q(s',a';\theta^-)$ invece che con la rete che si
+sta aggiornando nello stesso istante: senza questo accorgimento, il
+bersaglio si sposterebbe a ogni passo di ottimizzazione insieme ai pesi che
+lo generano, un problema di stabilità noto come \emph{moving target}.
+
+\paragraph{Esplorazione $\varepsilon$-greedy.} Un agente che seguisse sempre
+e solo l'azione a valore $Q$ stimato più alto non raccoglierebbe mai
+esperienza sulle conseguenze di azioni alternative, rischiando di convergere
+su una politica sub-ottima semplicemente perché non ha mai osservato di
+meglio. La strategia più comune per bilanciare sfruttamento (\emph{exploitation},
+scegliere l'azione ritenuta migliore) ed esplorazione
+(\emph{exploration}, raccogliere informazione su azioni meno note) è
+$\varepsilon$-greedy: a ogni passo di decisione, con probabilità
+$\varepsilon$ l'agente sceglie un'azione uniformemente a caso, e con
+probabilità $1-\varepsilon$ sceglie $\operatorname*{argmax}_a Q(s,a;\theta)$.
+Il valore di $\varepsilon$ tipicamente decresce nel corso del training, da
+un valore iniziale vicino a 1 (esplorazione quasi totale, quando la stima di
+$Q$ non è ancora affidabile) verso un valore finale piccolo ma non nullo
+(la politica appresa guida quasi sempre la scelta, ma non smette mai del
+tutto di raccogliere esperienza su alternative).
+
+\paragraph{Estensioni usate in questo lavoro.} Il DQN di base ammette diverse
+estensioni indipendenti, ciascuna delle quali corregge una specifica fonte di
+instabilità o inefficienza; la procedura di training descritta nel
+Capitolo~\ref{cap:tsc-modelli} le adotta tutte, motivandole caso per caso
+rispetto al paper di riferimento:
+\begin{itemize}
+  \item Il \textbf{Double DQN} \citep{vanhasselt2016double} disaccoppia la
+    selezione dell'azione dalla sua valutazione, usando la rete online per
+    scegliere l'azione migliore e la target network solo per valutarla:
+    $y = r + \gamma\, Q\!\left(s', \operatorname*{argmax}_{a'} Q(s',a';\theta);\ \theta^-\right)$.
+    Questo riduce il bias sistematico di sovrastima del DQN standard, che
+    usa lo stesso massimo sia per scegliere sia per valutare l'azione.
+  \item Il \textbf{Prioritized Experience Replay} (PER,
+    \citealp{schaul2016per}) sostituisce il campionamento uniforme dal
+    replay buffer con un campionamento proporzionale all'errore di
+    differenza temporale $\delta_i$ della transizione: priorità
+    $p_i = |\delta_i| + \varepsilon$, probabilità di campionamento
+    $P(i) = p_i^\alpha / \sum_k p_k^\alpha$. Per correggere il bias
+    introdotto da un campionamento non uniforme, ogni transizione è pesata
+    nella loss da un peso di importance sampling
+    $w_i = \left(N \cdot P(i)\right)^{-\beta} / \max_j w_j$.
+  \item La \textbf{Huber loss} (o \emph{smooth L1}) sostituisce l'errore
+    quadratico medio con una funzione quadratica vicino allo zero e lineare
+    lontano da esso, meno sensibile agli outlier prodotti da transizioni con
+    errore di stima molto grande:
+    \begin{equation}
+      L_\delta(y, \hat y) =
+      \begin{cases}
+        \tfrac{1}{2}(y-\hat y)^2 & \text{se } |y-\hat y| \le \delta \\
+        \delta\left(|y-\hat y| - \tfrac{1}{2}\delta\right) & \text{altrimenti}
+      \end{cases}
+    \end{equation}
+  \item Il \textbf{soft update} (\emph{Polyak averaging}) aggiorna la target
+    network con una media esponenziale invece di una copia periodica secca:
+    $\theta^- \leftarrow \tau\,\theta + (1-\tau)\,\theta^-$, con $\tau$
+    tipicamente piccolo (nell'ordine di $10^{-2}$), rendendo il bersaglio più
+    stabile passo per passo.
+  \item Quando la rete $Q$ include un componente ricorrente (una LSTM, come
+    nell'architettura del Capitolo~\ref{cap:tsc-modelli}), campionare
+    transizioni singole dal replay buffer pone un problema ulteriore: lo
+    stato ricorrente $(h,c)$ usato durante il training viene inizializzato a
+    zero, mentre durante la raccolta dati proveniva dalla storia reale
+    dell'episodio: un disallineamento noto come \emph{hidden state
+    staleness}. \citet{kapturowski2019r2d2} propongono di campionare intere
+    sequenze di lunghezza $L$ invece di transizioni singole e di dedicare i
+    primi passi della sequenza (\emph{burn-in}) esclusivamente a
+    ricostruire uno stato ricorrente plausibile, senza calcolare gradiente,
+    prima di eseguire la \emph{backpropagation through time} (BPTT) sui
+    passi restanti.
+\end{itemize}
+
+\section{Graph Neural Network}
+\label{sec:background-gnn}
+
+Molti problemi non hanno una struttura a griglia regolare (come un'immagine)
+o sequenziale (come una frase), ma una struttura a grafo: un insieme di
+entità (nodi) connesse da relazioni (archi) la cui topologia è essa stessa
+informazione rilevante. Una rete stradale è un esempio naturale: le
+intersezioni sono nodi, le strade che le collegano sono archi, e lo stato di
+un'intersezione (quanti veicoli attende, quale fase è attiva) è influenzato
+da ciò che accade alle intersezioni immediatamente a monte e a valle. Le GNN
+generalizzano le operazioni di convoluzione e attenzione a questo tipo di
+dato, propagando informazione tra nodi collegati da un arco.
+
+\paragraph{Graph Convolutional Network.} \citet{kipf2017gcn} propagano
+l'informazione aggregando, per ogni nodo, una media pesata delle
+rappresentazioni dei propri vicini (normalizzata sul grado dei nodi
+coinvolti), seguita da una trasformazione lineare condivisa e da una non
+linearità: è il meccanismo più semplice, con lo stesso peso per ogni arco
+del vicinato di un nodo.
+
+\paragraph{Graph Attention Network.} \citet{velickovic2018gat} sostituiscono
+il peso fisso della GCN con un coefficiente di attenzione appreso, diverso
+per ogni coppia di nodi collegati. Per un nodo $i$ con vicinato
+$\mathcal{N}(i)$, embedding di input $h_i$, matrice di proiezione condivisa
+$W$ e vettore di attenzione $\vec a$:
+\begin{equation}
+  e_{ij} = \mathrm{LeakyReLU}\!\left(\vec a^\top [W h_i \,\|\, W h_j]\right),
+  \qquad
+  \alpha_{ij} = \frac{\exp(e_{ij})}{\sum_{k \in \mathcal{N}(i)} \exp(e_{ik})}
+  \label{eq:gat-attention}
+\end{equation}
+\begin{equation}
+  h_i' = \sigma\!\left(\sum_{j \in \mathcal{N}(i)} \alpha_{ij}\, W h_j\right)
+  \label{eq:gat-aggregate}
+\end{equation}
+dove $\|$ indica concatenazione. Con $K$ teste di attenzione indipendenti, gli
+output si concatenano nei layer intermedi e si mediano nel layer finale,
+seguendo lo schema multi-head introdotto per l'attenzione da
+\citet{vaswani2017attention}. A differenza della GCN, il coefficiente
+$\alpha_{ij}$ permette a un nodo di pesare diversamente i propri vicini in
+base al loro contenuto, non solo alla loro posizione nel grafo: rilevante per
+un'intersezione con vicini di importanza molto diversa (un'arteria principale
+contro una strada secondaria).
+
+\paragraph{Pesi generati da meta-learning.} Sia la GCN sia la GAT, nella loro
+formulazione originale, condividono gli stessi pesi ($W$, $\vec a$) su tutti
+i nodi del grafo: un'assunzione ragionevole quando i nodi sono
+sufficientemente omogenei, meno quando, come in una rete stradale reale, la
+topologia locale di ogni nodo (numero di strade entranti, presenza di
+un'arteria, posizione periferica o centrale) può differire da nodo a nodo.
+Un \emph{hypernetwork} affronta questo problema generando i pesi di un layer
+non come parametri fissi appresi direttamente, ma come output di una
+seconda rete condizionata su caratteristiche locali del nodo: il
+Capitolo~\ref{cap:tsc-modelli} descrive nel dettaglio come MetaSTGAT applichi
+questo principio sia allo strato di attenzione grafica sia allo strato
+ricorrente.
+
+\paragraph{Propagazione a lungo raggio.} Sia la GCN sia la GAT propagano
+informazione a un solo passo di distanza (un salto nel grafo) per layer:
+raggiungere un vicino a distanza $k$ richiede impilare $k$ layer, con un
+costo di parametri crescente e un rischio noto di \emph{over-smoothing}
+(le rappresentazioni dei nodi diventano indistinguibili quando la
+profondità cresce troppo). Meccanismi più recenti, tra cui SONAR (paper
+allegato a questo progetto, \citealp{trenta2025sonar}), affrontano il problema
+della propagazione a lungo raggio con un principio diverso, ispirato a
+sistemi dinamici oscillatori piuttosto che all'impilamento di layer a pesi
+indipendenti: il dettaglio di questo meccanismo e la sua applicazione al
+controllo semaforico sono rimandati a un lavoro successivo (si veda la nota
+nel Capitolo~\ref{cap:introduzione}).
+
+\section{Traffic Signal Control come problema}
+\label{sec:background-tsc}
+
+Il controllo semaforico (\emph{Traffic Signal Control}, TSC) si può
+classificare in tre famiglie in ordine crescente di complessità.
+
+\textbf{Controllo a tempi fissi.} Una sequenza di fasi di durata
+predeterminata, calcolata offline su stime di traffico medie, si ripete
+ciclicamente senza mai osservare lo stato reale della rete. È robusto (non
+può fallire per un sensore guasto) ma per costruzione non reattivo: la stessa
+sequenza viene eseguita indipendentemente da un incidente, un evento, o una
+semplice fluttuazione oraria del traffico non prevista in fase di
+progettazione.
+
+\textbf{Controllo reattivo.} Una regola locale osserva lo stato corrente
+dell'intersezione (tipicamente il numero di veicoli in coda per corsia) e
+sceglie l'azione che ottimizza un criterio istantaneo. \textsc{Max-Pressure}
+\citep{varaiya2013maxpressure} ne è l'esponente più studiato: modellando il
+movimento dei veicoli come una rete di code "store-and-forward" (i veicoli
+si accumulano su una corsia finché non vengono serviti, poi si spostano
+sulla coda a valle), definisce la pressione di una fase $\phi$ come la
+differenza tra veicoli sulle corsie che quella fase servirebbe in ingresso e
+in uscita, e sceglie sempre l'azione a pressione massima. Il risultato
+teorico centrale dell'articolo originale (il suo Teorema 2) è che
+Max-Pressure è \emph{massimamente stabilizzante}: se esiste una qualunque
+politica di controllo capace di mantenere stabile (code non divergenti nel
+tempo) un dato pattern di domanda sulla rete, allora anche Max-Pressure la
+mantiene stabile, e di conseguenza massimizza il throughput della rete nel
+lungo periodo. Ottiene questa garanzia usando solo informazione locale (la
+lunghezza delle code sulle corsie adiacenti all'intersezione) e senza
+conoscere a priori il volume di domanda in ingresso all'intero sistema. È però per
+costruzione miope: non pianifica alcun compromesso su un orizzonte più
+lungo di un passo, e la garanzia di stabilità/throughput non dice nulla
+sulla distribuzione delle attese tra le diverse direzioni servite da
+un'intersezione, un aspetto di equità che questo lavoro esamina
+esplicitamente (Capitolo~\ref{cap:confronto}).
+
+\textbf{Controllo appreso.} Il reinforcement learning permette di ottimizzare
+direttamente un obiettivo di rete (tempo di viaggio, throughput) invece di
+una regola surrogata come la pressione istantanea, al costo di richiedere
+una fase di addestramento in simulazione. Applicato a una rete di più
+intersezioni, il problema è naturalmente un MDP decentralizzato e
+parzialmente osservabile: ogni intersezione osserva solo il proprio stato
+locale (le proprie corsie, la propria fase), ma le sue azioni influenzano,
+con un ritardo di pochi secondi, lo stato delle intersezioni immediatamente
+vicine attraverso il flusso di veicoli che le attraversa. Un agente per
+intersezione che non condivide alcuna informazione con i propri vicini
+ignora questa dipendenza; una GNN, propagando informazione lungo gli archi
+del grafo stradale a ogni passo di decisione, la rende esplicita nella
+rappresentazione di stato di ogni agente.
+
+\paragraph{Simulazione.} Valutare una politica di controllo semaforico su
+una rete reale non è praticabile durante lo sviluppo: richiede un simulatore
+a eventi discreti che riproduca la dinamica del traffico (posizione dei
+veicoli, codifica delle corsie, transizioni di fase) con un dettaglio
+sufficiente perché i risultati siano informativi ma con un costo
+computazionale che permetta migliaia di episodi di addestramento in tempi
+ragionevoli. \textsc{CityFlow} \citep{zhang2019cityflow} è il simulatore usato
+in questo lavoro: rispetto ad alternative più diffuse come SUMO, privilegia
+la velocità di simulazione rispetto al realismo microscopico del singolo
+veicolo, un compromesso adatto quando l'obiettivo primario è addestrare un
+agente su un numero elevato di episodi piuttosto che riprodurre con
+precisione millimetrica la dinamica di un incrocio specifico. Il
+Capitolo~\ref{cap:tsc-modelli} descrive nel dettaglio come questo lavoro
+configura l'ambiente CityFlow e formalizza il problema come MDP.

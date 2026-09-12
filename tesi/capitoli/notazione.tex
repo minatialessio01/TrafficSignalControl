@@ -1,0 +1,57 @@
+\chapter*{Notazione e Acronimi}
+\addcontentsline{toc}{chapter}{Notazione e Acronimi}
+
+\section*{Acronimi}
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+Acronimo & Significato \\
+\midrule
+MDP & Markov Decision Process \\
+RL & Reinforcement Learning \\
+DQN & Deep Q-Network \\
+PER & Prioritized Experience Replay \\
+BPTT & Backpropagation Through Time \\
+GNN & Graph Neural Network \\
+GCN & Graph Convolutional Network \\
+GAT & Graph Attention Network \\
+TSC & Traffic Signal Control \\
+SMK & Spatial Meta-Knowledge (learner) \\
+TMK & Temporal Meta-Knowledge (learner) \\
+CS & Cooperation Spatial (modulo Meta-GAT) \\
+CST & Cooperation Spatial-Temporal (modulo Meta-GAT) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section*{Notazione principale}
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}lp{10.5cm}@{}}
+\toprule
+Simbolo & Significato \\
+\midrule
+$\mathcal{S}, \mathcal{A}, P, R, \gamma$ & Stati, azioni, transizione, ricompensa, sconto (MDP, §2.1) \\
+$\pi$, $V^\pi$, $Q^\pi$ & Politica, funzione valore-stato, funzione valore-azione \\
+$\theta$, $\theta^-$ & Pesi della rete online e della target network \\
+$\tau$ & Coefficiente di soft update (Polyak averaging) \\
+$\alpha$ (in RL) & Esponente di prioritizzazione del PER \\
+$\alpha$ (in questo lavoro) & Peso della penalità anti-starvation nella ricompensa \texttt{custom} (§3.1) \\
+$\varepsilon$ & Probabilità di esplorazione ($\varepsilon$-greedy) \\
+$s_i^t, a_i^t, r_i^t$ & Stato, azione, ricompensa dell'intersezione $i$ al tempo $t$ \\
+$n_i^t, w_i^t, p_i^t$ & Veicoli per corsia, attesa massima per corsia, fase corrente (componenti di $s_i^t$) \\
+$d_0$ & Dimensione dello stato in ingresso (32 avanzato, 20 paper) \\
+$d_1$ & Dimensione nascosta del modello (default 64) \\
+$H$, $d_h$ & Numero di teste di attenzione e dimensione per testa ($d_h = d_1/H$) \\
+$e_i^t, e_j^t$ & Embedding temporale e spaziale prodotti dal Dual State Encoder \\
+$x_i^t, h_i^t, c_i^t$ & Output, stato nascosto e stato di cella del Meta-LSTM \\
+$\mathrm{SMK}(i), \mathrm{TMK}(i)$ & Meta-embedding spaziale e temporale dell'intersezione $i$ \\
+$z_{\mathrm{CS}}(i), z_{\mathrm{CST}}(i)$ & Output dei moduli Meta-GAT spaziale e spazio-temporale \\
+$\overline{tt}$, $tt_{\max}$ & Travel time medio (ufficiale) e massimo \\
+$\mathrm{wait\_max}_{\mathrm{NS/EW}}$ & Attesa massima direzionale (equità, §4.1) \\
+\bottomrule
+\end{tabular}
+\end{table}

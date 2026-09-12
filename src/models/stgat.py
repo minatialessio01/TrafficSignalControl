@@ -18,6 +18,13 @@ Architettura:
 La differenza rispetto a MetaSTGAT:
   - STGAT usa i pesi fissi standard di LSTM e GAT
   - MetaSTGAT usa i pesi dinamici generati dai meta-learner
+
+Self-loop su edge_index (12/9/2026, coerenza con la stessa modifica applicata
+a MetaSTGAT -- vedi metastgat.py e descrizione_gcn_sonar.md §0): come
+MetaGATLayer, anche StandardGATLayer non riceveva mai self-loop, la stessa
+deviazione dalla formulazione standard di Velickovic et al. (2018). Corretta
+qui per coerenza architetturale, anche se nessun modello STGAT risulta mai
+allenato in questo progetto (nessun checkpoint da rendere incompatibile).
 """
 
 import math
@@ -26,6 +33,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .meta_gcn import add_self_loops
 from .state_encoder import DualStateEncoder
 
 
@@ -125,6 +133,10 @@ class STGAT(nn.Module):
         self.hidden_dim = hidden_dim
         self.num_heads = num_heads
         self.n_actions = n_actions
+        # Self-loop su edge_index, parte permanente dell'architettura (vedi
+        # nota in cima al file) -- cache per evitare di ricalcolarli ad ogni
+        # forward, chiave = (id(edge_index), N).
+        self._self_loop_cache = {}
 
         # 1. Dual encoder (Eq. 3-4)
         self.encoder = DualStateEncoder(state_dim, hidden_dim)
@@ -168,6 +180,8 @@ class STGAT(nn.Module):
         N = states.size(0)
         device = states.device
 
+        edge_index = self._edge_index_with_self_loops(edge_index, N)
+
         # Inizializza hidden state se non fornito
         if h_prev is None:
             h_prev = torch.zeros(N, self.hidden_dim, device=device)
@@ -203,6 +217,15 @@ class STGAT(nn.Module):
         q_values = self.q_head(z)              # (N, n_actions)
 
         return q_values, x_i, c_t
+
+    def _edge_index_with_self_loops(self, edge_index: torch.Tensor, num_nodes: int) -> torch.Tensor:
+        """Aggiunge self-loop a edge_index (parte permanente dell'architettura,
+        vedi nota in cima al file), con cache per evitare di ricalcolarli ad
+        ogni forward."""
+        key = (id(edge_index), num_nodes)
+        if key not in self._self_loop_cache:
+            self._self_loop_cache[key] = add_self_loops(edge_index, num_nodes)
+        return self._self_loop_cache[key]
 
     def init_hidden(self, num_nodes: int, device: torch.device = None):
         """Inizializza gli stati nascosti a zero."""

@@ -72,13 +72,23 @@ def load_training_configs(results_dir):
 
 
 def load_test_summaries(results_dir):
-    """Restituisce dict {config_basename: {model_id: summary_dict}}"""
+    """Restituisce dict {config_basename: {model_id: summary_dict}}
+
+    Dal riordino del 12/9/2026 (vedi results/REORGANIZATION.md) i
+    test_summary_*.json vivono in <model_dir>/test_summaries/; si cercano li'
+    e, per compatibilita' con una cartella modello testata di fresco (test.py
+    scrive ancora piatto in model_dir/) o non ancora riordinata, anche
+    direttamente in model_dir/.
+    """
     summaries = {}
     for model_id in os.listdir(results_dir):
         model_dir = os.path.join(results_dir, model_id)
         if not os.path.isdir(model_dir):
             continue
-        for summary_file in glob.glob(os.path.join(model_dir, "test_summary_*.json")):
+        pattern = "test_summary_*.json"
+        summary_files = (glob.glob(os.path.join(model_dir, "test_summaries", pattern))
+                          + glob.glob(os.path.join(model_dir, pattern)))
+        for summary_file in summary_files:
             with open(summary_file, "r") as f:
                 data = json.load(f)
             config_name = data["config_basename"]
@@ -89,14 +99,22 @@ def load_test_summaries(results_dir):
 
 
 def load_test_episodes(results_dir):
-    """Restituisce dict {model_id: {config_basename: DataFrame}}"""
+    """Restituisce dict {model_id: {config_basename: DataFrame}}
+
+    Dal riordino del 12/9/2026 (vedi results/REORGANIZATION.md) i
+    test_<config>.csv vivono in <model_dir>/test_csv/; si cercano li' e,
+    per compatibilita' con una cartella non ancora riordinata, anche
+    direttamente in model_dir/.
+    """
     test_data = {}
     for model_id in os.listdir(results_dir):
         model_dir = os.path.join(results_dir, model_id)
         if not os.path.isdir(model_dir):
             continue
         test_data[model_id] = {}
-        for test_file in glob.glob(os.path.join(model_dir, "test_*.csv")):
+        test_files = (glob.glob(os.path.join(model_dir, "test_csv", "test_*.csv"))
+                      + glob.glob(os.path.join(model_dir, "test_*.csv")))
+        for test_file in test_files:
             # Salta se è un log generico non test_<config>
             if "training" in test_file:
                 continue

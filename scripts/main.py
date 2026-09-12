@@ -100,7 +100,9 @@ MODEL_REGISTRY = {
 #   - test:       tutte le altre config, usate solo per la valutazione di
 #                 generalizzazione (mai viste in training/selezione)
 DEFAULT_TRAIN_CONFIGS = [
-    "configs/config_4x4_100m_train.json",
+    "configs/config_4x4_100m_train1.json",
+    "configs/config_4x4_100m_train2.json",
+    "configs/config_4x4_100m_train3.json",
 ]
 DEFAULT_VALIDATION_CONFIG = "configs/config_4x4_100m_6k_flat.json"
 DEFAULT_TEST_CONFIGS = [
@@ -126,8 +128,8 @@ def parse_args():
                         help="Modelli da eseguire in sequenza. 'all' oppure "
                              "una lista, es. 'metastgat_pro fixedtime maxpressure'.")
     parser.add_argument("--train-configs", nargs="+", default=DEFAULT_TRAIN_CONFIGS,
-                        help="Config CityFlow di training (una sola: il training "
-                             "avviene su un'unica configurazione, vedi train.py)")
+                        help="Config CityFlow di training. Se piu' di una, train.py cicla "
+                             "una variante per episodio (stesso roadnet/densita', seed diverso)")
     parser.add_argument("--validation-config", default=DEFAULT_VALIDATION_CONFIG,
                         help="Config CityFlow di validazione (train.py --select-best-config): "
                              "usata a fine training per scegliere tra final_model.pth e best_model.pt")
@@ -164,14 +166,11 @@ def _run_with_argv(fn, argv):
 
 
 def train_one_model(model_id, info, train_configs, episodes_per_config, output_dir, validation_config):
-    """Allena un modello (in-process) usando train.py su un'unica configurazione.
-    Restituisce True/False (successo)."""
-    if len(train_configs) > 1:
-        print(f"[AVVISO] --train-configs ha {len(train_configs)} config: train.py allena "
-              f"solo su un'unica configurazione, verra' usata solo la prima ('{train_configs[0]}').")
+    """Allena un modello (in-process) usando train.py. Se train_configs contiene piu'
+    di una config, train.py cicla una variante per episodio. Restituisce True/False."""
     argv = [
         "train.py",
-        "--config", train_configs[0],
+        "--config", *train_configs,
         "--model", info["model"],
         "--episodes", str(episodes_per_config),
         "--output-dir", output_dir,
@@ -250,8 +249,13 @@ def run_pipeline(model_ids, args):
             print(f"\n--- 1. TRAINING ({model_id}) --- SALTATO (non addestrabile)")
 
         # --- TEST ---
+        # Testiamo sia sulle config di training (in-distribution: quanto va bene
+        # sui dati che ha visto/su cui e' calibrato un baseline) sia su quelle di
+        # generalizzazione -- prassi introdotta il 13/9/2026 perche' compare_models.py
+        # confronta i modelli su entrambe le categorie, non solo sulla generalizzazione.
         print(f"\n--- 2. TEST ({model_id}) ---")
-        for config in args.test_configs:
+        all_test_configs = args.train_configs + args.test_configs
+        for config in all_test_configs:
             print(f"\n>>> Test su config: {config}")
             try:
                 test_one_model(model_id, info, config, output_dir, args.test_episodes)

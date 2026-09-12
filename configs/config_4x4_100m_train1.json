@@ -3,7 +3,7 @@
   "seed": 42,
   "dir": "data/",
   "roadnetFile": "roadnet_4x4_100m.json",
-  "flowFile": "flow_4x4_train.json",
+  "flowFile": "flow_4x4_train1.json",
   "rlTrafficLight": true,
   "laneChange": false,
   "saveReplay": false,

@@ -1,8 +1,31 @@
-# MetaSTGAT — Replica da zero
+# MetaSTGAT — Replica e Ablation Study
 
-Replica del modello **MetaSTGAT** (Wang et al., 2022):
+Replica e studio di ablazione del modello **MetaSTGAT** (Wang et al., 2022):
 > *"Meta-learning based spatial-temporal graph attention network for traffic signal control"*
 > Knowledge-Based Systems 250 (2022) 109166
+
+Progetto di tesi: implementazione da zero dell'architettura, ambiente di simulazione multi-intersezione su CityFlow, generazione parametrica dei dataset, sistema di ablation study a preset, e un esperimento di generalizzazione mirato (traffico multi-variante + arteria asimmetrica) per mettere alla prova sia il modello avanzato sia le baseline classiche.
+
+---
+
+## Indice della documentazione
+
+Questo repository usa un file Markdown per argomento, pensato per essere letto (anche da un assistente IA) come contesto strutturato per la stesura della tesi:
+
+| Documento | Cosa descrive |
+|---|---|
+| [descrizione_src.md](descrizione_src.md) | Codice sorgente (`src/`): ambiente MDP, architettura MetaSTGAT/STGAT e sotto-moduli, agenti (DQN/MaxPressure/FixedTime), replay buffer, logger |
+| [descrizione_environment.md](descrizione_environment.md) | L'ambiente di simulazione in dettaglio: CityFlow, gestione verde/giallo/rosso, formulazione MDP, ablation lato ambiente, replay/visualizzazione |
+| [descrizione_metriche.md](descrizione_metriche.md) | Ogni metrica di valutazione prodotta dal codice: travel time (3 varianti), throughput, percentuali di fase, coda del travel time, equità direzionale N/S vs W/E |
+| [descrizione_scripts.md](descrizione_scripts.md) | Script eseguibili (`scripts/`): training, test, orchestrazione della pipeline, generazione dati, grafici |
+| [descrizione_configurazioni.md](descrizione_configurazioni.md) | Dataset e config CityFlow: roadnet, flussi di traffico, nomenclatura, densità calibrate, arteria e varianti multi-seed per la generalizzazione |
+| [descrizione_modelli.md](descrizione_modelli.md) | **Il catalogo dei modelli**: quali sono stati testati e in cosa differiscono, lungo i 3 assi paper/alpha/ablation — punto di partenza, fonde `metastgat_diff_analysis.md` e `proposte_ablation.md` |
+| [metastgat_diff_analysis.md](metastgat_diff_analysis.md) | Confronto sistematico codice vs paper originale, differenza per differenza, con estratti di codice (dettaglio dietro `descrizione_modelli.md` §1) |
+| [proposte_ablation.md](proposte_ablation.md) | Le 4 proposte alternative di raggruppamento per l'ablation study, con vantaggi/svantaggi di ciascuna (dettaglio dietro `descrizione_modelli.md` §3, solo la Proposta 1 è implementata) |
+| [piano_tesi.md](piano_tesi.md) | Piano di stesura della tesi vera e propria: struttura dei capitoli, stato di ciascuna sezione (pronta/da completare), notazione matematica unificata, bibliografia nota, convenzioni LaTeX |
+| [descrizione_gcn_sonar.md](descrizione_gcn_sonar.md) | Seconda parte del progetto: MetaSTGNN (GAT→GCN) e MetaSTSONAR (GAT→SONAR) — design, decisioni D1-D6, verifica pre-training, come riprodurre |
+
+`implementation_plan.md` e `task.md` (spec/pianificazione iniziale della tesi) sono stati rimossi il 12/9/2026: riferivano script (`run_experiment.py`) e config (`config_4x4_200m_2k_flat`, ecc.) mai più esistiti nell'albero attuale, completamente superati dalla pipeline reale (`main.py`/`train.py`/`test.py`) e dalle config effettivamente in uso — nessuna informazione persa, recuperabili dalla cronologia git se mai servisse. [istruzioni seconda parte.md](istruzioni%20seconda%20parte.md) resta invece il piano di riferimento per `descrizione_gcn_sonar.md` (implementato il 13/9/2026), non uno storico.
 
 ---
 
@@ -11,175 +34,90 @@ Replica del modello **MetaSTGAT** (Wang et al., 2022):
 ```
 CodiceTesi/
 ├── README.md
-├── docker/
-│   ├── Dockerfile
-│   └── requirements.txt
-├── configs/                  # Configurazioni CityFlow per ogni dataset
-├── data/
-│   ├── synthetic/            # Dati sintetici 4×4 (4 configurazioni)
-│   ├── hangzhou/             # Dataset reale (16 intersezioni)
-│   └── jinan/               # Dataset reale (12 intersezioni)
+├── docker/                    # Dockerfile + requirements (ambiente di esecuzione)
+├── configs/                   # Config CityFlow (accoppiano roadnet+flow+parametri simulazione)
+├── data/                      # Roadnet e flow generati parametricamente
 ├── src/
-│   ├── environment/          # Wrapper CityFlow + costruttore grafi
-│   ├── models/               # Architettura MetaSTGAT
-│   ├── agents/               # DQN agent, FixedTime baseline
-│   └── utils/                # Metriche, logger, checkpoint manager
+│   ├── environment/           # Wrapper CityFlow → MDP (cityflow_env.py)
+│   ├── models/                # MetaSTGAT, STGAT e sotto-moduli (meta-GAT, meta-LSTM, ...)
+│   ├── agents/                # DQN, MaxPressure, FixedTime, replay buffer
+│   └── utils/                 # Logger di training, metriche episodiche
 ├── scripts/
-│   ├── generate_synthetic_data.py
-│   ├── download_real_data.py
-│   ├── main.py                # Punto di ingresso unico: train + test + plot (1 o N modelli)
-│   ├── train.py                # Training (su un'unica configurazione)
-│   ├── test.py                # Valutazione
-│   ├── plot_results.py         # Grafici e tabelle di confronto
-│   └── legacy/                 # Script superati, tenuti come riferimento
-└── results/                  # Checkpoint, log, metriche (creato automaticamente)
+│   ├── generate_synthetic_data.py   # Generazione roadnet+flow+config
+│   ├── train.py                     # Training (preset ablation, multi-config, resume)
+│   ├── test.py                      # Valutazione di un modello/baseline
+│   ├── main.py                      # Punto di ingresso: train+test+plot per 1..N modelli
+│   ├── plot_results.py              # Grafici e tabelle comparative
+│   └── inspect_replay.py            # Replay MaxPressure/random senza training, per ispezione
+└── results/                   # Checkpoint, log, metriche (creato automaticamente)
 ```
 
 ---
 
-## Installazione e Setup
+## Setup
 
-CityFlow funziona nativamente su Linux. Poiché siamo su Windows, la soluzione raccomandata è **Docker**.
-
-### Opzione A — Docker (Consigliata)
-
-Assicurati di avere Docker installato e funzionante (es. Docker Desktop).
+CityFlow funziona nativamente solo su Linux. Su Windows la soluzione usata in questo progetto è **Docker** (via WSL2):
 
 ```bash
-cd CodiceTesi/docker
-docker build -t metastgat .
-docker run -it --rm -v $(pwd)/..:/workspace metastgat bash
+cd docker
+docker build -t metastgat ..    # contesto = root del repo, non docker/
 ```
 
-### Opzione C — Manuale (Linux/macOS)
+Esecuzione (monta il repo in `/workspace`, così le modifiche locali sono visibili subito senza ricostruire l'immagine):
 
 ```bash
-# Crea ambiente virtuale
-python3 -m venv venv
-source venv/bin/activate
-
-# Installa dipendenze
-pip install -r docker/requirements.txt
-
-# Installa CityFlow
-pip install cityflow
-
-# Installa PyG (PyTorch Geometric)
-pip install torch_geometric
+docker run --rm -v <path-assoluto-repo>:/workspace -w /workspace metastgat \
+    python3 -u scripts/main.py --model metastgat_pro --episodes-per-config 100
 ```
+
+Su Windows con WSL2, da PowerShell: `wsl.exe docker run --rm -v /mnt/c/percorso/CodiceTesi:/workspace -w /workspace metastgat python3 -u <script> <args>`.
 
 ---
 
-## Dataset
-
-### Dati sintetici (generati localmente)
+## Quick start
 
 ```bash
-python scripts/generate_synthetic_data.py
-```
+# 1. Genera i dati (roadnet + flow + config) — vedi descrizione_configurazioni.md per i parametri
+python scripts/generate_synthetic_data.py --grid 4x4 --road-length 107 --road-length-label 100 \
+    --duration 1800 --variance workday
 
-Genera una griglia 4×4 con 4 configurazioni di traffico (combinazioni di arrival rate 0.388/0.416 e varianza flat/peak).
+# 2. Un solo modello, comodo per il debug (in-process, breakpoint funzionanti)
+python scripts/main.py --model metastgat_pro --episodes-per-config 100
 
-### Dataset reali (Hangzhou e Jinan)
-
-```bash
-python scripts/download_real_data.py
-```
-
-Scarica automaticamente i dataset dal repository CoLight (gli stessi usati nell'articolo originale).
-
----
-
-## Training
-
-```bash
-# Training MetaSTGAT su dataset sintetico Config 1
-python scripts/train.py \
-    --config configs/synthetic_4x4_config_4x4_200m_1.3k_flat.json \
-    --model MetaSTGAT \
-    --episodes 200 \
-    --output results/metastgat_config1
-
-# Riprendere training da un checkpoint
-python scripts/train.py \
-    --config configs/synthetic_4x4_config_4x4_200m_1.3k_flat.json \
-    --model MetaSTGAT \
-    --episodes 200 \
-    --resume results/metastgat_config1/checkpoint_ep050.pt \
-    --output results/metastgat_config1
-
-# Fermarsi a un episodio specifico (es. episodio 50)
-python scripts/train.py \
-    --config configs/synthetic_4x4_config_4x4_200m_1.3k_flat.json \
-    --model MetaSTGAT \
-    --episodes 200 \
-    --stop-at 50 \
-    --output results/metastgat_config1
-```
-
-> **Interruzione manuale**: premi `Ctrl+C` in qualsiasi momento. Il training salverà automaticamente un checkpoint con l'episodio corrente e potrà essere ripreso con `--resume`.
-
-### Argomenti train.py
-
-| Argomento | Default | Descrizione |
-|---|---|---|
-| `--config` | obbligatorio | File di configurazione CityFlow |
-| `--model` | `MetaSTGAT` | `MetaSTGAT`, `STGAT`, `FixedTime` |
-| `--episodes` | `200` | Numero totale di episodi |
-| `--stop-at` | `None` | Ferma il training all'episodio N |
-| `--resume` | `None` | Percorso checkpoint da cui riprendere |
-| `--output` | `results/run` | Cartella di output |
-| `--batch-size` | `20` | Batch size per l'aggiornamento DQN |
-| `--lr` | `1e-3` | Learning rate RMSprop |
-| `--gamma` | `0.85` | Discount factor RL |
-| `--hidden-dim` | `64` | Dimensione hidden layer |
-| `--num-heads` | `4` | Numero teste di attenzione |
-| `--seed` | `42` | Random seed |
-
----
-
-## Test e valutazione
-
-```bash
-python scripts/test.py \
-    --config configs/synthetic_4x4_config_4x4_200m_1.3k_flat.json \
-    --checkpoint results/metastgat_config1/best_model.pt \
-    --model MetaSTGAT
-```
-
-Output: travel time medio (s) e throughput (veicoli) — stesse metriche dell'articolo.
-
----
-
-## Pipeline sperimentale completa (Pro / Paper / Ablation / Baseline)
-
-```bash
-# Un solo modello (comodo per il debug, esegue tutto in-process)
-python scripts/main.py --model metastgat_pro
-
-# Tutti gli 8 modelli (Pro, Paper, 4 ablation, FixedTime, MaxPressure):
-# allenamento su 2 config in curriculum, test sulle 8 config di generalizzazione,
-# grafici e tabelle finali in results/plots/
+# 3. Tutta la pipeline: 8 modelli (MetaSTGAT pro/paper, 4 ablation, FixedTime, MaxPressure),
+#    training + validazione + test di generalizzazione + grafici/tabelle finali
 python scripts/main.py --models all
 ```
 
-Vedi `descrizione_scripts.md` per il dettaglio di `main.py`/`train.py`/`test.py`/`plot_results.py`,
-e `implementation_plan.md`/`task.md` per la definizione completa dei modelli e delle config confrontate.
+Per training/test più mirati (una config sola, preset di ablation specifico, resume da checkpoint) vedi gli esempi in [descrizione_scripts.md](descrizione_scripts.md).
 
 ---
 
-## Checkpoint
+## I modelli confrontati
 
-I checkpoint vengono salvati in `results/<run_name>/`:
-- `checkpoint_epXXX.pt` — checkpoint ogni 10 episodi
-- `best_model.pt` — modello migliore per travel time
-- `training_log.csv` — metriche per ogni episodio
-- `training_state.json` — stato del training (episodio corrente, epsilon, ecc.)
+| model_id | Modello | Ablation | Allenabile |
+|---|---|---|---|
+| `metastgat_pro` | MetaSTGAT | nessuna (completo) | sì |
+| `metastgat_paper` | MetaSTGAT | replica fedele del paper | sì |
+| `ablation_environment` | MetaSTGAT | senza reward custom/visibilità/wait/mask | sì |
+| `ablation_temporal` | MetaSTGAT | senza BPTT+burn-in | sì |
+| `ablation_rl_core` | MetaSTGAT | senza Double DQN | sì |
+| `ablation_replay_stability` | MetaSTGAT | senza PER/Huber/grad-clip/warmup | sì |
+| `fixedtime` | Fasi cicliche a tempo fisso | — | no (solo baseline) |
+| `maxpressure` | MaxPressure (Varaiya 2013) | — | no (solo baseline) |
 
-Per vedere lo stato di un training interrotto:
-```bash
-cat results/metastgat_config1/training_state.json
-```
+Dettaglio di ogni meccanismo di ablation (M1-M10) e della loro mappatura sui preset in [metastgat_diff_analysis.md](metastgat_diff_analysis.md) e [proposte_ablation.md](proposte_ablation.md).
+
+---
+
+## Checkpoint e risultati
+
+Ogni modello allenato scrive in `results/<model_id>/`:
+- `checkpoint_epXXXX.pt` — checkpoint periodico (ogni 10 episodi), `best_model.pt` — miglior travel time, `final_model.pth` — ultimo episodio, `selected_model.pth` — vincitore della selezione automatica finale (usato di default da `test.py`).
+- `training_log.csv` / `training_state.json` — metriche per episodio / stato corrente.
+- `test_<config>.csv` / `test_summary_<config>.json` / `phase_pct_<config>.png` — per ogni config di test.
+
+Un training interrotto (Ctrl+C, o `docker stop -s SIGINT` se in container) può essere ripreso esattamente da dove si trovava con `--resume <checkpoint>` — dettaglio completo in [descrizione_scripts.md](descrizione_scripts.md).
 
 ---
 

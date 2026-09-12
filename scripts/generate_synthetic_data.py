@@ -226,9 +226,21 @@ def make_simple_roadnet(grid_r: int, grid_c: int, road_length: int) -> dict:
 # FLOW GENERATION ALGORITHM
 # ============================================================
 
+def _is_artery_road(road_id: str, artery_row: int) -> bool:
+    """True se road_id e' un segmento orizzontale (E-O) sulla riga artery_row."""
+    parts = road_id.split("_")
+    if len(parts) != 6:
+        return False
+    try:
+        fr, tr = int(parts[1]), int(parts[4])
+    except ValueError:
+        return False
+    return fr == tr == artery_row
+
+
 def make_flow(target_vehicles: int, variance_type: str,
               grid_r: int, grid_c: int, duration: int = SIMULATION_DURATION, seed: int = 42,
-              workday_rates: dict = None) -> list:
+              workday_rates: dict = None, artery_row: int = None, artery_boost: float = 1.0) -> list:
     rng = random.Random(seed)
     flows = []
     
@@ -276,6 +288,13 @@ def make_flow(target_vehicles: int, variance_type: str,
                 # noise factor for route popularity
                 noise_factor = rng.uniform(0.8, 1.2)
                 final_prob = prob * noise_factor
+                # Boost arteria: ridistribuisce lo stesso budget di veicoli, non lo
+                # aumenta — le rotte che passano per la riga artery_row diventano
+                # artery_boost volte piu' probabili, le altre proporzionalmente
+                # meno (perche' total_weight cresce e la normalizzazione finale
+                # e' target_vehicles * weight/total_weight).
+                if artery_row is not None and any(_is_artery_road(r, artery_row) for r in route):
+                    final_prob *= artery_boost
                 all_paths.append((route, final_prob))
                 total_weight += final_prob
 
@@ -424,6 +443,22 @@ if __name__ == "__main__":
     parser.add_argument("--rate-peak-alto", type=float, default=7560,
                         help="[solo --variance workday] intensita' 'picco alto' (veicoli equiv./1800s) = 4.2 veic./s "
                              "(+20% su 'alto', entro il range gia' validato da config_4x4_100m_6k_peak). Default 7560.")
+    parser.add_argument("--seed", type=int, default=42,
+                        help="Seed per il rumore sui pesi delle rotte e sugli intervalli di spawn. "
+                             "Variarlo (a parita' di tutti gli altri parametri) produce una variante "
+                             "'sostanza-preservante' dello stesso flow: stessa densita'/forma, ma "
+                             "percorsi e istanti di spawn specifici diversi.")
+    parser.add_argument("--artery-row", type=int, default=None,
+                        help="Indice di riga (0-based) di una strada Est-Ovest da rendere un'arteria "
+                             "piu' trafficata delle altre (redistribuisce il budget di veicoli, non "
+                             "lo aumenta). Es. --artery-row 1 per la 'seconda' strada orizzontale.")
+    parser.add_argument("--artery-boost", type=float, default=3.0,
+                        help="Fattore moltiplicativo del peso delle rotte che passano per --artery-row "
+                             "(prima della normalizzazione). Ignorato se --artery-row non e' specificato.")
+    parser.add_argument("--name-suffix", type=str, default="",
+                        help="Suffisso opzionale aggiunto al nome di flow e config, prima di '.json' "
+                             "(es. '_seed43', '_artery'). Utile per generare piu' varianti dello stesso "
+                             "identico dataset senza sovrascriverle a vicenda.")
     args = parser.parse_args()
 
     # Parse grid
@@ -466,17 +501,17 @@ if __name__ == "__main__":
             "alto": args.rate_alto,
             "peak_alto": args.rate_peak_alto,
         }
-    flow = make_flow(target_vehicles, args.variance, grid_r, grid_c, args.duration, seed=42,
-                      workday_rates=workday_rates)
+    flow = make_flow(target_vehicles, args.variance, grid_r, grid_c, args.duration, seed=args.seed,
+                      workday_rates=workday_rates, artery_row=args.artery_row, artery_boost=args.artery_boost)
 
     # Configurazione del nome in base alla varianza
     if args.variance == "workday":
-        flow_filename = f"flow_{grid_r}x{grid_c}_train.json"
+        flow_filename = f"flow_{grid_r}x{grid_c}_train{args.name_suffix}.json"
     else:
         # Formatta k_val con una cifra decimale o precisa se intero, per il nome del file
         k_val_str = f"{target_vehicles / 1000.0:g}k"
         name_variance = args.variance  # "flat" | "peak" | "peaks"
-        flow_filename = f"flow_{grid_r}x{grid_c}_{k_val_str}_{name_variance}.json"
+        flow_filename = f"flow_{grid_r}x{grid_c}_{k_val_str}_{name_variance}{args.name_suffix}.json"
 
     with open(os.path.join(args.output_dir, flow_filename), "w", encoding='utf-8') as f:
         json.dump(flow, f, indent=2)
@@ -484,9 +519,9 @@ if __name__ == "__main__":
     # 3. Genera Config
     cfg = make_cityflow_config(roadnet_filename, flow_filename, args.duration, "data/")
     if args.variance == "workday":
-        cfg_filename = f"config_{grid_r}x{grid_c}_{road_length_label}m_train.json"
+        cfg_filename = f"config_{grid_r}x{grid_c}_{road_length_label}m_train{args.name_suffix}.json"
     else:
-        cfg_filename = f"config_{grid_r}x{grid_c}_{road_length_label}m_{k_val_str}_{name_variance}.json"
+        cfg_filename = f"config_{grid_r}x{grid_c}_{road_length_label}m_{k_val_str}_{name_variance}{args.name_suffix}.json"
 
     with open(os.path.join(args.config_dir, cfg_filename), "w", encoding='utf-8') as f:
         json.dump(cfg, f, indent=2)

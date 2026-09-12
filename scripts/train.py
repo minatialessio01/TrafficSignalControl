@@ -11,7 +11,8 @@ Implementa l'Algorithm 1 dell'articolo con supporto a:
   - Selezione automatica finale tra ultimo modello e best model, valutati su
     --select-best-config (config di validazione)
 
-Training su una singola configurazione, warmup ed esplorazione:
+Training su una o piu' configurazioni (se piu' di una, si cicla una variante
+per episodio — episodio % N, vedi --config), warmup ed esplorazione:
   warmup_episodes episodi casuali non loggati (riempiono il buffer, non
   allenano nulla) -> episodi di training con epsilon che decade da
   epsilon_start a epsilon_end entro eps_fraction degli episodi totali -> ogni
@@ -23,29 +24,37 @@ Training su una singola configurazione, warmup ed esplorazione:
 
 Uso:
   # Training standard (modello avanzato completo)
-  python scripts/train.py --config configs/config_4x4_100m_train.json
+  python scripts/train.py --config configs/config_4x4_100m_train1.json
+
+  # Training su piu' varianti dello stesso dataset (stesso roadnet/densita',
+  # seed diverso) per non far vedere al modello sempre la stessa identica
+  # sequenza di veicoli: si cicla una variante per episodio.
+  python scripts/train.py \\
+      --config configs/config_4x4_100m_train1.json \\
+               configs/config_4x4_100m_train2.json \\
+               configs/config_4x4_100m_train3.json
 
   # Con selezione automatica finale su una config di validazione: a fine
   # training confronta final_model.pth col best_model.pt (valutati su
   # --select-best-config) e salva il vincitore come selected_model.pth
   # (usato in automatico da scripts/test.py).
   python scripts/train.py \\
-      --config configs/config_4x4_100m_train.json --episodes 200 \\
+      --config configs/config_4x4_100m_train1.json --episodes 200 \\
       --select-best-config configs/config_4x4_100m_6k_flat.json \\
       --output-dir results/metastgat_pro
 
   # Training con preset ablation (Proposta 1 – Sottosistemi Funzionali)
-  python scripts/train.py --config configs/config_4x4_100m_train.json --ablation environment
-  python scripts/train.py --config configs/config_4x4_100m_train.json --ablation temporal
-  python scripts/train.py --config configs/config_4x4_100m_train.json --ablation rl_core
-  python scripts/train.py --config configs/config_4x4_100m_train.json --ablation replay_stability
-  python scripts/train.py --config configs/config_4x4_100m_train.json --ablation paper
+  python scripts/train.py --config configs/config_4x4_100m_train1.json --ablation environment
+  python scripts/train.py --config configs/config_4x4_100m_train1.json --ablation temporal
+  python scripts/train.py --config configs/config_4x4_100m_train1.json --ablation rl_core
+  python scripts/train.py --config configs/config_4x4_100m_train1.json --ablation replay_stability
+  python scripts/train.py --config configs/config_4x4_100m_train1.json --ablation paper
 
   # Output in cartella specifica
-  python scripts/train.py --config configs/config_4x4_100m_train.json --output-dir results/metastgat_pro
+  python scripts/train.py --config configs/config_4x4_100m_train1.json --output-dir results/metastgat_pro
 
   # Fermarsi all'episodio 50
-  python scripts/train.py --config configs/config_4x4_100m_train.json --stop-at 50
+  python scripts/train.py --config configs/config_4x4_100m_train1.json --stop-at 50
 
   # Premi Ctrl+C in qualsiasi momento per interrompere — viene salvato un checkpoint
 """
@@ -66,6 +75,8 @@ import torch
 
 from src.environment.cityflow_env import CityFlowEnv
 from src.models.metastgat import MetaSTGAT
+from src.models.metastgnn import MetaSTGNN
+from src.models.metastsonar import MetaSTSONAR
 from src.models.stgat import STGAT
 from src.agents.dqn_agent import DQNAgent
 from src.agents.fixedtime_agent import FixedTimeAgent
@@ -103,6 +114,12 @@ def _eps_decay_for(n_episodes: int, fraction: float, eps_start: float, eps_end: 
     return (eps_end / eps_start) ** (1.0 / target_ep)
 
 
+def _variant_idx(ep_1based: int, n_variants: int) -> int:
+    """Indice (0-based) della variante di training da usare per l'episodio
+    ep_1based (1-indexed), ciclando su n_variants varianti."""
+    return (ep_1based - 1) % n_variants
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Training MetaSTGAT per Traffic Signal Control",
@@ -110,11 +127,17 @@ def parse_args():
     )
 
     # ── Configurazione obbligatoria ─────────────────────────────────────────
-    parser.add_argument("--config", type=str, default="configs/benchmark_config.json",
-                        help="Path al file config.json di CityFlow")
+    parser.add_argument("--config", type=str, nargs="+", default=["configs/benchmark_config.json"],
+                        help="Path a una o piu' config.json di CityFlow. Se piu' di una, si "
+                             "cicla tra le varianti un episodio alla volta (episodio % N, incluso "
+                             "durante warm-up ed esplorazione ciclica) — cosi' il modello non vede "
+                             "sempre la stessa identica sequenza di veicoli. Pensato per varianti "
+                             "'sostanza-preservante' (stesso roadnet/densita', seed diverso).")
     # [LIBSIGNAL ADDITION: Aggiunto CoLight alle scelte]
+    # MetaSTGNN/MetaSTSONAR: seconda parte del progetto (GAT -> GCN/SONAR),
+    # vedi istruzioni seconda parte.md e descrizione_gcn_sonar.md.
     parser.add_argument("--model", default="MetaSTGAT",
-                        choices=["MetaSTGAT", "STGAT", "FixedTime", "CoLight"],
+                        choices=["MetaSTGAT", "MetaSTGNN", "MetaSTSONAR", "STGAT", "FixedTime", "CoLight"],
                         help="Modello da allenare")
     parser.add_argument("--output", default="auto",
                         help="Directory di output per checkpoint e log. "
@@ -130,7 +153,7 @@ def parse_args():
     parser.add_argument("--resume", default=None,
                         metavar="CHECKPOINT",
                         help="Percorso del checkpoint da cui riprendere "
-                             "(es. results/run/checkpoint_ep0050.pt)")
+                             "(es. results/run/checkpoints/checkpoint_ep0050.pt)")
 
     # ── Selezione finale del modello (config di validazione) ──────────────────
     parser.add_argument("--select-best-config", default="configs/config_4x4_100m_6k_flat.json",
@@ -151,6 +174,28 @@ def parse_args():
     parser.add_argument("--hidden-dim",    type=int,   default=DEFAULTS["hidden_dim"])
     parser.add_argument("--num-heads",     type=int,   default=DEFAULTS["num_heads"])
     parser.add_argument("--num-neighbors", type=int,   default=DEFAULTS["num_neighbors"])
+    parser.add_argument("--num-layers", type=int, default=1, choices=[1, 2],
+                        help="Layer Meta-GAT/Meta-GCN indipendenti impilati per modulo "
+                             "(CST e CS), solo per --model MetaSTGAT|MetaSTGNN. "
+                             "Istruzioni seconda parte.md §2.1. Ignorato da MetaSTSONAR "
+                             "(la sua profondita' e' --sonar-recurrences, pesi condivisi "
+                             "tra le ricorrenze, non layer indipendenti).")
+    parser.add_argument("--sonar-recurrences", type=int, default=2,
+                        help="L, numero di ricorrenze di discretizzazione per blocco "
+                             "Meta-SONAR (solo --model MetaSTSONAR). Raccomandazione "
+                             "istruzioni seconda parte.md §D1: 2 (secondo valore "
+                             "consigliato se si vuole confrontare due profondita': 4).")
+    parser.add_argument("--sonar-step-size", type=float, default=0.1,
+                        help="h, passo di discretizzazione di Meta-SONAR (solo "
+                             "--model MetaSTSONAR). Valori grandi possono divergere "
+                             "(il bound di sensitivita' del paper cresce con h) -- "
+                             "verificare con il controllo gradienti prima di un training lungo.")
+    parser.add_argument("--no-sonar-dissipation", action="store_true",
+                        help="Disattiva il termine dissipativo D(X) di Meta-SONAR (solo "
+                             "--model MetaSTSONAR).")
+    parser.add_argument("--no-sonar-forcing", action="store_true",
+                        help="Disattiva la forza esterna F(X) di Meta-SONAR (solo "
+                             "--model MetaSTSONAR).")
     parser.add_argument("--epsilon-start", type=float, default=DEFAULTS["epsilon_start"])
     parser.add_argument("--epsilon-end",   type=float, default=DEFAULTS["epsilon_end"])
     parser.add_argument("--epsilon-decay", type=float, default=DEFAULTS["epsilon_decay"])
@@ -171,6 +216,10 @@ def parse_args():
                         choices=["custom", "paper"],
                         help="Formula reward: custom (weighted pressure) o paper (-P_i). "
                              "Se non specificato, usa il default del preset.")
+    parser.add_argument("--alpha", type=float, default=0.5,
+                        help="Peso del termine anti-starvation nel reward custom "
+                             "(alpha * max_red_wait_time, vedi cityflow_env.py). Ignorato "
+                             "se reward-mode=paper. Default 0.5 (default anche di CityFlowEnv).")
     parser.add_argument("--no-vision-cutoff",     action="store_true",
                         help="Rimuove il cutoff dal campo visivo (VISION_CUTOFF_M, ~144m) (visibilità globale come nel paper)")
     parser.add_argument("--no-wait-vec",          action="store_true",
@@ -303,7 +352,7 @@ def apply_ablation_preset(args):
 
     # Normalizza i nomi con trattino → underscore (argparse converte automaticamente,
     # ma li stampiamo per debug)
-    print(f"[Ablation] preset='{preset}' | reward_mode={args.reward_mode} | "
+    print(f"[Ablation] preset='{preset}' | reward_mode={args.reward_mode} | alpha={args.alpha} | "
           f"no_vision_cutoff={args.no_vision_cutoff} | no_wait_vec={args.no_wait_vec} | "
           f"no_action_mask={args.no_action_mask} | no_bptt={args.no_bptt} | "
           f"no_double_dqn={args.no_double_dqn} | no_per={args.no_per} | "
@@ -368,9 +417,9 @@ def generate_comparison_plots(args, env, rl_agent, edge_index, logger):
             out.append(float(np.mean(data[max(0, i - w + 1): i + 1])))
         return out
 
-    # ── Titolo: solo il nome della config di training ────────────────────────
-    config_name = os.path.basename(args.config)
-    title_config_line = f"Config: {config_name}"
+    # ── Titolo: nome/i della config di training ───────────────────────────────
+    config_names = ", ".join(os.path.basename(c) for c in args.config)
+    title_config_line = f"Config: {config_names}"
 
     # ── Grafico 1: curve di training ──────────────────────────────────────────
     fig, axes = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
@@ -436,6 +485,7 @@ def _prepare_cityflow_env(config_path: str, args, tmp_name: str = "cityflow_conf
     env = CityFlowEnv(
         custom_config_path,
         num_neighbors=args.num_neighbors,
+        alpha=args.alpha,
         reward_mode=args.reward_mode,
         use_vision_cutoff=not args.no_vision_cutoff,
         use_wait_vec=not args.no_wait_vec,
@@ -491,6 +541,7 @@ def run_final_selection(args, final_model_path: str, best_model_path: str, devic
             output_dir=os.path.join(args.output, "selection_eval", name),
             ablation=args.ablation,
             reward_mode=args.reward_mode,
+            alpha=args.alpha,
             no_vision_cutoff=args.no_vision_cutoff,
             no_wait_vec=args.no_wait_vec,
             no_action_mask=args.no_action_mask,
@@ -548,6 +599,34 @@ def build_model(args, env: CityFlowEnv) -> torch.nn.Module:
             temporal_meta_dim=env.temporal_meta_dim,
             meta_hidden_dim=args.hidden_dim,
             use_tanh_meta=not args.no_tanh_meta,
+            num_layers=getattr(args, "num_layers", 1),
+        )
+    elif args.model == "MetaSTGNN":
+        model = MetaSTGNN(
+            state_dim=env.observation_dim,
+            hidden_dim=args.hidden_dim,
+            num_heads=args.num_heads,   # ignorato dal modello, solo uniformita' di chiamata
+            n_actions=env.action_space_n,
+            spatial_meta_dim=env.spatial_meta_dim,
+            temporal_meta_dim=env.temporal_meta_dim,
+            meta_hidden_dim=args.hidden_dim,
+            use_tanh_meta=not args.no_tanh_meta,
+            num_layers=getattr(args, "num_layers", 1),
+        )
+    elif args.model == "MetaSTSONAR":
+        model = MetaSTSONAR(
+            state_dim=env.observation_dim,
+            hidden_dim=args.hidden_dim,
+            num_heads=args.num_heads,   # ignorato dal modello, solo uniformita' di chiamata
+            n_actions=env.action_space_n,
+            spatial_meta_dim=env.spatial_meta_dim,
+            temporal_meta_dim=env.temporal_meta_dim,
+            meta_hidden_dim=args.hidden_dim,
+            use_tanh_meta=not args.no_tanh_meta,
+            n_recurrences=getattr(args, "sonar_recurrences", 2),
+            step_size=getattr(args, "sonar_step_size", 0.1),
+            use_dissipation=not getattr(args, "no_sonar_dissipation", False),
+            use_forcing=not getattr(args, "no_sonar_forcing", False),
         )
     elif args.model == "STGAT":
         model = STGAT(
@@ -591,7 +670,7 @@ def run_training(args):
 
     print(f"[Config] Device: {device}")
     print(f"[Config] Modello: {args.model}")
-    print(f"[Config] Config CityFlow: {args.config}")
+    print(f"[Config] Config CityFlow: {', '.join(args.config)}")
     print(f"[Config] Output: {args.output}")
 
     # ── FixedTime: nessun training ──────────────────────────────────────────
@@ -599,10 +678,28 @@ def run_training(args):
         run_fixedtime(args, device)
         return
 
-    # ── Inizializza ambiente ──────────────────────────────────────────────────
+    # ── Inizializza ambiente (prima variante) ───────────────────────────────
+    n_variants = len(args.config)
+    if n_variants > 1:
+        print(f"[Env] {n_variants} varianti di training in ciclo (episodio % {n_variants}): "
+              f"{[os.path.basename(c) for c in args.config]}")
     print("\n[Env] Preparazione configurazione CityFlow...")
-    env = _prepare_cityflow_env(args.config, args, tmp_name="cityflow_config.json")
+    current_variant_idx = 0
+    env = _prepare_cityflow_env(args.config[0], args, tmp_name="cityflow_config_v0.json")
     edge_index = env.get_edge_index().to(device)
+
+    def switch_variant(idx: int):
+        """Ricostruisce env/edge_index sulla variante di training idx, se diversa
+        da quella gia' caricata (stesso roadnet tra le varianti, cambia solo il
+        flow — vedi args.config nargs='+'). No-op se idx e' gia' quella corrente."""
+        nonlocal env, edge_index, current_variant_idx
+        if idx == current_variant_idx:
+            return
+        env = _prepare_cityflow_env(args.config[idx], args, tmp_name=f"cityflow_config_v{idx}.json")
+        edge_index = env.get_edge_index().to(device)
+        current_variant_idx = idx
+        if n_variants > 1:
+            print(f"  [Variant] -> {os.path.basename(args.config[idx])}")
 
     print(f"[Env] Intersezioni: {env.n_intersections}")
     print(f"[Env] State dim: {env.observation_dim}")
@@ -653,7 +750,7 @@ def run_training(args):
         )
 
     # ── Logger ─────────────────────────────────────────────────────────────
-    run_name = f"{args.model}_{os.path.basename(args.config).replace('.json', '')}"
+    run_name = f"{args.model}_{os.path.basename(args.config[0]).replace('.json', '')}"
     logger = TrainingLogger(args.output, run_name, resume=bool(args.resume))
     running_metrics = RunningMetrics(window=10)
 
@@ -761,6 +858,7 @@ def run_training(args):
         print(f"\n=== FASE DI WARM-UP ({n_warmup} episodi casuali per riempire il buffer) ===")
         agent.epsilon = 1.0
         for w_ep in range(1, n_warmup + 1):
+            switch_variant(_variant_idx(w_ep, n_variants))
             run_episode()
             print(f"  Warm-up Ep {w_ep}/{n_warmup} completato. (Buffer size: {len(agent.replay_buffer)})")
         agent.epsilon = args.epsilon_start
@@ -770,6 +868,8 @@ def run_training(args):
 
     # ── Loop di training principale (Algorithm 1) ────────────────────────────
     for episode in range(start_episode + 1, end_episode + 1):
+
+        switch_variant(_variant_idx(episode, n_variants))
 
         # ── Raccolta dati dell'episodio (Algorithm 1, line 4-8) ───────────
         ep_metrics = run_episode()
@@ -789,6 +889,10 @@ def run_training(args):
         travel_time = ep_metrics.final_travel_time
         throughput = ep_metrics.final_throughput
         running_metrics.add_episode(travel_time, throughput)
+
+        # Equita' direzionale N/S vs W/E: gia' calcolata ad ogni step() in
+        # CityFlowEnv (self.max_wait_ns/ew), a costo zero recuperarla qui.
+        fairness = env.get_direction_fairness_stats()
 
         # ── Salva il best model ────────────────────────────────────────────
         is_best = agent.save_best(
@@ -817,7 +921,9 @@ def run_training(args):
             total_reward=ep_metrics.total_reward,
             avg_loss=ep_metrics.avg_loss,
             epsilon=epsilon_used,
-            buffer_size=len(agent.replay_buffer)
+            buffer_size=len(agent.replay_buffer),
+            wait_max_ns=fairness["max_wait_ns"],
+            wait_max_ew=fairness["max_wait_ew"]
         )
 
         # (Rimossa qui la vecchia copia "live" del replay nel frontend CityFlow:
@@ -842,10 +948,24 @@ def run_training(args):
             epsilon=epsilon_used,
             total_reward=ep_metrics.total_reward,
             is_best=is_best,
-            eta_str=eta_str
+            eta_str=eta_str,
+            wait_max_ns=fairness["max_wait_ns"],
+            wait_max_ew=fairness["max_wait_ew"]
         )
 
         # ── Episodio Random Periodico ──────────────────────────────────────
+        # Valutato l'11-12/9/2026 un blocco condizionato a epsilon>epsilon_end (l'idea:
+        # dopo che epsilon raggiunge il floor, un episodio interamente casuale inserisce
+        # nel ReplayBuffer transizioni fuori distribuzione con max_priority, quindi il PER
+        # le ricampiona subito prima di sapere se sono informative). Il segnale sulla loss
+        # (picco ripetuto subito dopo ogni occorrenza tardiva) era reale, ma controllando
+        # per la variante di training attiva (che cambia ad ogni episodio, vedi --config
+        # nargs="+") l'effetto sul travel time dell'episodio successivo e' risultato
+        # inconcludente (un caso su tre nettamente migliore, non peggiore). Non abbastanza
+        # per modificare un meccanismo esistente e documentato (M9 in proposte_ablation.md,
+        # pensato esplicitamente per esplorare "anche a training avanzato") — la modifica
+        # e' stata quindi ritirata. Da riconsiderare con un vero confronto A/B (stesso seed,
+        # con/senza) a valle di un training completo, non su un pattern osservato a metà.
         if not args.no_cyclic_exploration and episode % 10 == 0 and episode < total_episodes:
             print(f"\n[!] Esecuzione di 1 episodio random (senza aggiornamento pesi) per esplorazione...")
             old_epsilon = agent.epsilon
@@ -917,9 +1037,10 @@ def run_training(args):
 
     # ── Pulizia file temporanei (config engine) ───────────────
     try:
-        temp_config = os.path.join(args.output, "cityflow_config.json")
-        if os.path.exists(temp_config):
-            os.remove(temp_config)
+        for idx in range(n_variants):
+            temp_config = os.path.join(args.output, f"cityflow_config_v{idx}.json")
+            if os.path.exists(temp_config):
+                os.remove(temp_config)
 
         # Rinominiamo roadnet.log in roadnet_log.json per chiarezza (è quello richiesto dal frontend)
         temp_roadnet_log = os.path.join(args.output, "roadnet.log")
@@ -932,7 +1053,7 @@ def run_training(args):
 def run_fixedtime(args, device):
     """Valuta il baseline FixedTime senza training."""
     print("\n[FixedTime] Valutazione baseline FixedTime...")
-    env = CityFlowEnv(args.config, num_neighbors=args.num_neighbors)
+    env = CityFlowEnv(args.config[0], num_neighbors=args.num_neighbors)
     agent = FixedTimeAgent(n_phases=env.action_space_n)
 
     n_eval = min(args.episodes, 10)  # bastano 10 episodi per FixedTime

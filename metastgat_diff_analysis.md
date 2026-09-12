@@ -1,9 +1,26 @@
 # Analisi delle Differenze: Codice vs Paper MetaSTGAT
 
+> 📖 **Per capire quali modelli sono stati testati e in cosa differiscono, parti da
+> [`descrizione_modelli.md`](descrizione_modelli.md)** (12/9/2026): quel documento fonde questo
+> file con `proposte_ablation.md` in un unico catalogo. Questo file resta il riferimento di
+> dettaglio riga-per-riga con gli estratti di codice, che `descrizione_modelli.md` §1 riassume
+> in una singola tabella (M1-M10).
+>
 > **Scopo**: Identificare sistematicamente tutte le differenze tra l'implementazione
 > presente nel repository e l'architettura/procedura descritta nell'articolo originale
 > *"MetaSTGAT: Meta-learning Spatial-Temporal Graph Attention Network for Traffic Signal Control"*
 > (Wang et al., Knowledge-Based Systems, 2022).
+>
+> **Nota (11/9/2026)**: ognuna delle differenze qui elencate è stata da allora formalizzata
+> in un flag di ablation individualmente disattivabile (`--no-vision-cutoff`, `--no-bptt`,
+> `--no-per`, ecc. in `scripts/train.py`), organizzati in 6 preset (`pro`/`paper`/`environment`/
+> `temporal`/`rl_core`/`replay_stability`). Il preset `paper` disattiva **tutte** le differenze
+> elencate qui, riproducendo la procedura originale con lo stesso codice usato per il modello
+> avanzato — vedi [descrizione_scripts.md](descrizione_scripts.md) per la mappa preset→flag e
+> [proposte_ablation.md](proposte_ablation.md) per la razionale scientifica del raggruppamento
+> (che è, letteralmente, i 10 "M1..M10" di questo documento riorganizzati in sottosistemi).
+> Alcuni valori numerici citati sotto (buffer size, episodi di default) sono stati rivisti dopo
+> la stesura originale di questo documento — vedi le note puntuali dove rilevante.
 
 ---
 
@@ -15,11 +32,11 @@
 | MDP – Reward | Formula completamente riscritta (Throughput-based) vs `-P_i` | Significativo |
 | MDP – Azione | Maschera invalid actions (max 2 consecutive) | Positivo |
 | Training – Buffer | PER sequenziale (2.400) vs buffer piatto (10.000) | Significativo |
-| Training – BPTT + Burn-in | Sequenze L=8, burn-in=4 vs single-step | Significativo |
+| Training – BPTT + Burn-in | Sequenze L=4, burn-in=2 vs single-step | Significativo |
 | Training – Double DQN | Double DQN vs DQN standard | Moderato |
 | Training – Loss | Huber loss + IS weights vs MSE | Moderato |
 | Training – Epsilon decay | 0.9 to 0.01 in 20 ep vs non specificato | Moderato |
-| Training – Episodi | 100 ep default vs 200 ep nel paper | Minore |
+| Training – Episodi | 50 ep default (variabile per run) vs 200 ep nel paper | Minore |
 | Architettura GAT | (W·Q)·K vs W·(Q·K) — interpretazione ambigua | Da verificare |
 | Meta-LSTM | W generato per tutti e 4 i gate vs notazione paper ambigua | Interpretazione |
 | Meta-knowledge features | wait_vec nel TMK; assenza "location" | Misto |
@@ -266,9 +283,11 @@ self.q_head = nn.Linear(hidden_dim * 2, n_actions)
 |---------|-------|--------|
 | Tipo buffer | Standard FIFO flat | **PER sequenziale (episodico)** |
 | Campionamento | Uniforme | **Proporzionale alle priorita' TD** |
-| Dimensione | 10,000 transizioni | **2,400 transizioni** |
-| Unita' campionata | Singola transizione | **Sequenza di L=8 step** |
+| Dimensione | 10,000 transizioni | **4,800 transizioni** (~40 episodi di storia con episodi da 1800s; il costruttore di `DQNAgent` ha un default di 2,400, ma `scripts/train.py` lo sovrascrive esplicitamente — vedi `DEFAULTS["buffer_size"]`) |
+| Unita' campionata | Singola transizione | **Sequenza di L=4 step** |
 | IS weights | Non presenti | **Presenti (beta annealing)** |
+
+Nota: con `--no-per` (preset `paper`/`replay_stability`) il buffer torna piatto e uniforme, con dimensione **10,000** — la stessa del paper — non 2,400/4,800 (quei valori sono specifici del PER sequenziale).
 
 ---
 
@@ -277,10 +296,10 @@ self.q_head = nn.Linear(hidden_dim * 2, n_actions)
 **Paper (Algorithm 1):**
 > Training DQN standard su singole transizioni. No BPTT, no burn-in.
 
-**Codice** ([dqn_agent.py L309-396](file:///c:/Users/user/Documents/Antigravity/CodiceTesi/src/agents/dqn_agent.py#L309-L396)):
+**Codice** ([dqn_agent.py](file:///c:/Users/user/Documents/Antigravity/CodiceTesi/src/agents/dqn_agent.py) — default costruttore, righe 76-77):
 ```python
-seq_len = 8      # sequenze di training
-burn_in = 4      # step iniziali senza gradiente
+seq_len = 4      # sequenze di training (rivisto da un originario 8 — vedi nota)
+burn_in = 2      # step iniziali senza gradiente (rivisto da un originario 4)
 
 for t in range(L):
     if t < self.burn_in:
@@ -289,9 +308,10 @@ for t in range(L):
     else:
         ...  # BPTT attivo
 ```
+Nota (13/9/2026): questo documento riportava ancora `L=8`/`burn_in=4`, i valori di una versione precedente del codice — il default attuale, verificato direttamente nel costruttore di `DQNAgent` e mai sovrascritto da `train.py`/`test.py`, è `seq_len=4`/`burn_in=2`. Corretto qui; vedi anche `proposte_ablation.md` (stessa correzione).
 
 **Differenza**: Il codice implementa **R2D2-style training** (Kapturowski et al., ICLR 2019):
-BPTT su sequenze di L=8 step + burn-in di 4 step. Non presente nel paper.
+BPTT su sequenze di L=4 step + burn-in di 2 step. Non presente nel paper.
 
 > **Motivazione**: Con il training DQN standard, lo stato LSTM usato nel training (zero)
 > non corrisponde a quello prodotto durante la raccolta dati. BPTT + burn-in corregge
@@ -356,11 +376,11 @@ target_p.data.copy_(tau * online_p.data + (1 - tau) * target_p.data)
 
 **Paper**: 200 episodi, 3 processi paralleli, 1800s (synth) / 3600s (real).
 
-**Codice**: 100 episodi (default), singolo processo.
+**Codice**: `DEFAULTS["episodes"] = 50` in `scripts/train.py`, quasi sempre sovrascritto da riga di comando per run specifici (es. 70 o 100 episodi per `metastgat_pro` in sessioni di training successive a questo documento) — non esiste un "vero" numero fisso, è un parametro di ogni run. Singolo processo in ogni caso (mai 3 paralleli).
 
 | Aspetto | Paper | Codice |
 |---------|-------|--------|
-| Episodi | 200 | 100 (default) |
+| Episodi | 200 | 50 di default, tipico 50-100 a seconda del run (`--episodes`) |
 | Processi paralleli | 3 | 1 |
 
 ---
@@ -442,4 +462,4 @@ target_p.data.copy_(tau * online_p.data + (1 - tau) * target_p.data)
 
 ---
 
-*Documento generato il 07/09/2026.*
+*Documento generato il 07/09/2026, aggiornato il 11/9/2026 (vedi nota introduttiva).*

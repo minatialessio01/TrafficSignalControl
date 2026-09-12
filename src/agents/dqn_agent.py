@@ -35,7 +35,53 @@ import torch.optim as optim
 
 from .replay_buffer import ReplayBuffer
 from ..models.metastgat import MetaSTGAT
+from ..models.metastgnn import MetaSTGNN
+from ..models.metastsonar import MetaSTSONAR
 from ..models.stgat import STGAT
+
+# Modelli che usano il meccanismo di meta-learning (SMK/TMK -> spatial_meta/
+# temporal_meta in input al forward, vedi is_meta sotto). Bug corretto il
+# 13/9/2026 (istruzioni seconda parte.md §3.2, checklist esplicita: "verifica
+# che DQNAgent non assuma da nessuna parte che il modello sia MetaSTGAT/STGAT
+# per nome/tipo"): l'isinstance() controllava solo MetaSTGAT, quindi
+# MetaSTGNN/MetaSTSONAR (che richiedono spatial_meta/temporal_meta esattamente
+# come MetaSTGAT) non le avrebbero mai ricevute.
+_META_MODEL_CLASSES = (MetaSTGAT, MetaSTGNN, MetaSTSONAR)
+
+# Prefissi che, in metastgat.py, sono passati da un singolo MetaGATLayer a un
+# nn.ModuleList (istruzioni seconda parte.md §2.1, per supportare
+# --num-layers 2): i checkpoint salvati PRIMA di questa modifica hanno le
+# chiavi "meta_gat_cst.<resto>"/"meta_gat_cs.<resto>", quelli salvati dopo
+# hanno "meta_gat_cst.0.<resto>"/"meta_gat_cs.0.<resto>" (l'indice del
+# ModuleList). Bug corretto il 13/9/2026: senza questa migrazione, ogni
+# checkpoint allenato prima della modifica (inclusi tutti i modelli Pro/
+# ablation di questa tesi) smetteva di essere caricabile.
+_LEGACY_MODULELIST_PREFIXES = ("meta_gat_cst.", "meta_gat_cs.")
+
+
+def _migrate_legacy_gat_state_dict(state_dict: dict) -> dict:
+    """Rinomina le chiavi di un vecchio state_dict (Meta-GAT senza
+    ModuleList) al formato attuale, se necessario. No-op se lo state_dict
+    e' gia' nel formato attuale (chiavi che iniziano gia' con l'indice del
+    ModuleList) o se il modello non ha affatto quei moduli (es. MetaSTGNN/
+    MetaSTSONAR, mai esistiti nel formato legacy)."""
+    needs_migration = any(
+        k.startswith(prefix) and not k[len(prefix):].split(".", 1)[0].isdigit()
+        for k in state_dict
+        for prefix in _LEGACY_MODULELIST_PREFIXES
+        if k.startswith(prefix)
+    )
+    if not needs_migration:
+        return state_dict
+
+    migrated = {}
+    for k, v in state_dict.items():
+        for prefix in _LEGACY_MODULELIST_PREFIXES:
+            if k.startswith(prefix) and not k[len(prefix):].split(".", 1)[0].isdigit():
+                k = prefix + "0." + k[len(prefix):]
+                break
+        migrated[k] = v
+    return migrated
 
 
 class DQNAgent:
@@ -102,7 +148,7 @@ class DQNAgent:
         self.burn_in  = burn_in if use_bptt else 0
         self.target_update_tau = target_update_tau
         self.target_update_freq = target_update_freq
-        self.is_meta = isinstance(model, MetaSTGAT)
+        self.is_meta = isinstance(model, _META_MODEL_CLASSES)
         # Ablation flags (usati in update e _soft_update_target)
         self.use_double_dqn = use_double_dqn
         self.use_per        = use_per
@@ -123,7 +169,9 @@ class DQNAgent:
         self.optimizer = optim.RMSprop(self.model.parameters(), lr=lr)
 
         # Replay buffer
-        self.replay_buffer = ReplayBuffer(buffer_size)
+        # use_per=False deve rendere il campionamento uniforme (non solo azzerare
+        # gli IS weight): bug corretto il 13/9/2026, vedi ReplayBuffer.__init__.
+        self.replay_buffer = ReplayBuffer(buffer_size, use_per=use_per)
 
         # Stato nascosto LSTM per ogni intersezione (durante l'episode)
         self.h_state: Optional[torch.Tensor] = None
@@ -491,6 +539,7 @@ class DQNAgent:
             # Stato del training
             "episode": episode,
             "total_steps": self.total_steps,
+            "total_episodes": self.total_episodes,
             "epsilon": self.epsilon,
             "best_travel_time": self.best_travel_time,
             "travel_time": travel_time,
@@ -526,11 +575,18 @@ class DQNAgent:
         # checkpoint, mai file di terzi non fidati.
         checkpoint = torch.load(path, map_location=self.device, weights_only=False)
 
-        self.model.load_state_dict(checkpoint["model_state_dict"])
-        self.target_model.load_state_dict(checkpoint["target_model_state_dict"])
+        self.model.load_state_dict(_migrate_legacy_gat_state_dict(checkpoint["model_state_dict"]))
+        self.target_model.load_state_dict(_migrate_legacy_gat_state_dict(checkpoint["target_model_state_dict"]))
         self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
 
         self.total_steps = checkpoint.get("total_steps", 0)
+        # Bug corretto il 13/9/2026: total_episodes non veniva ne' salvato ne'
+        # ripristinato, per cui dopo un --resume restava a 0 (si incrementa solo
+        # in update(), chiamato una volta per episodio) e get_training_state()
+        # sotto-riportava il vero numero di episodi allenati -- solo un
+        # dato diagnostico, il contatore episode usato da train.py per il
+        # controllo di flusso e' corretto indipendentemente da questo.
+        self.total_episodes = checkpoint.get("total_episodes", 0)
         self.epsilon = checkpoint.get("epsilon", self.epsilon)
         self.best_travel_time = checkpoint.get("best_travel_time", float("inf"))
 

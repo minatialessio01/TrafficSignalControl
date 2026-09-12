@@ -1,0 +1,116 @@
+\chapter{Introduzione}
+\label{cap:introduzione}
+
+Un incrocio semaforizzato decide, ogni pochi secondi, quale flusso di veicoli
+può muoversi e quale deve fermarsi. Su una singola intersezione isolata la
+scelta ottima è quasi banale: dare la precedenza a chi ha più traffico in
+attesa. Su una rete di decine di intersezioni la stessa scelta smette di
+essere locale: la fase scelta a un incrocio determina, con un ritardo di
+pochi secondi, il volume di veicoli che arriverà all'incrocio successivo.
+Il controllo semaforico su rete è quindi un problema di coordinamento
+distribuito prima ancora che un problema di ottimizzazione puntuale, e i
+sistemi storicamente più diffusi lo ignorano quasi del tutto.
+
+Il controllo a tempi fissi (\emph{fixed-time}) applica una sequenza di fasi
+di durata prestabilita, calcolata offline sulla base di stime di traffico
+medie, e non reagisce in alcun modo alle condizioni osservate in tempo reale:
+è la soluzione più semplice da implementare, ed è quella tipicamente in uso
+nella maggior parte degli impianti reali. Il controllo reattivo, di cui
+\textsc{Max-Pressure} \citep{varaiya2013maxpressure} è l'esempio più studiato
+in letteratura, introduce una regola locale che seleziona a ogni istante la
+fase con la pressione istantanea più alta (differenza tra veicoli in
+ingresso e in uscita sulle corsie servite da quella fase). \textsc{Max-Pressure}
+garantisce proprietà di stabilità della rete nel suo insieme, ma la sua
+natura puramente greedy non offre alcuna garanzia di equità: un'intersezione
+posta su un'arteria molto trafficata può favorire sistematicamente la
+direzione dominante, lasciando la direzione minoritaria in attesa per
+periodi arbitrariamente lunghi: un comportamento che questo lavoro osserva
+empiricamente e discute nel Capitolo~\ref{cap:tsc-modelli}.
+
+Il controllo appreso tramite \emph{reinforcement learning} (RL) propone
+un'alternativa diversa: invece di una regola scritta a mano, una politica
+$\pi$ viene addestrata a massimizzare una ricompensa che codifica l'obiettivo
+di rete (tipicamente throughput e tempo di viaggio) osservando ripetutamente
+le conseguenze delle proprie azioni in simulazione. Applicato a una singola
+intersezione il problema si riduce a un MDP standard; applicato a una rete di
+intersezioni, il problema diventa naturalmente multi-agente, con
+osservabilità parziale locale (ogni intersezione osserva solo il proprio
+intorno) e la necessità di un meccanismo che permetta a un agente di tenere
+conto di ciò che accade agli agenti vicini. Le \emph{graph neural network}
+(GNN) offrono esattamente questo meccanismo: rappresentando la rete stradale
+come un grafo, con le intersezioni come nodi e le strade come archi, uno
+strato di attenzione o convoluzione grafica propaga informazione tra nodi
+vicini a ogni passo, permettendo a un'intersezione di condizionare la propria
+decisione sullo stato dei suoi vicini immediati senza richiedere una politica
+centralizzata.
+
+\textbf{MetaSTGAT} \citep{wang2022metastgat} combina questi due ingredienti
+con un terzo: invece di condividere gli stessi pesi tra tutte le
+intersezioni della rete, un modulo di \emph{meta-learning} genera dinamicamente
+i pesi dello strato di attenzione grafica e dello strato ricorrente a partire
+da caratteristiche locali dell'intersezione (pressione sulle corsie,
+distanza dai vicini, storico della coda), così che nodi topologicamente
+diversi (un incrocio a T, un incrocio a quattro vie su un'arteria, un
+incrocio periferico con poco traffico) possano essere serviti da
+trasformazioni diverse pur restando un unico modello addestrato end-to-end.
+Gli autori originali riportano, su quattro dataset sintetici e due
+reali, una riduzione del travel time medio compresa tra l'8,24\% e il
+19,30\% rispetto a CoLight, un metodo di riferimento a livello di grafo
+per lo stesso problema: un miglioramento sostanziale ma non uniforme tra
+scenari, un dettaglio che da solo suggerisce quanto il guadagno di un
+meccanismo come questo dipenda dalle caratteristiche specifiche della rete
+su cui viene misurato, non solo dall'architettura in sé.
+
+\section{Contributo di questo lavoro}
+
+Questa tesi replica da zero l'architettura e la procedura di training di
+MetaSTGAT, la sottopone a uno studio di ablation sistematico e la confronta
+con le baseline classiche del controllo semaforico. Nel dettaglio:
+
+\begin{itemize}
+  \item un ambiente di simulazione multi-intersezione costruito su
+    \textsc{CityFlow} \citep{zhang2019cityflow}, con reti stradali a griglia
+    di dimensione $4\times4$, $5\times5$ e $6\times6$, otto fasi semaforiche
+    per intersezione e una formulazione MDP dettagliata nel
+    Capitolo~\ref{cap:tsc-modelli};
+  \item una generazione parametrica dei dati di traffico, con tre livelli di
+    densità (flusso di riferimento, \emph{flat} e \emph{peak}) e uno scenario
+    dedicato di generalizzazione che introduce un'arteria asimmetrica per
+    verificare se un modello di controllo produce uno squilibrio direzionale
+    sistematico quando il traffico non è simmetrico;
+  \item un sistema di ablation a preset che isola singolarmente ogni
+    differenza tra l'implementazione e la procedura descritta nel paper
+    originale (dal meccanismo di replay all'architettura dello stato, dalla
+    funzione di perdita alla ricompensa), attivabile tramite flag da riga di
+    comando e organizzato in sei configurazioni che vanno dalla replica
+    fedele del paper al modello più avanzato di questo lavoro;
+  \item un protocollo di valutazione che riporta sempre il caso peggiore
+    osservato, non solo la media: tempo di viaggio dei veicoli che non hanno
+    completato il percorso entro la fine della simulazione, code del tempo di
+    viaggio (percentili, massimo, deviazione standard) ed equità direzionale
+    tra le corsie di una stessa intersezione, incluse le attese ancora in
+    corso al termine dell'episodio.
+\end{itemize}
+
+Al momento della stesura di questo capitolo, l'estensione dell'architettura
+verso meccanismi spaziali alternativi alla \emph{graph attention} (una
+convoluzione grafica standard, GCN, e un meccanismo di propagazione a lungo
+raggio ispirato a SONAR) è ancora in fase di progettazione e non è inclusa
+nei risultati qui presentati. Il Capitolo~\ref{cap:tsc-modelli} ne introduce
+comunque la motivazione, e il confronto sperimentale a parità di resto
+dell'architettura è rimandato a un aggiornamento successivo di questo lavoro.
+
+\section{Struttura della tesi}
+
+Il Capitolo~\ref{cap:background} introduce il background necessario a
+leggere i capitoli successivi senza assumere familiarità pregressa con
+nessuno dei tre campi coinvolti: reinforcement learning, graph neural
+network e controllo semaforico come problema. Il
+Capitolo~\ref{cap:tsc-modelli} formalizza il problema affrontato come MDP,
+descrive l'ambiente di simulazione e le baseline classiche, e presenta
+l'architettura di MetaSTGAT insieme a ogni differenza introdotta rispetto al
+paper originale, motivata caso per caso. Il Capitolo~\ref{cap:confronto}
+descrive il protocollo sperimentale e riporta i risultati ottenuti,
+incluso lo studio di ablation. Il Capitolo~\ref{cap:conclusioni} discute i
+risultati alla luce della domanda di ricerca, dichiara i limiti dello studio
+e indica il lavoro rimasto per la seconda parte del progetto.

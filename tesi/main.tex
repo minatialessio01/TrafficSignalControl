@@ -1,0 +1,149 @@
+\documentclass[12pt,a4paper]{report}
+
+% ── Pacchetti di base ────────────────────────────────────────────────────
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[italian]{babel}
+\usepackage[a4paper,margin=3cm]{geometry}
+\usepackage{lmodern}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage[expansion=false]{microtype}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{cleveref}
+\usepackage[authoryear,round]{natbib}
+
+% ── Link interni colorati ma senza le cornici colorate di default di
+% hyperref (poco eleganti in stampa/PDF): colore unico, sobrio, per
+% riferimenti, citazioni e URL ────────────────────────────────────────
+\definecolor{linknavy}{RGB}{20,50,110}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=linknavy,
+  citecolor=linknavy,
+  urlcolor=linknavy,
+  linktoc=all
+}
+\usepackage{setspace}
+\onehalfspacing % interlinea 1.5
+\usepackage{listings}
+
+% ── Stile per i listati di codice (sobrio: monocromatico, leggibile anche
+% in stampa b/n, coerente con una tesi ingegneristica) ──────────────────
+\definecolor{listinggray}{gray}{0.95}
+\definecolor{listingcomment}{gray}{0.45}
+\lstdefinestyle{thesiscode}{
+  backgroundcolor=\color{listinggray},
+  basicstyle=\ttfamily\small,
+  commentstyle=\color{listingcomment}\itshape,
+  keywordstyle=\bfseries,
+  numbers=none,
+  frame=single,
+  rulecolor=\color{gray!60},
+  framerule=0.4pt,
+  breaklines=true,
+  showstringspaces=false,
+  columns=flexible,
+  xleftmargin=1em,
+  xrightmargin=1em,
+  aboveskip=1em,
+  belowskip=1em,
+  language=bash
+}
+\lstset{style=thesiscode}
+
+\graphicspath{{../results/plots/compare_per_config/}{../results/plots/}}
+
+% NOTA: stile bibliografico (natbib+plainnat) e classe (report) sono una
+% scelta di default, non un requisito d'ateneo verificato — vedi piano_tesi.md
+% §6. Da adattare se il template della sede impone altro (es. biblatex/biber,
+% classe "book" con frontespizio dedicato).
+
+% ── Dati del frontespizio ──────────────────────────────────────────────
+% NOTA PER CHI COMPILA: i campi tra [ ] sono segnaposto, non dati reali —
+% questo file non conosce il nome dell'ateneo, del corso di laurea, del
+% relatore o del candidato. Sostituire prima della consegna.
+\newcommand{\nomeUniversita}{[Nome dell'Università]}
+\newcommand{\nomeDipartimento}{[Nome del Dipartimento/Facoltà]}
+\newcommand{\nomeCorso}{[Corso di Laurea Magistrale in \dots]}
+\newcommand{\nomeRelatore}{[Nome e Cognome]}
+\newcommand{\nomeCandidato}{[Nome e Cognome]}
+\newcommand{\annoAccademico}{[20XX/20XX]}
+
+\title{Replica e Studio di Ablation di MetaSTGAT \\ per il Controllo Semaforico Adattivo}
+\author{}
+\date{}
+
+\begin{document}
+
+% ── Frontespizio ─────────────────────────────────────────────────────────
+\begin{titlepage}
+\centering
+\vspace*{0.5cm}
+{\large \nomeUniversita \par}
+\vspace{0.15cm}
+{\large \nomeDipartimento \par}
+\vspace{0.15cm}
+{\large \nomeCorso \par}
+
+\vspace{2.2cm}
+\rule{\textwidth}{0.6pt}\par
+\vspace{0.5cm}
+{\Huge \bfseries Replica e Studio di Ablation \\[0.2cm] di MetaSTGAT \par}
+\vspace{0.4cm}
+{\Large per il Controllo Semaforico Adattivo \par}
+\vspace{0.5cm}
+\rule{\textwidth}{0.6pt}\par
+
+\vspace{2.5cm}
+\begin{minipage}[t]{0.47\textwidth}
+\raggedright
+\large\textbf{Relatore}\par
+\normalsize\nomeRelatore\par
+\end{minipage}
+\hfill
+\begin{minipage}[t]{0.47\textwidth}
+\raggedleft
+\large\textbf{Candidato}\par
+\normalsize\nomeCandidato\par
+\end{minipage}
+
+\vfill
+{\large Anno Accademico \annoAccademico \par}
+\vspace{0.5cm}
+\end{titlepage}
+
+% ── Pagina bianca (recto/verso del frontespizio) ─────────────────────────
+\newpage
+\thispagestyle{empty}
+\null
+\newpage
+
+% ── Front matter: numerazione romana ─────────────────────────────────────
+\pagenumbering{roman}
+
+\input{capitoli/sommario}
+
+\tableofcontents
+\listoffigures
+\listoftables
+
+\input{capitoli/notazione}
+
+% ── Corpo della tesi: numerazione araba da qui ────────────────────────────
+\cleardoublepage
+\pagenumbering{arabic}
+
+\input{capitoli/cap1_introduzione}
+\input{capitoli/cap2_background}
+\input{capitoli/cap3_tsc_e_modelli}
+\input{capitoli/cap4_confronto}
+% \input{capitoli/cap5_conclusioni}     % non ancora scritto, va per ultimo
+
+\bibliographystyle{plainnat}
+\bibliography{bibliografia}
+
+\end{document}

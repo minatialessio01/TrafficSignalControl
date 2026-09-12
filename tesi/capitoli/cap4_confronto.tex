@@ -1,0 +1,406 @@
+\chapter{Confronto}
+\label{cap:confronto}
+
+\section{Metriche di valutazione}
+\label{sec:metriche}
+
+Il reward di training (Equazioni~\ref{eq:reward-custom}-\ref{eq:reward-paper})
+non è comparabile tra modalità \texttt{custom} e \texttt{paper}, per cui ogni
+confronto in questo capitolo usa esclusivamente metriche oggettive, calcolate
+allo stesso modo indipendentemente da come un modello è stato addestrato.
+
+\paragraph{Travel time.} Per ogni veicolo $v$, il tempo di viaggio è
+\begin{equation}
+  tt_v =
+  \begin{cases}
+    t_{\text{arrivo}}(v) - t_{\text{spawn}}(v) & \text{se } v \text{ è arrivato entro la fine dell'episodio} \\
+    t_{\text{now}} - t_{\text{spawn}}(v) & \text{altrimenti (un lower bound del suo vero valore)}
+  \end{cases}
+\end{equation}
+La metrica ufficiale di questo lavoro, $\overline{tt}$, è la media di
+$tt_v$ calcolata sull'\emph{intera} popolazione di veicoli generati
+nell'episodio, non solo su quelli arrivati: include cioè deliberatamente i
+veicoli che non hanno completato il percorso entro la fine della
+simulazione. La ragione è evitare un bias di sopravvivenza concreto: un
+modello che congestiona la rete e lascia arrivare solo una minoranza di
+veicoli su percorsi rimasti liberi otterrebbe, calcolando la media solo sui
+veicoli arrivati, un risultato buono calcolato su un campione piccolo e non
+rappresentativo del comportamento reale della rete; nel caso limite in cui
+nessun veicolo arrivasse affatto, quella stessa metrica restituirebbe un
+travel time di 0 secondi, il punteggio migliore possibile per il
+comportamento peggiore immaginabile. Il travel time dei soli veicoli
+arrivati ($\overline{tt}_{\text{arr}}$) è riportato in ogni tabella di
+questo capitolo come dato informativo aggiuntivo, mai come criterio con cui
+scegliere tra modelli. Una terza variante, il travel time nativo calcolato
+direttamente dal motore \textsc{CityFlow} (che adotta anch'esso la
+convenzione "solo veicoli arrivati"), non è riportata in questo capitolo:
+serve solo per un confronto diretto con un numero pubblicato in letteratura
+(il paper originale riporta un travel time di 430-470 secondi su una rete
+sintetica $4\times4$, non direttamente comparabile con i valori di questo
+lavoro data la ricompensa e la procedura di training diverse, §\ref{subsec:framing-pro}),
+non per confrontare i modelli di questo lavoro tra loro.
+
+\paragraph{Coda del travel time.} Oltre alla media, si riportano il massimo
+($tt_{\max}$), la deviazione standard e i percentili $p_{90}$/$p_{95}$/$p_{99}$
+del travel time dei veicoli arrivati: una media bassa può coesistere con una
+coda lunga di veicoli fortemente penalizzati, e nessuna delle due statistiche
+da sola distinguerebbe questo caso da una distribuzione uniformemente buona.
+
+\paragraph{Throughput.} Veicoli che hanno completato il percorso entro la
+fine dell'episodio, riportato sia in valore assoluto sia come percentuale sul
+totale dei veicoli generati (indicata $\%_{\text{compl}}$ nelle tabelle di
+questo capitolo). A differenza del travel time, il throughput non richiede
+alcuna convenzione sui veicoli non arrivati: un veicolo o ha completato il
+percorso o non lo ha fatto, senza casi intermedi da trattare.
+
+\paragraph{Percentuali di scelta delle fasi.} Per ciascuna delle 8 fasi
+(Tabella~\ref{tab:fasi}), la frazione di passi di decisione, su tutte le
+intersezioni e l'intero episodio, in cui quella fase è stata scelta. Non è
+di per sé una metrica di prestazione, nel senso che nessun valore è
+"migliore" in assoluto: è piuttosto un diagnostico della strategia appresa
+o applicata da un controllore. Un controllore che collassa sistematicamente
+su un piccolo sottoinsieme di fasi, ad esempio, sta probabilmente reagendo a
+uno squilibrio strutturale del traffico (una direzione più trafficata delle
+altre) piuttosto che alternare in modo bilanciato; MaxPressure, per la sua
+logica greedy sulla pressione istantanea, tende in pratica a preferire
+marcatamente le fasi che servono i movimenti "diritto" rispetto a quelle
+che servono le sole svolte a sinistra, dato che i primi accumulano pressione
+più rapidamente su una rete con volumi tipici.
+
+\paragraph{Equità direzionale.} Per ogni intersezione, la massima attesa
+storica \emph{consecutiva} osservata su una corsia del gruppo N/S o del
+gruppo W/E (§\ref{sec:formalizzazione}): consecutiva nel senso che il
+contatore si azzera non appena il veicolo interessato si muove, non è quindi
+un'attesa cumulativa sull'intero viaggio del veicolo, ma la durata del più
+lungo singolo stallo mai osservato su una corsia di quel gruppo, in
+qualunque punto della rete. Il gruppo N/S raccoglie le corsie percorse da
+chi attraversa l'incrocio in direzione verticale (arrivando da Nord o da
+Sud), il gruppo W/E quelle percorse da chi lo attraversa in direzione
+orizzontale: è una classificazione per corsia fisica di approccio
+all'incrocio in un dato istante, non un'origine o una destinazione del
+viaggio del veicolo. Il valore ufficiale, $\text{wait\_max}_{\text{NS}}$
+e $\text{wait\_max}_{\text{EW}}$, è il massimo di questa quantità su tutte
+le intersezioni della rete, e include gli stalli ancora in corso al
+termine dell'episodio (censura a destra), per lo stesso principio di
+non-esclusione del caso peggiore applicato al travel time: un veicolo
+fermo nello stesso punto dal momento in cui si è bloccato fino all'ultimo
+istante simulato non fa mai scattare, per definizione, un nuovo record
+\emph{dopo} la fine dell'episodio, e una metrica che considerasse solo gli
+stalli conclusi lo farebbe sparire, premiando indirettamente chi lascia un
+veicolo bloccato per sempre invece di penalizzarlo come merita. Il caso non
+è ipotetico: durante lo sviluppo di questa metrica, un valore di
+$\text{wait\_max}_{\text{NS}}=1125$ secondi riportato da MaxPressure è stato
+verificato ricostruendo la traiettoria del veicolo responsabile direttamente
+dal replay grezzo della simulazione (posizione per veicolo, secondo per
+secondo, un canale indipendente da qualunque contabilità interna del
+codice): il veicolo risultava fermo nello stesso identico punto dal secondo
+679 fino al secondo 1799, l'ultimo istante simulato dell'intero episodio,
+uno stallo la cui vera durata resta sconosciuta perché la simulazione si è
+fermata, non perché il veicolo sia stato servito. Questa metrica non compare
+nella ricompensa di alcun modello: è puramente osservazionale, pensata
+per verificare se il termine anti-starvation della ricompensa \texttt{custom}
+(Equazione~\ref{eq:reward-custom}) produce un vantaggio reale rispetto a
+MaxPressure, che non ha alcuna nozione di equità, né di un vincolo simile
+alla maschera sulle azioni consecutive che regola invece l'agente RL
+(§\ref{sec:formalizzazione}): i due meccanismi restano concettualmente
+indipendenti, e il rispetto dell'uno non implica il rispetto dell'altro. Una
+variante di questa metrica, che considera solo gli stalli conclusi entro la
+fine dell'episodio (esclude cioè la censura a destra discussa sopra), è
+calcolata e riportata come colonna secondaria in ogni tabella di riepilogo,
+ma non è mai usata come criterio ufficiale di confronto in questo capitolo,
+per lo stesso principio di non-esclusione del caso peggiore.
+
+\section{Protocollo sperimentale}
+\label{sec:protocollo}
+
+\paragraph{Training, validazione, test.} Ogni modello RL è addestrato in
+ciclo su tre varianti a seed diverso della stessa configurazione base
+(\texttt{config\_4x4\_100m\_train}, \texttt{\_s2}, \texttt{\_s3}), con
+l'arteria Est-Ovest su una riga diversa in ciascuna (righe 1, 2, 0
+rispettivamente, §\ref{sec:ambiente}): un episodio di training appartiene
+sempre a una sola variante, alternata deterministicamente per numero di
+episodio. A fine training, due checkpoint candidati, l'ultimo episodio
+(\texttt{final\_model.pth}) e l'episodio con il miglior travel time mai
+osservato durante il training (\texttt{best\_model.pt}, non necessariamente
+l'ultimo), sono valutati per un episodio ciascuno su una configurazione di
+validazione indipendente, \texttt{config\_4x4\_100m\_6k\_flat}, mai usata né
+in training né nel confronto finale tra modelli; il vincitore diventa
+\texttt{selected\_model.pth}, il checkpoint cercato con priorità massima da
+ogni valutazione successiva (in sua assenza, la ricerca ripiega su
+\texttt{final\_model.pth}, poi su \texttt{best\_model.pt}, poi sul
+checkpoint periodico più recente disponibile). Ogni valutazione, sia in
+questa fase di selezione sia nella batteria di test descritta sotto, avviene
+a $\varepsilon=0$: nessuna esplorazione residua, solo la politica appresa
+allo stato puro, dato che introdurre azioni casuali in fase di valutazione
+misurerebbe la qualità di una politica che non è quella che si intende
+effettivamente confrontare.
+
+\paragraph{Batteria di test.} Ogni modello, RL o baseline, è valutato sulle
+stesse 10 configurazioni: le 3 varianti di training stesse (per misurare la
+prestazione in-distribuzione) più 7 configurazioni mai viste in training
+(4x4 a 200m invece di 100m, $5\times5$ e $6\times6$ a densità sia
+\emph{flat} sia \emph{peak}), usate per misurare la generalizzazione a
+topologie e densità di traffico diverse. Testare ogni modello su entrambi i
+gruppi, non solo sulle configurazioni di generalizzazione, è la prassi
+adottata in questo lavoro dopo averla resa parte dell'orchestrazione
+standard (\texttt{main.py}).
+
+\paragraph{Determinismo della simulazione.} Con flusso di traffico e seed
+fissati nel file di configurazione e \texttt{laneChange=False},
+\textsc{CityFlow} è deterministico bit-per-bit: a parità di modello e
+configurazione, ogni valutazione produce esattamente la stessa traiettoria.
+La valutazione standard usa quindi un solo episodio per configurazione
+(\texttt{n\_eval=1}): ripeterlo non ridurrebbe alcuna varianza reale. Questo
+ha una conseguenza sull'interpretazione dei risultati di questo capitolo che
+va dichiarata esplicitamente: ogni numero riportato è l'esito esatto di
+un'unica realizzazione deterministica per coppia (modello, configurazione),
+non una media campionaria con un proprio errore standard. Le differenze tra
+modelli sullo stesso file di configurazione sono quindi confronti esatti, non
+stime soggette a rumore di campionamento; non è invece possibile, con i dati
+di questo lavoro, quantificare quanto un singolo risultato varierebbe se la
+stessa configurazione fosse ricampionata con un seed diverso. Le tre varianti
+di training (seed distinti sulla stessa distribuzione di traffico) sono lo
+strumento con cui questo lavoro approssima quella domanda, non la
+risolvono in senso statistico stretto.
+
+\paragraph{Sistema di ablation a preset.} Ogni preset (\texttt{--ablation})
+imposta un gruppo coerente di flag, isolando un sottosistema alla volta
+rispetto al modello Pro:
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{Preset di ablation e sottosistema isolato da ciascuno.}
+\label{tab:ablation-preset}
+\begin{tabular}{@{}llp{8.5cm}@{}}
+\toprule
+Preset & Reward & Cosa isola rispetto a Pro \\
+\midrule
+\texttt{pro} & \texttt{custom} & (nessuno: modello di riferimento) \\
+\texttt{paper} & \texttt{paper} & Replica fedele di Wang et al. (2022) \\
+\texttt{environment} & \texttt{paper} & Ingegnerizzazione dell'MDP (visibilità, $w_i^t$, maschera) \\
+\texttt{temporal} & \texttt{custom} & BPTT + burn-in sulla Meta-LSTM \\
+\texttt{rl\_core} & \texttt{custom} & Double DQN \\
+\texttt{replay\_stability} & \texttt{custom} & PER, Huber, soft update, grad clipping, warm-up, esplorazione ciclica \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Per la riproducibilità: ogni modello di questo capitolo è ottenuto con lo
+stesso comando, a parità di configurazioni di training e di seed, cambiando
+solo il preset (e, per lo sweep descritto in
+§\ref{sec:risultati-baseline}, il peso $\alpha$ della ricompensa):
+
+\begin{lstlisting}[caption={Comando di training, modello Pro con $\alpha=0.2$.}, label={lst:train-cmd}]
+python scripts/train.py \
+    --config configs/config_4x4_100m_train1.json \
+             configs/config_4x4_100m_train2.json \
+             configs/config_4x4_100m_train3.json \
+    --model MetaSTGAT --episodes 100 --seed 42 \
+    --ablation pro --alpha 0.2 \
+    --output results/metastgat_pro_0.2
+\end{lstlisting}
+
+\section[Risultati: baseline e peso anti-starvation]{Risultati: baseline classiche e peso anti-starvation}
+\label{sec:risultati-baseline}
+
+Questa sezione confronta sei controllori: le due baseline classiche
+(\S\ref{sec:baseline}), tre varianti del modello Pro che differiscono solo
+per il peso $\alpha$ della penalità anti-starvation nella ricompensa
+\texttt{custom} (Equazione~\ref{eq:reward-custom}), e \texttt{ablation\_temporal}
+(discusso separatamente in §\ref{sec:ablation-risultati}, dove il confronto
+rilevante è con Pro a parità di $\alpha$). $\alpha=0.1$ e i quattro preset di
+ablation restanti (\texttt{paper}, \texttt{environment}, \texttt{rl\_core},
+\texttt{replay\_stability}) sono in fase di addestramento al momento della
+stesura di questo capitolo: i risultati che seguono si limitano ai modelli
+già valutati sulla batteria di test completa. Per Fixed-Time non sono
+disponibili $tt_{\max}$ e le statistiche di equità direzionale (calcolate
+solo a partire dall'11/9/2026, dopo che questo modello era già stato
+valutato): le colonne corrispondenti sono segnate "n.d.".
+
+\begin{table}[htbp]
+\centering
+\caption{Travel time medio, massimo e percentuale di completamento, mediati
+sulle 3 configurazioni di training (in-distribuzione).}
+\label{tab:risultati-train}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Modello & $\overline{tt}$ (s) & $tt_{\max}$ (s) & $\%_{\text{compl}}$ \\
+\midrule
+Fixed-Time            & 339.3 & n.d.   & 84.9 \\
+MaxPressure          & \textbf{161.9} & 1070.0 & \textbf{96.6} \\
+MetaSTGAT Pro ($\alpha=0.5$) & 205.5 & 800.0 & 93.9 \\
+MetaSTGAT Pro ($\alpha=0.2$) & 194.0 & \textbf{745.0} & 94.9 \\
+MetaSTGAT Pro ($\alpha=0.0$) & 211.2 & 1350.0 & 91.5 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Come Tabella~\ref{tab:risultati-train}, mediata sulle 7
+configurazioni di test (generalizzazione a topologia e densità mai viste in
+training).}
+\label{tab:risultati-test}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Modello & $\overline{tt}$ (s) & $tt_{\max}$ (s) & $\%_{\text{compl}}$ \\
+\midrule
+Fixed-Time            & 463.9 & n.d.    & 79.8 \\
+MaxPressure          & \textbf{239.2} & 1635.0 & \textbf{88.5} \\
+MetaSTGAT Pro ($\alpha=0.5$) & 295.2 & 1142.1 & 86.8 \\
+MetaSTGAT Pro ($\alpha=0.2$) & 280.8 & \textbf{1103.6} & 87.6 \\
+MetaSTGAT Pro ($\alpha=0.0$) & 311.75 & 1607.1 & 84.6 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Fixed-Time è, come atteso, il controllore peggiore su ogni colonna in
+entrambi i regimi: non osservando mai lo stato della rete, stabilisce il
+limite superiore di travel time che qualunque strategia informata (reattiva
+o appresa) dovrebbe poter migliorare. Tutti gli altri controllori lo battono
+nettamente (161.9-311.75s contro 339.3-463.9s), confermando che anche la
+regola più semplice tra quelle reattive (MaxPressure) coglie un segnale reale
+nello stato della rete.
+
+MaxPressure resta il modello con il travel time medio più basso in entrambi i
+regimi, coerente con la sua ottimalità di throughput a livello di rete
+\citep{varaiya2013maxpressure}: nessuna delle varianti RL di questo lavoro la
+supera su questa singola metrica. All'interno dello sweep su $\alpha$,
+$\alpha=0.2$ ottiene il travel time medio più basso e, in entrambi i regimi,
+anche il $tt_{\max}$ più basso tra tutti i cinque modelli confrontati,
+MaxPressure incluso: una penalità anti-starvation moderata non solo non
+peggiora il caso medio rispetto a $\alpha=0.5$, ma produce la coda più corta
+osservata in questo esperimento. $\alpha=0.0$ (nessuna penalità) è invece la
+configurazione peggiore tra le tre varianti Pro su ogni colonna delle due
+tabelle: rimuovere il termine anti-starvation non libera il modello per
+ottimizzare meglio il throughput medio, lo peggiora anche su quello. Questo
+risultato è discusso più a fondo, insieme all'equità direzionale che lo
+motiva, in §\ref{sec:risultati-alpha}.
+
+Tutti i modelli degradano passando dalle configurazioni di training a quelle
+di test, MaxPressure incluso (161.9$\to$239.2s): una parte di questo divario
+riflette la maggiore difficoltà intrinseca delle configurazioni di
+generalizzazione (topologie più grandi, densità di picco), non solo un
+limite di generalizzazione specifico del controllo appreso.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.95\textwidth]{compare_config_4x4_100m_train1.png}
+\caption{Confronto su \texttt{config\_4x4\_100m\_train1} (in-distribuzione):
+Fixed-Time, MaxPressure, MetaSTGAT Pro ($\alpha=0.5$/$0.2$) e
+\texttt{ablation\_temporal}. Manca solo $\alpha=0.1$ (in training): figura da
+rigenerare includendolo, insieme ai preset di ablation restanti, a valle di
+questo capitolo.}
+\label{fig:compare-train}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.95\textwidth]{compare_config_6x6_100m_11.5k_peak.png}
+\caption{Confronto sulla configurazione di generalizzazione più difficile
+($6\times6$, densità di picco), stessi sei controllori di
+Figura~\ref{fig:compare-train}.}
+\label{fig:compare-6x6-peak}
+\end{figure}
+
+\section{Equità direzionale: il ruolo di \texorpdfstring{$\alpha$}{alpha}}
+\label{sec:risultati-alpha}
+\label{sec:equita-alpha}
+
+\begin{table}[htbp]
+\centering
+\caption{Attesa massima direzionale (N/S e W/E), mediata sulle configurazioni
+di training e di test rispettivamente.}
+\label{tab:equita}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+& \multicolumn{2}{c}{Training (s)} & \multicolumn{2}{c}{Test (s)} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5}
+Modello & N/S & W/E & N/S & W/E \\
+\midrule
+MaxPressure          & 755.0 & 825.0 & 1407.9 & 1493.6 \\
+MetaSTGAT Pro ($\alpha=0.5$) & \textbf{300.0} & \textbf{345.0} & \textbf{591.4} & \textbf{546.4} \\
+MetaSTGAT Pro ($\alpha=0.2$) & 455.0 & 450.0 & 516.4 & 565.7 \\
+MetaSTGAT Pro ($\alpha=0.0$) & 1275.0 & 1130.0 & 1530.0 & 1133.6 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Il divario è netto. Con la penalità anti-starvation al suo valore di
+riferimento ($\alpha=0.5$), l'attesa massima direzionale è 2-3 volte più
+bassa di MaxPressure in entrambi i regimi; a $\alpha=0.2$ resta comunque
+molto più bassa (516-566s contro 1408-1494s in test), pur essendo
+leggermente peggiore di $\alpha=0.5$ su tre delle quattro colonne. A
+$\alpha=0.0$, l'equità direzionale collassa verso valori vicini a quelli di
+MaxPressure (1275-1530s in training e nella direzione N/S del test,
+paragonabile o peggiore su W/E in training): esattamente il comportamento
+atteso rimuovendo dalla ricompensa l'unico termine che penalizza le attese
+prolungate sulle corsie rosse.
+
+Il punto di correttezza sperimentale già anticipato in §\ref{sec:protocollo}
+si applica direttamente qui: ciascuno di questi numeri è l'esito di un'unica
+realizzazione deterministica per configurazione, mediata su un piccolo
+numero di configurazioni (3 o 7). L'effetto di $\alpha$ sull'equità
+direzionale è ampio e consistente in direzione su tutte le configurazioni
+osservate (non un singolo caso isolato), il che lo rende un risultato
+qualitativamente solido; non è tuttavia accompagnato da un test di
+significatività statistica in senso classico, che richiederebbe più
+istanze indipendenti della stessa configurazione, non disponibili in un
+simulatore deterministico senza generare varianti a seed multiplo aggiuntive
+(§\ref{sec:protocollo}, nota sul determinismo).
+
+Il fatto che $\alpha=0.0$ sia anche il peggiore, non il migliore, su travel
+time medio e massimo (Tabelle~\ref{tab:risultati-train}-\ref{tab:risultati-test})
+esclude la spiegazione più semplice di un compromesso equità-contro-throughput:
+in questi dati, il termine anti-starvation non compra equità al prezzo del
+throughput, sembra piuttosto aiutare entrambi contemporaneamente, quantomeno
+nell'intervallo $\alpha \in [0.2, 0.5]$ esplorato qui. Una possibile lettura
+è che una rete dove nessuna corsia resta bloccata a tempo indefinito fluisce
+meglio nel suo complesso, non solo per i veicoli sulla corsia sfavorita: la
+verifica di questa ipotesi richiederebbe un'analisi per-corsia o per-fase che
+esula dallo scopo di questo capitolo.
+
+\section{Studio di ablation: risultati preliminari}
+\label{sec:ablation-risultati}
+
+Al momento della stesura di questo capitolo è disponibile un solo confronto
+completo del sistema di ablation a preset (Tabella~\ref{tab:ablation-preset}):
+\texttt{temporal} (BPTT e burn-in sulla Meta-LSTM disattivati) contro Pro
+allo stesso $\alpha=0.5$, l'unica variabile che li distingue. I quattro preset
+restanti (\texttt{paper}, \texttt{environment}, \texttt{rl\_core},
+\texttt{replay\_stability}) sono in addestramento; questa sezione va
+integrata con i loro risultati non appena disponibili, senza modificarne
+l'impostazione.
+
+\begin{table}[htbp]
+\centering
+\caption{MetaSTGAT Pro ($\alpha=0.5$) contro \texttt{ablation\_temporal}
+(BPTT e burn-in disattivati), stesso $\alpha$.}
+\label{tab:ablation-temporal}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+& \multicolumn{2}{c}{Training} & \multicolumn{2}{c}{Test} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5}
+Modello & $\overline{tt}$ (s) & $tt_{\max}$ (s) & $\overline{tt}$ (s) & $tt_{\max}$ (s) \\
+\midrule
+Pro ($\alpha=0.5$)      & \textbf{205.5} & \textbf{800.0} & \textbf{295.2} & \textbf{1142.1} \\
+\texttt{ablation\_temporal} & 220.1 & 865.0 & 350.2 & 1375.7 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Disattivare BPTT e burn-in peggiora il travel time medio su entrambi i
+regimi (+7.1\% in training, +18.6\% in test) e allarga anche la coda
+($tt_{\max}$ +8.1\% e +20.5\% rispettivamente). Il fatto che il peggioramento
+relativo sia maggiore in test che in training è un indizio, non una prova
+data la numerosità limitata, che il disallineamento dello stato ricorrente
+corretto da BPTT+burn-in (§\ref{sec:background-rl},
+\emph{hidden state staleness}) non sia solo un problema di adattamento alla
+distribuzione di training, ma pesi anche sulla capacità del modello di
+generalizzare a topologie mai viste: un'ipotesi coerente con la motivazione
+originale del meccanismo \citep{kapturowski2019r2d2}, che richiederebbe però
+il confronto con gli altri preset (in particolare \texttt{rl\_core} e
+\texttt{replay\_stability}) per essere isolata con maggiore sicurezza dal
+contributo di Double DQN, PER e delle altre differenze architetturali che
+\texttt{temporal} lascia invece attive.

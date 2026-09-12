@@ -476,14 +476,21 @@ Nell'ordine, prima di lanciare qualunque training lungo:
 
 ## 7. Riepilogo checklist file
 
-- [ ] `src/models/meta_gcn.py` (nuovo)
-- [ ] `src/models/meta_sonar.py` (nuovo)
-- [ ] `src/models/metastgnn.py` (nuovo)
-- [ ] `src/models/metastsonar.py` (nuovo)
-- [ ] `src/models/metastgat.py`: aggiungi `num_layers` (§2.1) — deve restare identico a oggi con `num_layers=1`
-- [ ] `scripts/train.py`: `--model` choices + `build_model()` + `--num-layers` (1/2, per MetaSTGAT e MetaSTGNN) + flag CLI SONAR (`--sonar-step-size`, `--sonar-recurrences`/`L`)
-- [ ] `scripts/test.py`: stessa cosa (incluso `--num-layers`, deve combaciare col checkpoint)
-- [ ] Registro dei 5-6 modelli da confrontare (vedi tabella a inizio file e D5) — separato da `MODEL_REGISTRY` delle ablation, salvo diversa decisione
-- [ ] Decisioni D1-D6 prese e scritte da qualche parte (anche solo aggiornando questo file con le risposte), incluso il valore di `L` scelto per SONAR (raccomandazione: L=2, eventuale secondo valore L=4 — vedi D1)
-- [ ] Verifica §6 completata prima di qualunque training lungo, incluso il controllo di non-regressione su `MetaSTGAT(num_layers=1)`
-- [ ] Confronto con il codice pubblico <https://github.com/gravins/SONAR> per validare segni/convenzioni prima del training vero (vedi §0)
+> **Aggiornamento 13/9/2026**: implementazione completata e verificata (test
+> di forma/parametri/gradienti + smoke test end-to-end su tutte e 5 le
+> combinazioni). Dettaglio completo, decisioni D1-D6 e cosa manca ancora prima
+> del training vero in [descrizione_gcn_sonar.md](descrizione_gcn_sonar.md) —
+> non duplicato qui, questo file resta il piano originale.
+
+- [x] `src/models/meta_gcn.py` (nuovo)
+- [x] `src/models/meta_sonar.py` (nuovo)
+- [x] `src/models/metastgnn.py` (nuovo)
+- [x] `src/models/metastsonar.py` (nuovo)
+- [x] `src/models/metastgat.py`: aggiungi `num_layers` (§2.1) — deve restare identico a oggi con `num_layers=1`
+- [x] `scripts/train.py`: `--model` choices + `build_model()` + `--num-layers` (1/2, per MetaSTGAT e MetaSTGNN) + flag CLI SONAR (`--sonar-step-size`, `--sonar-recurrences`/`L`)
+- [x] `scripts/test.py`: stessa cosa (incluso `--num-layers`, deve combaciare col checkpoint)
+- [x] Registro dei 5-6 modelli da confrontare (vedi tabella a inizio file e D5) — `scripts/compare_spatial_mechanisms.py`, separato da `MODEL_REGISTRY` delle ablation
+- [x] Decisioni D1-D6 prese e scritte in [descrizione_gcn_sonar.md](descrizione_gcn_sonar.md) §5, incluso il valore di `L` scelto per SONAR (L=2 default, L=4 disponibile via `--include-sonar-l4`)
+- [x] Verifica §6 completata prima di qualunque training lungo, incluso il controllo di non-regressione su `MetaSTGAT(num_layers=1)` — dettaglio in descrizione_gcn_sonar.md §6
+- [x] Confronto con il codice pubblico <https://github.com/gravins/SONAR> per validare segni/convenzioni prima del training vero (vedi §0) — dettaglio in descrizione_gcn_sonar.md §4
+- [ ] **Non ancora fatto**: D4 (budget di parametri) non deciso, training completo dei 5-6 modelli non lanciato, verifica di generalizzazione 5x5/6x6 non possibile senza risultati di training — vedi descrizione_gcn_sonar.md §8 "Prossimi passi"

@@ -1,0 +1,773 @@
+\chapter{TSC e Modelli}
+\label{cap:tsc-modelli}
+
+\section{Formalizzazione del problema}
+\label{sec:formalizzazione}
+
+Il controllo semaforico su una rete di $M$ intersezioni si formalizza come un
+MDP multi-agente con osservabilità locale: ogni intersezione $i$ osserva uno
+stato $s_i^t$, sceglie un'azione $a_i^t$ e riceve una ricompensa $r_i^t$,
+mentre la topologia della rete (quali intersezioni sono collegate da una
+strada) definisce un grafo su cui l'informazione viene propagata a livello di
+modello, non di ambiente.
+
+\paragraph{Stato.} Ogni intersezione ha $\mathrm{N\_LANES}=12$ corsie in
+ingresso (tre per ciascuna delle quattro direzioni cardinali) e
+$\mathrm{N\_PHASES}=8$ fasi semaforiche selezionabili. Lo stato è la
+concatenazione di tre componenti:
+\begin{equation}
+  s_i^t = [\,n_i^t \,\|\, w_i^t \,\|\, p_i^t\,] \in \mathbb{R}^{d_0}
+\end{equation}
+dove $n_i^t \in [0,1]^{12}$ è il numero di veicoli per corsia (normalizzato,
+saturato a 30 veicoli), $w_i^t \in [0,1]^{12}$ è il tempo di attesa massimo
+per corsia (normalizzato, saturato a 100s) e $p_i^t \in \{0,1\}^8$ è la fase
+corrente in codifica one-hot. La componente $w_i^t$ non è presente nella
+formulazione originale del paper, che usa $d_0 = 20$; la variante di questo
+lavoro con $w_i^t$ inclusa porta $d_0 = 32$ (§\ref{subsec:framing-pro}, punto
+A1). Nella modalità avanzata, $n_i^t$ conta solo i veicoli entro
+$\mathrm{VISION\_CUTOFF\_M}$ dal semaforo (§\ref{sec:ambiente}); nella
+modalità fedele al paper la visibilità è sull'intera corsia.
+
+\paragraph{Azione.} $a_i^t \in \{0, \dots, 7\}$ seleziona una delle otto fasi;
+la fase di tutto-rosso interna alla transizione (§\ref{sec:ambiente}) non è
+mai un'azione disponibile all'agente. Un vincolo anti-starvation invalida
+la fase corrente come azione se è già stata selezionata due volte
+consecutive, forzando la rotazione:
+\begin{equation}
+  \mathcal{A}_i^t = \{0,\dots,7\} \setminus \{a_i^{t-1}\} \quad \text{se } a_i^{t-1} = a_i^{t-2}, \qquad \mathcal{A}_i^t = \{0,\dots,7\} \text{ altrimenti}
+\end{equation}
+Questo vincolo si applica solo all'agente RL: MaxPressure (§\ref{sec:baseline})
+resta una pura $\operatorname{argmax}$ senza vincoli, fedele all'implementazione
+di riferimento. Il numero due non è arbitrario: nelle primissime fasi di
+training, quando la politica è ancora vicina al caso e non ha alcuna
+preferenza appresa, un agente senza questo vincolo tende a bloccarsi sulla
+prima fase che produce un ritorno anche solo leggermente positivo, ripetendola
+indefinitamente (un "verde fisso" degenerato); vietare la ripetizione oltre la
+seconda volta consecutiva rompe questo ciclo senza impedire a una fase di
+restare attiva per un tempo ragionevole quando è davvero la scelta migliore
+per due passi di fila.
+
+Questo vincolo va tenuto distinto, concettualmente, dalla metrica di equità
+direzionale introdotta nel Capitolo~\ref{cap:confronto}
+(§\ref{sec:metriche}): sono due meccanismi indipendenti, che agiscono in
+punti diversi della pipeline. La maschera sulle azioni agisce \emph{a monte},
+sulla scelta della singola azione, e si limita a vietare tre ripetizioni
+consecutive della stessa fase; l'equità direzionale è invece una misura
+osservazionale \emph{a valle}, calcolata sull'intero episodio, che non impone
+alcun vincolo ma si limita a registrare quanto a lungo attende la direzione
+sfavorita. Un modello può rispettare rigorosamente il vincolo delle due
+ripetizioni (non sceglie mai la stessa fase tre volte di fila) e mostrare
+comunque una forte disparità tra le direzioni N/S e W/E, se torna
+sistematicamente sulla fase che serve la direzione dominante non appena il
+vincolo delle due ripetizioni glielo permette di nuovo: evitare il verde
+fisso non è la stessa cosa che garantire un'alternanza equa.
+
+\paragraph{Ricompensa.} Due modalità, selezionabili con il flag
+\texttt{reward\_mode}. La modalità \texttt{custom} (di default in questo
+lavoro):
+\begin{equation}
+  r_i^t = \operatorname{clip}\!\left(
+    \frac{\mathrm{Passed}_i^t - \mathrm{Incoming}_i^t - \alpha \cdot \mathrm{MaxRedWait}_i^t - \mathrm{Penalty}_i^t}{100},\ -20,\ 5
+  \right)
+  \label{eq:reward-custom}
+\end{equation}
+dove $\mathrm{Passed}_i^t$ è il numero di veicoli che hanno lasciato la
+finestra visiva dell'intersezione tra $t$ e $t{+}1$, $\mathrm{Incoming}_i^t$
+il numero di veicoli entrati nella finestra visiva al tempo $t$,
+$\mathrm{Penalty}_i^t = 50$ se $\mathrm{Passed}_i^t = 0 \land
+\mathrm{Incoming}_i^t > 0$ (un verde che non fa passare nessuno) e $0$
+altrimenti, e $\alpha$ l'iperparametro anti-starvation (sweep condotto in
+questo lavoro su $\alpha \in \{0.0, 0.2, 0.5\}$). La modalità \texttt{paper}
+riproduce fedelmente Wang et al. (2022, Eq.~1):
+\begin{equation}
+  r_i^t = -\frac{P_i^t}{100}, \qquad P_i^t = \mathrm{Incoming}_i^t - \mathrm{Outgoing}_i^t
+  \label{eq:reward-paper}
+\end{equation}
+La divisione per 100 in entrambe le modalità è una riscalatura numerica
+aggiunta per la stabilità del training, non presente nella formula originale
+del paper ma priva di effetto sulla politica ottima indotta (è un fattore di
+scala costante sulla ricompensa). \emph{Nota terminologica}: il termine
+$P_i^t$ dell'Equazione~\ref{eq:reward-paper} è un conteggio aggregato per
+intersezione (ingresso meno uscita nella finestra visiva) e non va confuso
+con la pressione classica di Varaiya usata da MaxPressure
+(§\ref{sec:baseline}, Equazione~\ref{eq:maxpressure}), che è definita per
+movimento (coppia corsia di ingresso/corsia di uscita) e sull'intera corsia,
+senza alcun cutoff di visibilità: sono due formule distinte che condividono
+solo il nome informale di "pressione".
+
+\paragraph{Grafo.} Le $M$ intersezioni sono nodi di un grafo $G=(V,E)$; un
+arco $(i,j) \in E$ esiste se una strada collega direttamente $i$ e $j$ nel
+roadnet. Quando un nodo ha più di $\mathrm{num\_neighbors}=4$ vicini diretti,
+l'insieme è troncato ai 4 più vicini per distanza euclidea; sulle reti a
+griglia usate in questo lavoro (§\ref{sec:ambiente}) i nodi interni hanno
+già esattamente 4 vicini diretti, per cui il troncamento incide solo sui nodi
+con connettività superiore alla griglia regolare, se presenti.
+
+Un dettaglio rilevante per l'interpretazione dei risultati di generalizzazione
+(§\ref{cap:confronto}): né lo stato $s_i^t$ né le feature spaziali e
+temporali che alimentano SMK/TMK (§\ref{sec:architettura}) contengono
+l'identità o la posizione assoluta del nodo $i$ all'interno della griglia,
+solo conteggi di veicoli sulle proprie corsie e uno storico recente; il
+Meta-GAT, inoltre, condivide la stessa rete generatrice di pesi
+($W_h^{(i)}$, §\ref{subsec:meta-gat}) su tutti i nodi, condizionandola sul
+meta-embedding locale ma non su un identificatore del nodo. Una politica
+appresa non ha quindi, in linea di principio, alcun modo diretto di
+"memorizzare" che un'arteria si trova sempre sulla stessa riga della griglia:
+può solo imparare a reagire a un pattern osservato di pressione persistente,
+ovunque questo si presenti. Se questa aspettativa regga effettivamente alla
+prova sperimentale, e non solo in linea di principio, è una domanda aperta
+che l'uso di tre righe diverse per l'arteria nelle varianti di training
+(§\ref{sec:ambiente}) è pensato per non lasciare priva di un tentativo di
+verifica.
+
+\section{Ambiente di simulazione}
+\label{sec:ambiente}
+
+L'ambiente è costruito su \textsc{CityFlow} \citep{zhang2019cityflow}, un
+simulatore di traffico microscopico open source con motore in C++ e
+binding Python, pensato esplicitamente per il controllo semaforico
+multi-intersezione via reinforcement learning su reti di dimensione grande.
+I suoi stessi autori lo motivano con un limite pratico del simulatore
+open source più diffuso in letteratura, SUMO, non sufficientemente
+scalabile a reti di grandi dimensioni e a volumi di traffico elevati da
+permettere un addestramento RL su larga scala in tempi ragionevoli:
+\textsc{CityFlow} riporta, sulle proprie reti sintetiche di riferimento
+($30\times30$ intersezioni, decine di migliaia di veicoli, 8 thread), una
+velocità di simulazione circa 20-25 volte superiore a SUMO. Il compromesso
+alla base di questo guadagno è un livello di dettaglio fisico del singolo
+veicolo inferiore a quello di un simulatore come SUMO: adatto quando
+l'obiettivo primario è addestrare un agente su migliaia di episodi
+piuttosto che riprodurre con precisione millimetrica la dinamica di un
+incrocio specifico. La simulazione avanza a passi discreti di un secondo
+(\texttt{engine.next\_step()}): non esiste un modo nativo di avanzare di più
+secondi in una sola chiamata, per cui ogni passo di decisione dell'agente
+(§\ref{sec:formalizzazione}) richiede più chiamate consecutive al motore,
+gestite internamente dal wrapper.
+
+\subsection{Struttura del roadnet e mappatura delle fasi}
+
+La topologia di ogni rete è definita in un file di roadnet: una lista di
+intersezioni (posizione, e un'indicazione se l'intersezione è reale e
+semaforizzata oppure "virtuale", cioè un punto ai bordi della griglia dove
+le strade escono dalla mappa senza alcun semaforo) e una lista di strade,
+segmenti diretti tra due intersezioni con un numero di corsie ciascuno. Per
+ogni intersezione reale, il roadnet elenca inoltre le fasi semaforiche
+disponibili, ciascuna definita come l'insieme dei movimenti (coppie
+corsia-in/corsia-out) abilitati in quella fase: comandare il semaforo
+significa semplicemente indicare al motore l'indice della fase da attivare.
+
+Ogni intersezione di questo lavoro ha $\mathrm{N\_LANES}=12$ corsie in
+ingresso modellate (quattro direzioni cardinali, tre corsie ciascuna: sinistra,
+diritto, destra) e $\mathrm{N\_PHASES}=8$ fasi verdi selezionabili, elencate
+in Tabella~\ref{tab:fasi} con la nomenclatura N/S/E/O (Nord/Sud/Est/Ovest)
+più T/L (\emph{Through}, diritto, e \emph{Left}, sinistra) usata anche nella
+Figura~1 del paper originale.
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{Le 8 fasi semaforiche e i movimenti che ciascuna abilita.}
+\label{tab:fasi}
+\begin{tabular}{@{}clp{7.5cm}@{}}
+\toprule
+Fase & Nome & Movimenti abilitati \\
+\midrule
+0 & NTST & Nord diritto+destra, Sud diritto+destra \\
+1 & NLSL & Nord sinistra, Sud sinistra \\
+2 & NTNL & Nord sinistra+diritto+destra (solo Nord) \\
+3 & STSL & Sud sinistra+diritto+destra (solo Sud) \\
+4 & WTET & Ovest diritto+destra, Est diritto+destra \\
+5 & WLEL & Ovest sinistra, Est sinistra \\
+6 & ETEL & Est sinistra+diritto+destra (solo Est) \\
+7 & WTWL & Ovest sinistra+diritto+destra (solo Ovest) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Una scelta di realismo dichiarata esplicitamente nel codice: la svolta a
+destra non è mai automaticamente abilitata (il cosiddetto \emph{free-right},
+una semplificazione comune in altri lavori sul controllo semaforico), ma
+attende la fase che la autorizza esplicitamente, come qualunque altro
+movimento. Quando un'intersezione ai margini della griglia ha fisicamente
+meno di quattro strade collegate, le corsie mancanti sono modellate come
+corsie fittizie sempre a zero veicoli, in modo che lo stato $s_i^t$
+(§\ref{sec:formalizzazione}) abbia sempre la stessa dimensione indipendentemente
+dalla posizione dell'intersezione nella griglia.
+
+\subsection{Gestione di verde, giallo e tutto-rosso}
+
+\textsc{CityFlow}, nella sua forma nativa, non ha alcun concetto di "giallo"
+o di fisica del semaforo ambra: una fase è solo un insieme binario di
+movimenti abilitati o disabilitati, senza stati intermedi. Qualunque
+comportamento di tipo giallo/tutto-rosso deve quindi essere costruito
+esplicitamente sopra questa primitiva, definendo fasi aggiuntive nel roadnet
+e pilotandole da codice passo per passo. Questo lavoro lo fa nel modo
+seguente. Ogni passo di decisione dura
+$\mathrm{STEP\_TIME} = \mathrm{GREEN\_TIME} + \mathrm{YELLOW\_TIME} +
+\mathrm{RED\_TIME} = 10 + 3 + 2 = 15$ secondi simulati: la fase scelta
+dall'agente resta attiva per i primi $\mathrm{GREEN\_TIME}+\mathrm{YELLOW\_TIME}
+= 13$ secondi (il giallo è trattato come un prolungamento del verde: il
+movimento resta abilitato per tutti e 13 i secondi, senza un vincolo di
+sicurezza aggiuntivo diverso dal tempo trascorso), seguiti da un'ulteriore
+fase, aggiunta appositamente al roadnet e mai selezionabile dall'agente
+(indice 8, fuori dallo spazio delle azioni $\{0,\dots,7\}$), che disabilita
+esplicitamente ogni movimento su ogni intersezione per $\mathrm{RED\_TIME}=2$
+secondi.
+
+Questo meccanismo non era presente nella prima versione di questo lavoro:
+inizialmente i 5 secondi finali di ogni passo venivano eseguiti sotto la
+stessa identica fase verde dei primi 10, senza una seconda chiamata di
+comando al semaforo, il che equivaleva funzionalmente a 15 secondi di verde
+continuo senza alcun istante di tutto-rosso. La finestra di rischio reale era
+stretta (un'intersezione larga circa 20 metri si attraversa in pochi
+secondi, per cui il problema riguardava solo i veicoli entrati negli
+ultimissimi istanti di verde) ma genuina: un veicolo ancora dentro
+l'incrocio al cambio di fase poteva in linea di principio sovrapporsi a un
+veicolo di un movimento conflittuale appena abilitato dalla fase successiva.
+La correzione, applicata in modo meccanico e uniforme a tutte le
+intersezioni semaforizzate di tutti i roadnet del progetto, è stata
+verificata non solo leggendo il codice ma ispezionando riga per riga il
+replay grezzo prodotto dal motore per una singola intersezione campione: lo
+stato delle corsie, per un ciclo completo, passa da \texttt{['r','g','g']}
+(verde più giallo, fase invariata) a \texttt{['r','r','r']} (tutte le corsie
+rosse simultaneamente, il tutto-rosso) per tornare a \texttt{['g','r','r']}
+(la fase successiva, verde su una corsia diversa): conferma diretta che il
+tutto-rosso è genuinamente simulato, non solo contabilizzato a parte, e che
+le fasi verdi si alternano davvero invece di ripetere sempre lo stesso
+schema. Poiché questo comportamento è identico per ogni modello confrontato
+in questo lavoro (Pro, ogni preset di ablation, Fixed-Time, MaxPressure
+passano tutti dallo stesso ciclo di step), il confronto relativo tra modelli
+resta valido; cambiano leggermente, in modo uniforme, i valori assoluti: due
+dei quindici secondi per ciclo (circa il 13\%) sono ora tempo morto reale
+invece che verde esteso.
+
+\subsection{Campo visivo}
+
+Nella modalità avanzata dello stato (§\ref{sec:formalizzazione}), i veicoli
+sono contati solo entro $\mathrm{VISION\_CUTOFF\_M}$ dal semaforo:
+\begin{equation}
+\begin{aligned}
+  \mathrm{VISION\_CUTOFF\_M} &= (\mathrm{GREEN\_TIME}+\mathrm{YELLOW\_TIME}) \cdot v_{\mathrm{urb}} \\
+  &= 13 \cdot 11.1 \approx 144.3\ \mathrm{m}
+\end{aligned}
+\end{equation}
+con $v_{\mathrm{urb}} = 11.1\ \mathrm{m/s}$ ($\approx 40$ km/h) velocità
+urbana di riferimento: rappresenta la distanza che un veicolo può
+effettivamente percorrere nella finestra temporale utile di un'azione (i 13
+secondi di verde più giallo, non i 15 secondi dell'intero passo, dato che
+nei 2 secondi di tutto-rosso nessun veicolo avanza), non un valore
+arbitrario scelto per convenienza. Se le costanti \texttt{GREEN\_TIME} o
+\texttt{YELLOW\_TIME} cambiassero, il cutoff si aggiornerebbe automaticamente
+di conseguenza. Il cutoff è specifico allo stato dell'agente RL: la
+pressione classica usata da MaxPressure (§\ref{sec:baseline}) non ne è
+soggetta, per fedeltà alla sua definizione originale, che non prevede alcun
+raggio di visibilità limitato.
+
+Un dettaglio implementativo corretto nel corso di questo lavoro, incluso qui
+come esempio del tipo di verifica applicata a ogni componente
+dell'ambiente: la distanza usata per calcolare il cutoff su ciascuna corsia
+va sottratta alla lunghezza reale della corsia stessa, che inizialmente era
+approssimata con la distanza punto-a-punto tra i centri delle due
+intersezioni collegate. \textsc{CityFlow} tronca però la distanza percorsa
+riportata per un veicolo alla larghezza fisica dell'intersezione a
+\emph{entrambe} le estremità della corsia: un veicolo lascia la corsia già
+alcuni metri prima del punto centrale dichiarato nel roadnet. Usare la
+distanza punto-a-punto sovrastimava quindi la lunghezza reale della corsia e
+rendeva, di conseguenza, il cutoff di visibilità più restrittivo di quanto
+derivato in teoria; la correzione sottrae esplicitamente la larghezza di
+entrambe le intersezioni coinvolte prima di applicare il cutoff.
+
+\subsection{Dataset e generazione parametrica}
+\label{subsec:dataset}
+
+Ogni roadnet e ogni flusso di traffico usato in questo lavoro è generato
+parametricamente e in modo interamente deterministico da uno script dedicato,
+non raccolto da fonti esterne: questo permette di controllare esattamente
+quali variabili cambiano tra una configurazione e l'altra (topologia,
+densità, presenza di un'arteria) e di rigenerare l'intero dataset da zero se
+un parametro va rivisto, cosa che è avvenuta più volte nel corso del
+progetto (si veda più sotto la calibrazione della densità su $5\times5$ e
+$6\times6$).
+
+\paragraph{Topologie e calibrazione dell'onda verde.} Tre griglie regolari,
+$4\times4$ (16 intersezioni reali), $5\times5$ (25) e $6\times6$ (36), usate
+per misurare la generalizzazione a topologie di dimensione diversa da quella
+di training. Sulla griglia $4\times4$ esistono due varianti di spaziatura
+tra gli incroci, usate per isolare l'effetto di un fenomeno specifico:
+un'onda verde. Poiché tutte le intersezioni di questo lavoro cambiano fase in
+modo sincrono (non esiste una sfasatura temporale tra un incrocio e il
+successivo), l'unico modo per ottenere un'onda verde, cioè far sì che un
+veicolo che parte all'inizio di un verde arrivi al semaforo successivo
+esattamente quando questo torna verde, è calibrare la distanza fisica tra
+gli incroci sulla velocità di marcia e sulla durata del ciclo: alla velocità
+di riferimento $v_{\mathrm{urb}}=11.1$ m/s, un ciclo completo di 15 secondi
+corrisponde a $11.1 \times 15 \approx 166.5$ metri, la distanza reale a cui
+sono calibrate le reti etichettate "100m" in questo lavoro (l'etichetta
+indica un parametro di generazione interno, non la distanza reale, che
+tiene conto anche di un offset geometrico fisso). Una seconda variante della
+griglia $4\times4$, etichettata "200m" (260 metri reali), mantiene una
+spaziatura non calibrata, usata come configurazione di test aggiuntiva per
+misurare quanto un modello allenato sulla rete con onda verde regge quando
+la spaziatura cambia; non viene mai usata per il training. Le griglie
+$5\times5$ e $6\times6$ esistono solo nella variante calibrata, dato che il
+loro scopo è testare la generalizzazione alla dimensione della rete, non
+l'effetto dell'onda verde (già isolato sulla griglia $4\times4$).
+
+\paragraph{Densità di traffico.} Per ciascuna topologia sono generati flussi
+a tre livelli di densità: un flusso costante per l'intera durata
+dell'episodio (\emph{flat}), un flusso a tre fasi (\emph{peak}, un terzo
+dell'episodio a intensità bassa, un terzo a intensità raddoppiata, un terzo
+di nuovo bassa) e, solo per il training, un flusso "giornata lavorativa"
+descritto più sotto. Ogni episodio dura $\mathrm{maxStep}=1800$ secondi
+simulati, corrispondenti a $1800/\mathrm{STEP\_TIME} = 120$ passi di
+decisione per intersezione. La densità di traffico per ciascuna
+configurazione non è stata fissata arbitrariamente: una prima versione,
+calibrata assumendo che una griglia più grande assorbisse proporzionalmente
+meglio il traffico grazie a un minor numero di intersezioni di bordo, si è
+rivelata sbagliata quando verificata sperimentalmente con MaxPressure (un
+controllore reale, seppur semplice, il cui throughput riflette quindi quanto
+la rete regge il traffico assegnato, non solo quanto è inefficiente il
+controllore): a parità di veicoli per intersezione, le griglie più grandi
+assorbivano il traffico \emph{peggio}, non meglio, verosimilmente perché la
+congestione si accumula lungo percorsi che attraversano più intersezioni in
+sequenza. La densità di ciascuna configurazione di questo lavoro è stata
+quindi ricalibrata empiricamente fino a raggiungere un throughput
+confrontabile (90-94\%) con MaxPressure su tutte e tre le topologie, non
+assunta teoricamente corretta a tavolino.
+
+\paragraph{Il flusso di training "giornata lavorativa".} A differenza delle
+configurazioni di validazione e test, che usano una densità costante o a
+picco singolo, il flusso usato per il training mappa una giornata lavorativa
+di 24 ore su un episodio di 1800 secondi simulati, in cinque fasce di durata e
+intensità diverse (Tabella~\ref{tab:workday}): due fasce a intensità bassa
+(mattina presto e notte), due fasce di punta (pendolari mattutini e fine
+giornata lavorativa) e una fascia centrale a intensità sostenuta per la
+maggior parte dell'episodio. Questa non-stazionarietà interna a un singolo
+episodio è intenzionale: impedisce al modello di limitarsi a imparare una
+singola densità di traffico fissa, cosa che una configurazione di
+addestramento a densità costante permetterebbe.
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{Le cinque fasce del flusso di training "giornata lavorativa"
+(totale: 4.620-4.728 veicoli a seconda della variante seed, §\ref{subsec:dataset}).}
+\label{tab:workday}
+\begin{tabular}{@{}p{4.3cm}rrr@{}}
+\toprule
+Fascia & Intervallo simulato & Passi di decisione & Veicoli/secondo \\
+\midrule
+Flat basso (mattina presto) & 0-525s & 0-35 & 1.2 \\
+Peak basso (pendolari mattutini) & 525-675s & 35-45 & 2.5 \\
+Flat alto (ore diurne) & 675-1200s & 45-80 & 3.5 \\
+Peak alto (fine giornata lavorativa) & 1200-1350s & 80-90 & 4.2 \\
+Flat basso (notte) & 1350-1800s & 90-120 & 1.2 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Tre varianti seed e arteria Est-Ovest.} Due accorgimenti,
+introdotti per evitare un rischio concreto di overfitting metodologico.
+Primo: poiché \textsc{CityFlow} è deterministico a parità di flusso e seed,
+usare sempre lo stesso file di flusso per il training esporrebbe il modello,
+episodio dopo episodio, alla sequenza \emph{esatta} di veicoli (stessi
+istanti di generazione, stessi percorsi), con il rischio che il modello
+impari quella sequenza specifica invece di una politica di controllo
+genuinamente generalizzabile. Il training di questo lavoro cicla quindi tra
+tre varianti dello stesso profilo di densità (stessa Tabella~\ref{tab:workday},
+un episodio di training appartiene sempre a una sola variante, alternata
+deterministicamente per numero di episodio), generate con seed diversi che
+cambiano il rumore applicato al peso di ciascun percorso e agli istanti
+esatti di generazione dei veicoli, lasciando invariato il profilo aggregato
+(quanti veicoli, quando, con quale forma). Le configurazioni di validazione e
+di test restano invece a seed singolo, dato che il loro scopo è offrire un
+metro di paragone stabile, non introdurre ulteriore varianza.
+
+Secondo: un controllo preliminare sul flusso di training originale ha
+mostrato che il carico di traffico tra le diverse righe della griglia era
+già naturalmente quasi uniforme (entro il $\pm10\%$), un'asimmetria
+trascurabile che non avrebbe permesso di verificare una domanda specifica,
+cioè se il termine anti-starvation della ricompensa \texttt{custom}
+(Equazione~\ref{eq:reward-custom}) fornisca ai modelli RL un vantaggio di
+equità che MaxPressure, per costruzione, non ha. È stata quindi introdotta
+deliberatamente un'arteria Est-Ovest a densità di traffico maggiore delle
+strade trasversali: ogni percorso che attraversa un segmento orizzontale
+sulla riga designata vede il proprio peso, prima della normalizzazione,
+moltiplicato per un fattore 3, una \emph{ridistribuzione} dello stesso
+budget di veicoli (le altre righe ricevono proporzionalmente meno), non
+un'aggiunta di traffico complessivo. Per non lasciare non verificata
+l'ipotesi, discussa in §\ref{sec:formalizzazione}, che una politica appresa
+possa generalizzare a un'arteria posta su una riga qualsiasi invece di
+specializzarsi sulla posizione osservata durante il training, le tre
+varianti seed hanno l'arteria su tre righe diverse della griglia; le
+configurazioni di validazione e di tutte le 7 configurazioni di test la
+mantengono invece fissa sulla stessa riga, per restare un benchmark stabile
+tra un modello e l'altro.
+
+\paragraph{Split training/validazione/test.} Tabella~\ref{tab:split}
+riassume l'uso di ciascuna configurazione. Le tre varianti di training non
+sono mai usate per la selezione del modello finale o per il confronto tra
+modelli: quel ruolo spetta a una configurazione di validazione indipendente
+(§\ref{sec:training}), mentre le rimanenti 7 configurazioni (griglia
+$4\times4$ a 200m, $5\times5$ e $6\times6$, ciascuna a densità \emph{flat}
+e \emph{peak}) non sono mai viste né in training né in validazione,
+riservate esclusivamente alla misura di generalizzazione riportata nel
+Capitolo~\ref{cap:confronto}.
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{Ruolo di ciascun gruppo di configurazioni nella pipeline sperimentale.}
+\label{tab:split}
+\begin{tabular}{@{}lp{9.5cm}@{}}
+\toprule
+Ruolo & Configurazioni \\
+\midrule
+Training & 3 varianti seed della griglia $4\times4$ a 100m con flusso
+  "giornata lavorativa", cicliche un episodio alla volta \\
+Validazione & Griglia $4\times4$ a 100m, densità \emph{flat}, seed singolo:
+  usata solo per scegliere tra i due checkpoint candidati a fine training
+  (§\ref{sec:training}) \\
+Test & Le 3 configurazioni di training stesse (prestazione in-distribuzione)
+  più le 7 configurazioni rimanenti mai viste (generalizzazione a topologia,
+  spaziatura e densità) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Semplificazioni dichiarate}
+
+Per completezza, alcune semplificazioni dell'ambiente vanno dichiarate
+esplicitamente invece di lasciarle implicite nel codice:
+\begin{itemize}
+  \item Il giallo è trattato come un prolungamento del verde, non come uno
+    stato fisico distinto: una scelta dichiarata, non equivoca dopo
+    l'introduzione del tutto-rosso reale discussa sopra.
+  \item \textsc{CityFlow} non simula la fisica di collisione punto per punto
+    tra veicoli di movimenti diversi all'interno del poligono
+    dell'intersezione; la sicurezza della transizione di fase è garantita a
+    livello di simulazione dei movimenti abilitati e disabilitati (nessun
+    veicolo nuovo entra su un movimento rosso), non da un motore fisico di
+    collisione.
+  \item Il campo visivo a cutoff di distanza e il proxy di congestione
+    basato sul conteggio di veicoli per corsia (non sulla velocità media,
+    non disponibile per singola corsia in \textsc{CityFlow}) sono
+    approssimazioni dichiarate, non un tentativo di modellare la fisica del
+    traffico in ogni dettaglio.
+\end{itemize}
+
+\section{Baseline classiche}
+\label{sec:baseline}
+
+\paragraph{Fixed-Time.} Cicla le 8 fasi in ordine fisso $(0,1,\dots,7,0,\dots)$,
+cambiando fase a ogni passo di decisione (15s): non osserva mai lo stato
+della rete, non ha alcun parametro da configurare oltre all'ordine del
+ciclo, e non richiede training. La durata di ogni fase nel ciclo è
+deliberatamente identica a quella di ogni altro controllore di questo
+lavoro, RL o reattivo: un ciclo più lungo o più corto introdurrebbe un
+fattore di scala arbitrario nel confronto, rendendo impossibile distinguere
+un vantaggio dovuto alla strategia di controllo da uno dovuto solo a una
+cadenza diversa. Fixed-Time rappresenta, in questo lavoro, il limite
+superiore di travel time che qualunque strategia informata, reattiva o
+appresa, dovrebbe poter migliorare (§\ref{cap:confronto}).
+
+\paragraph{Max-Pressure.} Implementazione fedele al riferimento LibSignal
+\citep{varaiya2013maxpressure}, un controllore reattivo, senza parametri
+appresi e senza necessità di training: a ogni passo di decisione, per ogni
+intersezione, calcola la pressione di ciascuna delle 8 fasi e seleziona
+quella a pressione massima. La pressione di una fase $\phi$ è la somma,
+su tutti i movimenti (coppia corsia di ingresso/corsia di uscita) abilitati
+da $\phi$, della differenza tra veicoli sulla corsia di ingresso e veicoli
+sulla corsia di uscita, contati sull'intera corsia (nessun cutoff di
+visibilità):
+\begin{equation}
+  P(i,\phi) = \sum_{(\ell_{\text{in}}, \ell_{\text{out}}) \,\in\, \mathrm{movimenti}(\phi)} \Big( n(\ell_{\text{in}}) - n(\ell_{\text{out}}) \Big)
+  \label{eq:maxpressure}
+\end{equation}
+L'azione scelta è $\phi^*(i) = \operatorname*{argmax}_\phi P(i,\phi)$ (a
+parità di pressione, l'indice di fase più basso, per stabilità); nessun
+vincolo di equità o anti-starvation è applicato, a differenza dell'agente RL
+(§\ref{sec:formalizzazione}), e nessuna maschera sulle azioni consecutive:
+MaxPressure può, in linea di principio, scegliere la stessa fase per un
+numero arbitrario di passi consecutivi, se quella resta la fase a pressione
+più alta. Alcune implementazioni di riferimento (incluso LibSignal)
+prevedono un tempo minimo di permanenza su una fase prima di poterla
+cambiare, necessario quando l'agente può essere interrogato a una cadenza
+più fine di quella minima di sicurezza; nell'ambiente di questo lavoro ogni
+decisione dura già $\mathrm{STEP\_TIME}=15$ secondi per costruzione
+(§\ref{sec:ambiente}), quindi non esiste una cadenza più fine a cui
+l'agente venga interrogato, e questo vincolo aggiuntivo risulta già
+implicitamente soddisfatto senza bisogno di reimplementarlo esplicitamente.
+
+\section{Architettura MetaSTGAT}
+\label{sec:architettura}
+
+MetaSTGAT \citep{wang2022metastgat} elabora lo stato $s_i^t$ di ogni
+intersezione attraverso cinque componenti in sequenza, prima di produrre i
+valori $Q$ per le 8 azioni disponibili. La descrizione che segue è stata
+verificata riga per riga sul codice sorgente del modello
+(\texttt{src/models/}), non trascritta dalla sola notazione del paper: dove
+il paper è ambiguo (in particolare per Meta-GAT e Meta-LSTM, §\ref{subsec:meta-gat}-\ref{subsec:meta-lstm}),
+è indicata esplicitamente quale delle interpretazioni possibili il codice
+implementa.
+
+\subsection{State Encoder duale}
+
+Lo stato $s_i^t \in \mathbb{R}^{d_0}$ ($d_0=32$ o $20$, §\ref{sec:formalizzazione})
+attraversa due MLP a due strati con la stessa architettura ma pesi e
+inizializzazioni indipendenti:
+\begin{align}
+  e_i^t &= \mathrm{ReLU}\big(W_{21}\,\mathrm{ReLU}(W_{11} s_i^t + b_{11}) + b_{21}\big) \\
+  e_j^t &= \mathrm{ReLU}\big(W_{22}\,\mathrm{ReLU}(W_{12} s_i^t + b_{12}) + b_{22}\big)
+\end{align}
+entrambi in $\mathbb{R}^{d_1}$ ($d_1 = 64$ di default). $e_i^t$ (branch
+temporale) alimenta il Meta-LSTM (§\ref{subsec:meta-lstm}); $e_j^t$ (branch
+spaziale) è la query di entrambi i moduli Meta-GAT (§\ref{subsec:meta-gat}).
+
+\subsection{Meta-knowledge learner}
+
+Due MLP a due strati (stessa architettura dello state encoder, con
+un'attivazione $\tanh$ finale opzionale che normalizza l'embedding in
+$[-1,1]$, disattivabile con il flag \texttt{--no-tanh-meta}) apprendono una
+rappresentazione compatta di caratteristiche locali dell'intersezione, usata
+a valle solo per generare i pesi di Meta-GAT e Meta-LSTM, mai come input
+diretto del Q-value:
+\begin{align}
+  \mathrm{SMK}(i) &= f_{\mathrm{smk}}\big(x^{\mathrm{smk}}_i\big) \in \mathbb{R}^{28 \to 64} \\
+  \mathrm{TMK}(i) &= f_{\mathrm{tmk}}\big(x^{\mathrm{tmk}}_i\big) \in \mathbb{R}^{72 \to 64}
+\end{align}
+dove il vettore di ingresso spaziale $x^{\mathrm{smk}}_i \in \mathbb{R}^{28}$
+concatena pressione per corsia [12], numero di veicoli per corsia [12] e
+distanza dai vicini [4]; il vettore temporale $x^{\mathrm{tmk}}_i \in
+\mathbb{R}^{72}$ concatena la lunghezza di coda per corsia [12] e lo storico
+di $n_i^t$ (§\ref{sec:formalizzazione}) sugli ultimi 5 step [60].
+La feature "location" menzionata nel paper originale per il TMK non è
+implementata in questo lavoro: un'omissione dichiarata, non una scelta
+motivata a posteriori (§\ref{subsec:framing-pro}, punto C3).
+
+\subsection{Meta-GAT}
+\label{subsec:meta-gat}
+
+Il modello usa due istanze dello stesso layer Meta-GAT, con input e
+meta-embedding diversi:
+
+\begin{itemize}
+  \item \textbf{Modulo CS} (spaziale puro): $Q=K=V=e_j^t$, meta-embedding
+    $=\mathrm{SMK}(i)$, produce $z_{\mathrm{CS}}$.
+  \item \textbf{Modulo CST} (spazio-temporale): $Q=e_j^t$, $K=V=x_i^t$
+    (l'output del Meta-LSTM, §\ref{subsec:meta-lstm}), meta-embedding
+    $=\mathrm{TMK}(i)$, produce $z_{\mathrm{CST}}$.
+\end{itemize}
+
+Per ciascun modulo, con $H=4$ teste di dimensione $d_h = d_1/H = 16$: il
+meta-embedding genera, per ogni nodo $i$ e ogni testa $h$, una matrice
+$W_h^{(i)} \in \mathbb{R}^{d_h \times d_h}$ e uno scalare $b_h^{(i)}$ (stessa
+rete a due strati usata per SMK/TMK: un layer condiviso con ReLU seguito da
+due proiezioni lineari indipendenti per $W$ e $b$). Per ogni arco
+$(u \to i)$ del grafo (§\ref{sec:formalizzazione}):
+\begin{equation}
+  \varphi_h(i,u) = \frac{\big(W_h^{(i)} Q_h(i)\big) \cdot K_h(u) + b_h^{(i)}}{\sqrt{d_h}}, \qquad
+  \alpha_h(i,u) = \frac{\exp(\varphi_h(i,u))}{\sum_{u' \in \mathcal{N}(i)} \exp(\varphi_h(i,u'))}
+  \label{eq:metagat-attn}
+\end{equation}
+\begin{equation}
+  z_h(i) = \sum_{u \in \mathcal{N}(i)} \alpha_h(i,u)\, V_h(u), \qquad
+  z(i) = \big[z_1(i) \,\|\, \dots \,\|\, z_H(i)\big] \in \mathbb{R}^{d_1}
+\end{equation}
+Due punti dell'Equazione~\ref{eq:metagat-attn} risolvono un'ambiguità del
+paper (Eq.~14-17), che non specifica la dimensione di $W$ né distingue
+$\sqrt{d_h}$ da $\sqrt{d_1}$: il codice applica $W_h^{(i)}$ alla query del
+nodo \emph{ricevente} $i$ (non del vicino $u$) prima del prodotto scalare con
+la key, e usa $\sqrt{d_h}$ (dimensione della singola testa) come fattore di
+scala, coerente con la formulazione standard dell'attenzione multi-head
+\citep{vaswani2017attention}.
+
+\subsection{Meta-LSTM}
+\label{subsec:meta-lstm}
+
+Una rete a due strati genera, dal solo $\mathrm{TMK}(i)$, i pesi $W_g^{(i)}
+\in \mathbb{R}^{2d_1 \times d_1}$ e i bias $b_g^{(i)} \in \mathbb{R}^{d_1}$
+per ciascuno dei quattro gate $g \in \{\text{forget, input, output, cell}\}$
+di una cella LSTM altrimenti standard:
+\begin{equation}
+  \begin{bmatrix} f_i^t \\ \iota_i^t \\ o_i^t \\ g_i^t \end{bmatrix} =
+  \begin{bmatrix} \sigma \\ \sigma \\ \sigma \\ \tanh \end{bmatrix}
+  \left(
+    \Big(W_{\{f,\iota,o,g\}}^{(i)}\Big)^{\!\top} [\,e_i^t \,\|\, h_i^{t-1}\,] + b_{\{f,\iota,o,g\}}^{(i)}
+  \right)
+  \label{eq:metalstm-gates}
+\end{equation}
+\begin{equation}
+  c_i^t = f_i^t \odot c_i^{t-1} + \iota_i^t \odot g_i^t
+\end{equation}
+\begin{equation}
+  x_i^t = h_i^t = o_i^t \odot \tanh(c_i^t)
+\end{equation}
+con $[\,e_i^t \,\|\, h_i^{t-1}\,] \in \mathbb{R}^{2d_1}$ concatenazione
+dell'encoding corrente e dello stato nascosto precedente (ordine
+input-poi-hidden, coerente con la notazione del paper
+$\mathrm{LSTM}(e_i^t, h_{t-1})$). L'output $x_i^t$ (rinominato $h_i^t$ per
+uniformità con la notazione LSTM standard) alimenta il modulo CST di
+Meta-GAT come $K$ e $V$ (§\ref{subsec:meta-gat}). Il paper (Eq.~20) scrive
+$W_\Phi \in \mathbb{R}^{2D_h \times D_h}$ e $b_\Phi \in \mathbb{R}$ (un solo
+gate, bias scalare): il codice genera pesi e bias completi per tutti e
+quattro i gate, l'unica scelta compatibile con una LSTM funzionante
+(§\ref{subsec:framing-pro}, categoria B).
+
+\subsection{Testa Q-value}
+
+I due embedding spaziali si concatenano e attraversano un singolo layer
+lineare, fedele all'Eq.~12 del paper:
+\begin{equation}
+  q(s_i^t, \cdot\,) = W_q\,[\,z_{\mathrm{CST}}(i) \,\|\, z_{\mathrm{CS}}(i)\,] + b_q \in \mathbb{R}^{8}
+\end{equation}
+
+\subsection{Dal paper al modello Pro: differenze motivate}
+\label{subsec:framing-pro}
+
+Il modello Pro di questo lavoro non è un'architettura diversa dal paper, ma
+la stessa architettura con una serie di differenze puntuali rispetto alla
+Section 4.3 e all'Algorithm 1 originali, ciascuna motivata singolarmente e
+disattivabile indipendentemente tramite il sistema di ablation a preset
+(§\ref{sec:training}). Le differenze si dividono in tre categorie, a seconda
+di quanto la loro superiorità sia già stabilita o resti da verificare
+sperimentalmente.
+
+\paragraph{A. Miglioramenti con motivazione tecnica solida.}
+\begin{itemize}
+  \item[A1.] \emph{$w_i^t$ nello stato} (§\ref{sec:formalizzazione}): un
+    segnale più informativo del solo conteggio veicoli, a parità di coda
+    un'attesa di 90s è più urgente di una di 5s.
+  \item[A2.] \emph{Maschera azioni invalide}: previene il collasso su una
+    singola fase (verde fisso), osservato come comportamento degenerativo
+    nelle fasi iniziali di training senza vincolo.
+  \item[A3.] \emph{Double DQN}: riduce il bias di sovrastima del valore $Q$
+    rispetto al DQN standard \citep{vanhasselt2016double}.
+  \item[A4.] \emph{BPTT + burn-in} (sequenze $L=4$, burn-in $2$, R2D2-style
+    \citealp{kapturowski2019r2d2}): corregge l'hidden state staleness dello
+    stato LSTM tra raccolta dati e training.
+  \item[A5.] \emph{Huber loss + pesi IS da PER}: più robusta agli outlier
+    della MSE; il campionamento prioritario concentra il training sulle
+    transizioni a errore TD più alto.
+  \item[A6.] \emph{Soft update} (Polyak, $\tau=0.01$): target network più
+    stabile di un hard-copy periodico.
+  \item[A7.] \emph{Gradient clipping} ($\lVert \nabla \rVert \le 1.0$):
+    stabilità numerica necessaria con un componente ricorrente nel grafo di
+    computazione.
+  \item[A8.] \emph{$\tanh$ finale nei meta-learner}: normalizza l'embedding
+    generato in $[-1,1]$ invece di lasciarlo libero.
+  \item[A9.] \emph{Cutoff di visibilità} ($\approx$144m): realismo fisico,
+    non un numero arbitrario (§\ref{sec:ambiente}).
+  \item[A10.] \emph{Buffer PER a 4.800 sequenze} (vs 10.000 transizioni
+    piatte del paper): calibrato deliberatamente sulla durata dell'episodio
+    ($\approx$40 episodi di storia con episodi da 1800s), non un
+    ridimensionamento subìto: la metrica di confronto corretta con il
+    paper è la copertura in episodi, non il numero grezzo di transizioni.
+\end{itemize}
+
+\paragraph{B. Disambiguazioni di un paper sotto-specificato.} La formula di
+attenzione di Meta-GAT (Eq.~14-17 del paper, §\ref{subsec:meta-gat}) e le
+dimensioni dei pesi di Meta-LSTM (Eq.~20, §\ref{subsec:meta-lstm}) non sono
+deviazioni arbitrarie: il paper stesso lascia aperta più di
+un'interpretazione, e le scelte implementative descritte sopra sono quelle
+compatibili con un'architettura funzionante, non una tra più alternative
+egualmente valide.
+
+\paragraph{C. Scelte da presentare con cautela.} Un'ultima categoria di
+differenze non è ancora, a questo stadio del lavoro, un miglioramento
+dimostrato: nessun preset di ablation diverso da \texttt{pro} e
+\texttt{temporal} (§\ref{sec:training}) è stato allenato e testato al
+momento della stesura di questo capitolo.
+\begin{itemize}
+  \item[C1.] \emph{Ricompensa riscritta} (Eq.~\ref{eq:reward-custom} vs
+    Eq.~\ref{eq:reward-paper}): la motivazione teorica è che una ricompensa
+    di pura pressione può essere instabile, e che promuovere esplicitamente
+    il throughput e penalizzare le attese prolungate produce un
+    comportamento più bilanciato; il suo effetto netto su travel time e
+    throughput, a parità di resto dell'architettura, è discusso nel
+    Capitolo~\ref{cap:confronto} alla luce dei risultati dell'ablation su
+    \texttt{reward\_mode}, non dato per acquisito qui.
+  \item[C2.] \emph{Numero di episodi ed epsilon decay}: il vincolo di
+    risorse (un solo processo, mai i 3 processi paralleli del paper) va
+    dichiarato onestamente, ma non è di per sé un limite subìto: il
+    meccanismo di selezione del modello finale (§\ref{sec:training}) mostra
+    che il training raggiunge il suo miglior risultato ben prima di
+    esaurire il budget di episodi assegnato.
+  \item[C3.] \emph{Feature "location" assente nel TMK}: omissione
+    dichiarata, senza una motivazione cercata a posteriori.
+\end{itemize}
+
+\section{Procedura di training e differenze dal paper originale}
+\label{sec:training}
+
+Il modello è addestrato con Double DQN (A3) su sequenze campionate da un
+replay buffer prioritizzato episodico (A10), con burn-in e BPTT (A4), Huber
+loss pesata dagli importance-sampling weight di PER (A5), soft update della
+target network (A6) e gradient clipping (A7); l'ottimizzatore è RMSprop, non
+Adam, per fedeltà alla Section 5.1 del paper originale: l'unica scelta
+architetturale/di training che questo lavoro non ha mai messo in
+discussione né reso configurabile via ablation, a differenza di ogni altra
+voce di questa sezione.
+
+Iperparametri usati per il modello Pro (identici su tutte le varianti dello
+sweep su $\alpha$): \emph{learning rate} $10^{-3}$, $\gamma=0.85$,
+$d_1=64$, $H=4$ teste, $\mathrm{num\_neighbors}=4$, $\varepsilon$ da $0.9$ a
+$0.01$ con decadimento esponenziale, batch size $20$, buffer PER a
+4.800 sequenze di lunghezza $L=4$ con burn-in $2$ (A4, A10). Ogni run di
+questo lavoro usa 100 episodi su un solo processo, contro i 200 episodi su 3
+processi paralleli del paper (C2): il divario nel numero di episodi totali
+di raccolta dati è reale e dichiarato, ma, per la ragione discussa in C2,
+non equivale a un training interrotto prematuramente.
+
+\paragraph{Ciclo di training.} Prima dell'inizio del training vero e
+proprio, 10 episodi di \emph{warm-up} (disattivabili) raccolgono transizioni
+con $\varepsilon=1$ (azioni interamente casuali, non loggate come training
+vero) con il solo scopo di riempire il replay buffer fino a una soglia
+minima di 1.000 transizioni, sotto la quale il campionamento per
+l'aggiornamento dei pesi non è ancora avviato; con più configurazioni di
+training in ciclo, anche il warm-up alterna tra le varianti, così il buffer
+iniziale non proviene da una sola di esse. Nel training vero e proprio, ogni
+episodio appartiene a una sola variante di configurazione (alternata
+deterministicamente per numero di episodio, §\ref{subsec:dataset}), al
+termine del quale l'agente esegue 100 aggiornamenti del gradiente: un
+numero fisso, indipendente dal numero di passi ambientali dell'episodio (120
+con episodi da 1800 secondi), ereditato dal paper originale come
+iperparametro a sé stante, non ricalibrato quando la durata degli episodi è
+cambiata nel corso di questo lavoro. Il valore di $\varepsilon$ decade una
+volta per episodio verso il suo minimo, raggiunto al 60\% del numero totale
+di episodi pianificati per quel run (il tasso di decadimento non è quindi un
+numero fisso in assoluto, ma viene ricalcolato in funzione del numero
+effettivo di episodi richiesto): usare $\varepsilon$-greedy come strategia
+di esplorazione (§\ref{sec:background-rl}) significa che, a ogni passo di
+decisione, l'agente sceglie un'azione casuale con probabilità $\varepsilon$
+e altrimenti l'azione a valore $Q$ massimo secondo la stima corrente.
+
+Oltre a questo decadimento continuo, un episodio ogni 10 viene eseguito
+interamente a $\varepsilon=1$ anche dopo che il valore minimo di
+$\varepsilon$ è stato raggiunto (\emph{esplorazione ciclica},
+disattivabile), senza contribuire all'aggiornamento dei pesi in quello
+specifico episodio: l'obiettivo è continuare a inserire nel buffer
+esperienza che la politica ormai quasi deterministica non visiterebbe più
+spontaneamente, invece di lasciare che il replay buffer converga verso le
+sole traiettorie che la politica appresa preferisce. Questo lavoro ha
+esplicitamente valutato, e poi scartato, l'ipotesi che disattivare questo
+meccanismo una volta raggiunto il minimo di $\varepsilon$ migliorasse la
+stabilità del training: un episodio interamente casuale a politica ormai
+quasi deterministica inserisce nel buffer transizioni potenzialmente fuori
+distribuzione con priorità massima di default, e un picco ripetuto nella
+loss subito dopo ogni occorrenza tardiva di questo meccanismo sembrava
+inizialmente confermare un effetto negativo; controllando però l'effetto per
+la variante di training attiva in quell'episodio (che cambia comunque a ogni
+episodio, indipendentemente dall'esplorazione ciclica), l'impatto
+sull'episodio successivo è risultato inconcludente, non sistematicamente
+negativo. Non abbastanza per modificare un meccanismo esistente e
+deliberatamente motivato: il comportamento originale è stato mantenuto.
+
+Il sistema di ablation a preset (\texttt{pro}/\texttt{paper}/
+\texttt{environment}/\texttt{temporal}/\texttt{rl\_core}/
+\texttt{replay\_stability}) rende ciascuna delle differenze A1-A10, B e C1-C3
+sopra individualmente disattivabile da riga di comando: il preset
+\texttt{paper} le disattiva tutte simultaneamente, riproducendo la
+procedura originale con lo stesso codice usato per il modello Pro. Il
+Capitolo~\ref{cap:confronto} riporta i risultati sperimentali ottenuti,
+incluso lo studio di ablation costruito su questo stesso sistema di preset.

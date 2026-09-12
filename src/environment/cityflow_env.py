@@ -409,7 +409,34 @@ class CityFlowEnv:
         self.arrived_tt = []
         self.vehicle_wait_times = {}
         self.all_spawned_vehicles = set()
-        
+
+        # Massima attesa MAI osservata durante l'episodio su ogni intersezione,
+        # separata per gruppo di corsie N/S (indici 0-5 nell'ordine canonico
+        # N,S,W,E di _get_lanes_per_intersection) e W/E (indici 6-11) — usata
+        # per le metriche di equita' (vedi get_direction_fairness_stats()).
+        self.max_wait_ns = {iid: 0.0 for iid in self.inter_ids}
+        self.max_wait_ew = {iid: 0.0 for iid in self.inter_ids}
+        # Per ogni intersezione, (veicolo, corsia, timestamp) che ha prodotto il
+        # record corrente — permette a get_direction_fairness_stats() di distinguere
+        # uno stallo CONCLUSO (il veicolo si e' poi mosso, timestamp < fine episodio)
+        # da uno ancora IN CORSO quando l'episodio e' terminato (timestamp == fine
+        # episodio: il veicolo era ancora fermo li', l'attesa vera potrebbe essere
+        # anche piu' lunga — non lo sappiamo, la simulazione si e' solo fermata).
+        # Vedi analisi del 13/9/2026: il record piu' alto osservato su
+        # config_4x4_100m_6k_peak/MaxPressure (1125s) era di questo secondo tipo.
+        self._wait_ns_record = {}
+        self._wait_ew_record = {}
+
+        # Massima attesa MAI osservata da OGNI VEICOLO (non per intersezione),
+        # separata N/S vs W/E in base a su quale corsia si trovava nel momento
+        # dell'attesa — un campione per veicolo invece che uno per intersezione,
+        # per statistiche di distribuzione con un numero di punti realistico
+        # (migliaia invece di 16). Vedi get_raw_vehicle_waits().
+        self.vehicle_max_wait_ns = {}
+        self.vehicle_max_wait_ew = {}
+        self.arrived_max_wait_ns = []
+        self.arrived_max_wait_ew = []
+
         return self._get_observations()
 
     def step(self, actions: Dict[str, int]) -> Tuple[
@@ -475,11 +502,47 @@ class CityFlowEnv:
         except Exception:
             pass
 
+        # Aggiorna la massima attesa mai vista per intersezione, separata per
+        # corsie N/S vs W/E (metriche di equita', vedi get_direction_fairness_stats()).
+        try:
+            lane_vehicles_fair = self.engine.get_lane_vehicles()
+            for iid in self.inter_ids:
+                lanes = self.inter_lanes.get(iid, [])
+                for k, lane_id in enumerate(lanes[:N_LANES]):
+                    if lane_id.startswith("missing_"):
+                        continue
+                    for veh in lane_vehicles_fair.get(lane_id, []):
+                        wt = self.vehicle_wait_times.get(veh, 0.0)
+                        record_time = (self.current_step + 1) * STEP_TIME
+                        if k < 6:  # N (0-2) + S (3-5)
+                            if wt > self.max_wait_ns[iid]:
+                                self.max_wait_ns[iid] = wt
+                                self._wait_ns_record[iid] = (veh, lane_id, record_time)
+                            if wt > self.vehicle_max_wait_ns.get(veh, 0.0):
+                                self.vehicle_max_wait_ns[veh] = wt
+                        else:  # W (6-8) + E (9-11)
+                            if wt > self.max_wait_ew[iid]:
+                                self.max_wait_ew[iid] = wt
+                                self._wait_ew_record[iid] = (veh, lane_id, record_time)
+                            if wt > self.vehicle_max_wait_ew.get(veh, 0.0):
+                                self.vehicle_max_wait_ew[veh] = wt
+        except Exception:
+            pass
+
         self.current_step += 1
         current_time = self.current_step * STEP_TIME
         
-        # 2.2 Teleported vehicles bug: limit tt to reasonable bounds
-        MAX_PLAUSIBLE_TT = self.config.get("maxStep", float("inf")) * STEP_TIME
+        # 2.2 Teleported vehicles bug: limit tt a un valore fisicamente possibile.
+        # maxStep in config.json e' gia' in secondi (stessa unita' usata da _is_done(),
+        # che lo confronta direttamente con current_step*STEP_TIME) — nessun veicolo
+        # puo' avere un travel time piu' lungo dell'intero episodio. Bug corretto il
+        # 13/9/2026: la versione precedente moltiplicava di nuovo per STEP_TIME
+        # (es. 1800*15=27000 invece di 1800), rendendo il filtro 15x troppo permissivo
+        # e di fatto inutile — verificato pero' che finora non ha mai lasciato passare
+        # nulla sopra il vero limite (nessun tt_max osservato supera maxStep in nessuno
+        # dei risultati raccolti), quindi il fix non cambia alcun numero gia' riportato,
+        # solo rende il filtro genuinamente protettivo per il futuro.
+        MAX_PLAUSIBLE_TT = self.config.get("maxStep", float("inf"))
         new_vehicles = set(self.engine.get_vehicles(include_waiting=True))
         
         # 2.1 Travel time offset bug: usa (current_step - 1) * STEP_TIME
@@ -495,6 +558,12 @@ class CityFlowEnv:
                 if tt <= MAX_PLAUSIBLE_TT:
                     self.arrived_tt.append(tt)
                 del self.spawn_times[veh]
+            # Chiude anche la distribuzione per-veicolo dell'attesa massima (vedi
+            # get_raw_vehicle_waits()): 0.0 se il veicolo non ha mai aspettato su
+            # quella corsia, un valore reale altrimenti. pop() invece di get()
+            # per non far crescere i due dict all'infinito con veicoli ormai usciti.
+            self.arrived_max_wait_ns.append(self.vehicle_max_wait_ns.pop(veh, 0.0))
+            self.arrived_max_wait_ew.append(self.vehicle_max_wait_ew.pop(veh, 0.0))
 
         incoming_t1 = self._get_incoming_vehicles_ids()
 
@@ -710,7 +779,16 @@ class CityFlowEnv:
         return out_lanes
 
     def _get_outgoing_vehicles_count(self, inter_id: str) -> int:
-        """Restituisce il totale dei veicoli in uscita (entro VISION_CUTOFF_M)."""
+        """Restituisce il totale dei veicoli in uscita (entro VISION_CUTOFF_M se
+        use_vision_cutoff=True, sull'intera corsia altrimenti).
+
+        Bug corretto il 13/9/2026: il cutoff era applicato incondizionatamente,
+        ignorando self.use_vision_cutoff -- con reward_mode="paper" (usato dai
+        preset "paper"/"environment", entrambi con use_vision_cutoff=False)
+        questo mescolava un conteggio in ingresso a visibilita' globale
+        (_get_incoming_vehicles_ids, che rispetta il flag) con uno in uscita
+        sempre limitato al cutoff, gonfiando artificialmente la pressione.
+        """
         lane_vehicles = self.engine.get_lane_vehicles()
         vehicle_distances = self.engine.get_vehicle_distance()
         out_lanes = self._get_outgoing_lanes(inter_id)
@@ -718,7 +796,7 @@ class CityFlowEnv:
         for lid in out_lanes:
             for veh in lane_vehicles.get(lid, []):
                 # CityFlow distance is from start of road segment
-                if vehicle_distances.get(veh, 0.0) <= VISION_CUTOFF_M:
+                if not self.use_vision_cutoff or vehicle_distances.get(veh, 0.0) <= VISION_CUTOFF_M:
                     count += 1
         return count
 
@@ -750,14 +828,24 @@ class CityFlowEnv:
         out_count = self._get_outgoing_vehicles_count(inter_id)
         avg_out = out_count / max(1.0, len(self._get_outgoing_lanes(inter_id)))
 
+        # Bug corretto il 13/9/2026: il cutoff di visibilita' era applicato
+        # incondizionatamente qui, ignorando self.use_vision_cutoff -- con
+        # use_vision_cutoff=False (preset "paper"/"environment") le feature
+        # spaziali del SMK-Learner restavano limitate a ~144m dal semaforo
+        # anche quando il resto dell'ambiente era in modalita' a visibilita'
+        # globale, rendendo quei due preset incompleti sul ramo meta-learning.
+        vehicle_distances = self.engine.get_vehicle_distance()
         for k, lid in enumerate(lanes[:N_LANES]):
             count = 0
             if not lid.startswith("missing_"):
-                road_id = "_".join(lid.split("_")[:-1])
-                cutoff = max(0.0, self.road_lengths.get(road_id, 340.0) - VISION_CUTOFF_M)
-                for veh in lane_vehicles.get(lid, []):
-                    if self.engine.get_vehicle_distance().get(veh, 0.0) >= cutoff:
-                        count += 1
+                if self.use_vision_cutoff:
+                    road_id = "_".join(lid.split("_")[:-1])
+                    cutoff = max(0.0, self.road_lengths.get(road_id, 340.0) - VISION_CUTOFF_M)
+                    for veh in lane_vehicles.get(lid, []):
+                        if vehicle_distances.get(veh, 0.0) >= cutoff:
+                            count += 1
+                else:
+                    count = len(lane_vehicles.get(lid, []))
             lane_pressure[k] = (count - avg_out) / 30.0
             n_vehicles[k] = count / 30.0
 
@@ -840,14 +928,32 @@ class CityFlowEnv:
         edge_index = torch.tensor([src_list, dst_list], dtype=torch.long)
         return edge_index
 
+    def _travel_times(self, include_unfinished: bool = True) -> List[float]:
+        """
+        Lista dei travel time individuali, usata sia da get_average_travel_time()
+        che da get_travel_time_stats() — stessa fonte per entrambe, cosi' la
+        media e le statistiche di coda sono sempre coerenti tra loro (vedi nota
+        del 13/9/2026 sotto).
+
+        Con include_unfinished=True (default): include anche i veicoli ancora in
+        rete al momento della chiamata, contando il tempo gia' trascorso da quando
+        sono entrati (un lower bound del loro vero travel time, che sarebbe solo
+        peggiore se la simulazione continuasse) — un veicolo mai arrivato e'
+        esattamente il caso che si vuole vedere nel caso peggiore (max/percentili),
+        non nasconderlo escludendolo dal conteggio.
+        """
+        times = list(self.arrived_tt)
+        if include_unfinished and self.spawn_times:
+            current_time = self.current_step * STEP_TIME
+            times += [current_time - spawn_t for spawn_t in self.spawn_times.values()]
+        return times
+
     def get_average_travel_time(self, include_unfinished: bool = True) -> float:
         """
         Calcola il travel time medio.
 
         Con include_unfinished=True (default, metrica usata per training/ranking):
-        include anche i veicoli ancora in rete al momento della chiamata, contando
-        il tempo gia' trascorso da quando sono entrati (un lower bound del loro vero
-        travel time, che sarebbe solo peggiore se la simulazione continuasse).
+        include anche i veicoli ancora in rete (vedi _travel_times()).
 
         Senza questo, un modello che ingolfa la rete e lascia passare solo pochi
         veicoli "fortunati" su corsie libere risulterebbe premiato (travel time
@@ -859,10 +965,7 @@ class CityFlowEnv:
         (usa la stessa lista self.arrived_tt su cui l'engine C++ di CityFlow basa
         get_original_average_travel_time(), utile per confronti diretti col paper).
         """
-        times = list(self.arrived_tt)
-        if include_unfinished and self.spawn_times:
-            current_time = self.current_step * STEP_TIME
-            times += [current_time - spawn_t for spawn_t in self.spawn_times.values()]
+        times = self._travel_times(include_unfinished)
         if not times:
             return 0.0
         return float(sum(times) / len(times))
@@ -870,6 +973,137 @@ class CityFlowEnv:
     def get_completed_only_travel_time(self) -> float:
         """Travel time medio solo sui veicoli arrivati (vedi get_average_travel_time)."""
         return self.get_average_travel_time(include_unfinished=False)
+
+    def get_travel_time_stats(self, include_unfinished: bool = True) -> dict:
+        """
+        Statistiche di coda sul travel time — utili perche' la media puo'
+        nascondere casi estremi: un modello con media bassa ma coda lunga (pochi
+        veicoli bloccati a lungo) e' diverso da uno con distribuzione uniforme.
+
+        Con include_unfinished=True (default, coerente con get_average_travel_time):
+        un veicolo mai arrivato entro fine episodio e' contato con il tempo gia'
+        trascorso (lower bound) — se e' lui il caso peggiore in assoluto (il piu'
+        delle volte lo e', essendo per definizione ancora in viaggio), e' quello il
+        valore che compare in max/percentili. Correzione del 13/9/2026: prima
+        veniva calcolato solo su self.arrived_tt (soli arrivati), inconsistente con
+        get_average_travel_time — un veicolo mai arrivato, il candidato piu' ovvio
+        per il caso peggiore, non compariva mai in tt_max.
+
+        Returns: dict con max, std, p50, p90, p95, p99 (0.0 se non ci sono ancora
+        veicoli spawnati/arrivati, es. episodio non ancora iniziato).
+        """
+        times = self._travel_times(include_unfinished)
+        if not times:
+            return {"max": 0.0, "std": 0.0, "p50": 0.0, "p90": 0.0, "p95": 0.0, "p99": 0.0}
+        arr = np.array(times, dtype=np.float64)
+        return {
+            "max": float(arr.max()),
+            "std": float(arr.std()),
+            "p50": float(np.percentile(arr, 50)),
+            "p90": float(np.percentile(arr, 90)),
+            "p95": float(np.percentile(arr, 95)),
+            "p99": float(np.percentile(arr, 99)),
+        }
+
+    def get_raw_travel_times(self, include_unfinished: bool = True) -> List[float]:
+        """
+        Lista completa dei travel time individuali (un valore per veicolo), non
+        ridotta a statistiche aggregate — per grafici che vogliono mostrare la
+        distribuzione vera (es. violin plot) invece di soli media/max/percentili.
+        Stessa convenzione di get_travel_time_stats() (include_unfinished=True di
+        default: i veicoli mai arrivati contano col tempo trascorso finora).
+        """
+        return list(self._travel_times(include_unfinished))
+
+    def get_raw_vehicle_waits(self, include_unfinished: bool = True) -> Tuple[List[float], List[float]]:
+        """
+        Distribuzione per-VEICOLO (non per intersezione) della massima attesa
+        consecutiva sperimentata, separata N/S vs W/E in base a su quale gruppo
+        di corsie si trovava nel momento dell'attesa piu' lunga di quel veicolo.
+
+        Alternativa a get_direction_fairness_stats() quando serve un campione con
+        un numero di punti realistico per una distribuzione (uno per veicolo,
+        tipicamente migliaia) invece del massimo per intersezione (uno per
+        intersezione, tipicamente 16) — quest'ultimo resta la metrica ufficiale
+        per il ranking tra modelli (vedi descrizione_metriche.md §5), questo e'
+        pensato solo per grafici di distribuzione (violin plot).
+
+        Con include_unfinished=True (default, stessa convenzione delle altre
+        metriche): i veicoli ancora in rete contano con la loro attesa massima
+        finora (lower bound, potrebbe crescere se l'episodio continuasse).
+
+        Returns: (lista attese N/S, lista attese W/E), stessa lunghezza, un
+        veicolo che non ha mai aspettato su un gruppo di corsie contribuisce 0.0.
+        """
+        ns = list(self.arrived_max_wait_ns)
+        ew = list(self.arrived_max_wait_ew)
+        if include_unfinished and self.spawn_times:
+            for veh in self.spawn_times:
+                ns.append(self.vehicle_max_wait_ns.get(veh, 0.0))
+                ew.append(self.vehicle_max_wait_ew.get(veh, 0.0))
+        return ns, ew
+
+    def get_direction_fairness_stats(self) -> dict:
+        """
+        Statistiche di equita' tra corsie N/S e W/E, basate sulla massima
+        attesa mai osservata per intersezione durante l'episodio
+        (self.max_wait_ns/self.max_wait_ew, aggiornate ad ogni step()).
+
+        Non presuppone la presenza di un'arteria: se il traffico e'
+        uniforme i due gruppi risulteranno simili; se una delle due
+        orientazioni e' sistematicamente favorita (es. un'arteria Est-Ovest,
+        vedi descrizione_configurazioni.md §4bis), lo si vede da uno scarto
+        marcato tra i due gruppi.
+
+        Returns: dict con avg/max per gruppo N/S e W/E, il valore peggiore in
+        assoluto osservato su una singola intersezione (worst_wait), e la
+        variante "_resolved" di max_wait_ns/ew.
+
+        Nota importante (scoperta il 13/9/2026 confrontando un record con la
+        traiettoria vera nel replay): max_wait_ns/ew possono provenire da un
+        veicolo ancora fermo nell'ISTANTE ESATTO in cui l'episodio finisce —
+        l'attesa "vera" potrebbe essere anche piu' lunga di quella riportata,
+        semplicemente non lo sappiamo perche' la simulazione si e' fermata,
+        non perche' il veicolo sia stato servito. E' l'esatto analogo, per
+        l'attesa, di "veicoli non arrivati" per il travel time (vedi
+        get_average_travel_time): un caso CENSURATO, non un errore di calcolo.
+        Va tenuto come metrica primaria (nascondere questi casi premierebbe
+        chi lascia un veicolo bloccato per sempre — non farebbe mai scattare
+        un nuovo record dopo l'ultimo istante osservato prima del blocco totale
+        — esattamente il bias di sopravvivenza che include_unfinished=True
+        evita gia' per il travel time).
+
+        *_resolved e' invece il massimo SOLO tra gli stalli che si sono
+        conclusi entro la fine dell'episodio (il veicolo si e' mosso di nuovo,
+        quindi il timestamp del record e' precedente all'ultimo istante
+        possibile) — un numero piu' piccolo o uguale, ma verificabile end-to-end
+        in un replay come un singolo episodio di stallo con inizio e fine
+        osservabili in un'unica intersezione.
+        """
+        ns_vals = list(self.max_wait_ns.values())
+        ew_vals = list(self.max_wait_ew.values())
+        if not ns_vals:
+            return {"avg_wait_ns": 0.0, "max_wait_ns": 0.0, "max_wait_ns_resolved": 0.0,
+                    "avg_wait_ew": 0.0, "max_wait_ew": 0.0, "max_wait_ew_resolved": 0.0,
+                    "worst_wait": 0.0}
+        avg_ns, max_ns = float(np.mean(ns_vals)), float(np.max(ns_vals))
+        avg_ew, max_ew = float(np.mean(ew_vals)), float(np.max(ew_vals))
+
+        episode_end = self.current_step * STEP_TIME
+
+        def _resolved_max(values, records):
+            resolved = [v for iid, v in values.items()
+                       if records.get(iid) is not None and records[iid][2] < episode_end]
+            return float(max(resolved)) if resolved else 0.0
+
+        max_ns_resolved = _resolved_max(self.max_wait_ns, self._wait_ns_record)
+        max_ew_resolved = _resolved_max(self.max_wait_ew, self._wait_ew_record)
+
+        return {
+            "avg_wait_ns": avg_ns, "max_wait_ns": max_ns, "max_wait_ns_resolved": max_ns_resolved,
+            "avg_wait_ew": avg_ew, "max_wait_ew": max_ew, "max_wait_ew_resolved": max_ew_resolved,
+            "worst_wait": max(max_ns, max_ew),
+        }
 
     def get_invalid_actions(self) -> Dict[str, List[int]]:
         """

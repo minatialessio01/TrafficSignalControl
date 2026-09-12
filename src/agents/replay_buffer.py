@@ -41,9 +41,23 @@ class ReplayBuffer:
     Utilizza PER (Prioritized Experience Replay) proporzionale basato sugli errori TD.
     """
 
-    def __init__(self, capacity: int = 3000, alpha: float = 0.6, beta_start: float = 0.4, beta_frames: int = 100000):
+    def __init__(self, capacity: int = 3000, alpha: float = 0.6, beta_start: float = 0.4, beta_frames: int = 100000,
+                 use_per: bool = True):
+        """
+        Args:
+            use_per: se False, il campionamento e' uniforme sulle sequenze valide
+                     (non solo pesato dalla priorita' TD) e i pesi di importance
+                     sampling restituiti sono sempre 1.0 -- replica fedele di un
+                     buffer piatto/uniforme (preset 'paper'/'replay_stability').
+                     Bug corretto il 13/9/2026: prima di questa modifica
+                     sample_sequences() campionava sempre per priorita'
+                     indipendentemente da questo flag, e --no-per si limitava a
+                     spegnere la correzione IS lato loss (src/agents/dqn_agent.py)
+                     senza mai rendere uniforme il campionamento a monte.
+        """
         self.capacity = capacity
         self.alpha = alpha
+        self.use_per = use_per
         self.beta = beta_start
         self.beta_increment = (1.0 - beta_start) / beta_frames
         
@@ -107,34 +121,63 @@ class ReplayBuffer:
         valid_keys = list(self.seq_priorities.keys())
         if len(valid_keys) == 0:
             raise ValueError(f"Nessuna sequenza valida di lunghezza {seq_len} nel buffer.")
-            
-        priorities = np.array([self.seq_priorities[k] for k in valid_keys], dtype=np.float32)
-        probs = priorities ** self.alpha
-        probs /= probs.sum()
-        
-        indices = np.random.choice(len(valid_keys), batch_size, p=probs, replace=True)
+
+        N = len(valid_keys)
+
+        if self.use_per:
+            priorities = np.array([self.seq_priorities[k] for k in valid_keys], dtype=np.float32)
+            probs = priorities ** self.alpha
+            probs /= probs.sum()
+            indices = np.random.choice(N, batch_size, p=probs, replace=True)
+            self.beta = min(1.0, self.beta + self.beta_increment)
+        else:
+            # Campionamento uniforme: nessuna priorita', nessun annealing di beta,
+            # pesi di importance sampling sempre 1.0 (nessuna correzione necessaria
+            # perche' non c'e' alcun bias di campionamento da correggere).
+            probs = np.full(N, 1.0 / N, dtype=np.float32)
+            indices = np.random.choice(N, batch_size, replace=True)
+
         batch = []
         weights = []
         selected_keys = []
-        
-        N = len(valid_keys)
-        self.beta = min(1.0, self.beta + self.beta_increment)
-        
+
         for idx in indices:
             key = valid_keys[idx]
             ep_id, start_idx = key
-            
+
             ep_trans = self.ep_dict[ep_id]
-            batch.append(ep_trans[start_idx : start_idx + seq_len])
-            
-            prob = probs[idx]
-            weight = (N * prob) ** (-self.beta)
+            seq = ep_trans[start_idx : start_idx + seq_len]
+            if len(seq) != seq_len:
+                # Puo' accadere solo se il buffer e' stato ripristinato da un
+                # checkpoint registrato con un seq_len diverso da quello corrente
+                # (es. --resume tra preset con seq_len differenti): gli start_idx
+                # validi in seq_priorities sono calcolati per il vecchio seq_len,
+                # quindi uno slice vicino alla fine di un episodio vecchio puo'
+                # risultare piu' corto. Segnalato esplicitamente invece di
+                # lasciar passare una sequenza tronca che romperebbe np.stack
+                # in to_tensors_seq() piu' avanti nella pipeline.
+                raise ValueError(
+                    f"Sequenza di lunghezza {len(seq)} invece di {seq_len} "
+                    f"(episodio {ep_id}, start_idx {start_idx}): il buffer e' "
+                    f"probabilmente stato ripristinato da un checkpoint con un "
+                    f"seq_len diverso da quello corrente. Riprendere il training "
+                    f"con lo stesso seq_len/--ablation usato per generare il "
+                    f"checkpoint."
+                )
+            batch.append(seq)
+
+            if self.use_per:
+                prob = probs[idx]
+                weight = (N * prob) ** (-self.beta)
+            else:
+                weight = 1.0
             weights.append(weight)
             selected_keys.append(key)
-            
+
         weights = np.array(weights, dtype=np.float32)
-        weights /= weights.max()
-        
+        if self.use_per:
+            weights /= weights.max()
+
         return batch, selected_keys, weights
 
     def update_priorities(self, keys, errors):
@@ -209,7 +252,8 @@ class ReplayBuffer:
             "total_transitions": self.total_transitions,
             "next_ep_id": self.next_ep_id,
             "seq_priorities": {f"{k[0]}_{k[1]}": v for k, v in self.seq_priorities.items()},
-            "max_priority": self.max_priority
+            "max_priority": self.max_priority,
+            "beta": self.beta,
         }
 
     def load_state_dict(self, state: dict):
@@ -218,13 +262,17 @@ class ReplayBuffer:
         self.current_episode = state["current_episode"]
         self.total_transitions = state["total_transitions"]
         self.next_ep_id = state.get("next_ep_id", 0)
-        
+
         self.ep_dict = {ep['id']: ep['transitions'] for ep in self.episodes}
-        
+
         sp = state.get("seq_priorities", {})
         self.seq_priorities = {}
         for k, v in sp.items():
             parts = k.split('_')
             self.seq_priorities[(int(parts[0]), int(parts[1]))] = v
-            
+
         self.max_priority = state.get("max_priority", 1.0)
+        # Bug corretto il 13/9/2026: beta (anneal IS del PER) non veniva salvato,
+        # quindi ripartiva sempre da beta_start dopo un --resume invece di
+        # continuare l'annealing da dove il training era stato interrotto.
+        self.beta = state.get("beta", self.beta)

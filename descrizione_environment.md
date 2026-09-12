@@ -1,6 +1,6 @@
 # Descrizione dell'Ambiente di Simulazione (CityFlow + wrapper MDP)
 
-Questo documento raccoglie tutto ciò che serve per descrivere in tesi l'ambiente di simulazione: cos'è CityFlow, come il wrapper `src/environment/cityflow_env.py` lo trasforma in un MDP multi-agente, come sono gestite le fasi semaforiche (verde/giallo/rosso), come sono calcolate le metriche, e come funziona la visualizzazione via replay. Per la nomenclatura di config/dati vedi [descrizione_configurazioni.md](descrizione_configurazioni.md) (non duplicata qui).
+Questo documento raccoglie tutto ciò che serve per descrivere in tesi l'ambiente di simulazione: cos'è CityFlow, come il wrapper `src/environment/cityflow_env.py` lo trasforma in un MDP multi-agente, come sono gestite le fasi semaforiche (verde/giallo/rosso), come sono calcolate le metriche, e come funziona la visualizzazione via replay. Per la nomenclatura di config/dati vedi [descrizione_configurazioni.md](descrizione_configurazioni.md); per l'interpretazione dettagliata di ogni metrica di valutazione vedi [descrizione_metriche.md](descrizione_metriche.md) (nessuno dei due è duplicato qui).
 
 ---
 
@@ -88,6 +88,8 @@ Conferma diretta, riga per riga del replay reale, che il tutto-rosso è genuinam
 
 **Effetto a cascata sul campo visivo**: il cutoff di visibilità (`VISION_CUTOFF_M`, §6/§8) era definito come "distanza percorribile da un veicolo nella finestra temporale di un'azione", calcolata come `STEP_TIME * velocità_urbana_di_riferimento` = 15s × 11.1 m/s ≈ 167m. Da quando i 2s di `RED_TIME` sono tutto-rosso reale (nessun veicolo avanza in quella finestra), la finestra "utile" per coprire distanza è tornata a `GREEN_TIME + YELLOW_TIME` = 13s, non più 15s. Il cutoff è stato quindi ridefinito come costante derivata — `VISION_CUTOFF_M = (GREEN_TIME + YELLOW_TIME) * VEHICLE_SPEED_MS = 13 * 11.1 ≈ 144.3m` ([cityflow_env.py:70-79](src/environment/cityflow_env.py#L70)) — invece di restare un numero fisso (167) scollegato dalla nuova dinamica. Se `GREEN_TIME`/`YELLOW_TIME` cambiano ancora in futuro, il cutoff si aggiorna automaticamente.
 
+**Bug correlato, corretto l'11/9/2026 — lunghezza reale della corsia**: il cutoff (`cutoff = road_length - VISION_CUTOFF_M`) usava `_get_road_lengths()`, che calcolava la lunghezza come distanza punto-a-punto tra i centri delle due intersezioni collegate dal roadnet. CityFlow però tronca `get_vehicle_distance()` alla `width` dell'intersezione a **entrambe** le estremità (un veicolo lascia la corsia già `width` metri prima del punto centrale dichiarato) — verificato empiricamente: una corsia interna dichiarata 167m (due intersezioni con `width=20` ciascuna) non supera mai ~127m di distanza osservata (167−20−20). Usare la distanza grezza sovrastimava quindi la corsia reale e rendeva il cutoff più restrittivo di quanto derivato in teoria. Corretto sottraendo `width` di entrambe le intersezioni in `_get_road_lengths()`.
+
 ---
 
 ## 5. Anti-starvation (non è "giallo", ma è un altro vincolo sulle fasi)
@@ -109,6 +111,8 @@ Conferma diretta, riga per riga del replay reale, che il tutto-rosso è genuinam
 - **Grafo**: le intersezioni sono nodi di un grafo, con archi verso i **vicini fisici** (intersezioni collegate da una strada diretta, troncato a `num_neighbors=4` più vicini per distanza euclidea). `get_edge_index()` produce il formato PyTorch Geometric usato dai modelli spaziali (GAT/GCN/ecc.).
 - **Meta-feature** (usate dal meta-learner del modello, non dal reward): `get_spatial_meta_features` (pressione/veicoli per corsia + distanza dai vicini) e `get_temporal_meta_features` (proxy di coda + storico ultimi 5 step) — dettagli architetturali nel codice modello, non ambiente in senso stretto.
 
+**Nota — un secondo canale di "pressione", indipendente dallo stato RL**: `_build_phase_lanelinks()` + `get_lane_vehicle_count()` espongono, per ogni intersezione e fase, la pressione classica di Varaiya (2013) — corsia in ingresso intera, **nessun** `VISION_CUTOFF_M` — usata esclusivamente da `MaxPressureAgent` (`src/agents/maxpressure_agent.py`). È deliberatamente disaccoppiata da `n_vec`/`_get_observations()`: il cutoff di visibilità è una scelta di design dello stato RL, non una proprietà della formula di pressione classica, che nella sua definizione originale non prevede alcun raggio di visibilità limitato.
+
 ---
 
 ## 7. Metriche: le tre varianti di travel time (e perché esistono)
@@ -117,6 +121,8 @@ Conferma diretta, riga per riga del replay reale, che il tutto-rosso è genuinam
 - **`get_completed_only_travel_time()`** — solo veicoli arrivati (equivalente a `include_unfinished=False`). Utile come dato informativo aggiuntivo, mai per scegliere tra modelli.
 - **`get_original_average_travel_time()`** — chiama direttamente `engine.get_average_travel_time()` nativo di CityFlow (stessa convenzione "solo arrivati"). Serve solo per confronto diretto con un numero riportato in letteratura, non per confrontare i nostri modelli tra loro.
 - **`get_throughput()`** — veicoli che hanno completato il viaggio: `len(tutti gli spawnati) - veicoli ancora in rete`.
+
+**Altre due metriche di valutazione** (non di reward), aggiunte l'11/9/2026: `get_travel_time_stats()` (max/std/percentili del travel time dei soli arrivati, per non nascondere code lunghe dietro una media) e `get_direction_fairness_stats()` (massima attesa mai osservata per intersezione, separata tra corsie N/S e W/E — pensata per verificare se un'arteria più trafficata, §4bis di `descrizione_configurazioni.md`, produce uno squilibrio sistematico che la sola media del travel time non farebbe emergere). Entrambe calcolate ad ogni `step()` a costo trascurabile; dettaglio completo, interpretazione ed esempio numerico in [descrizione_metriche.md](descrizione_metriche.md) (non duplicato qui).
 
 ---
 

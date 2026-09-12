@@ -1,0 +1,92 @@
+\begin{thebibliography}{12}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Kapturowski et~al.(2019)Kapturowski, Ostrovski, Quan, Munos, and
+  Dabney]{kapturowski2019r2d2}
+Steven Kapturowski, Georg Ostrovski, John Quan, Remi Munos, and Will Dabney.
+\newblock Recurrent experience replay in distributed reinforcement learning.
+\newblock In \emph{International Conference on Learning Representations
+  (ICLR)}, 2019.
+
+\bibitem[Kipf and Welling(2017)]{kipf2017gcn}
+Thomas~N. Kipf and Max Welling.
+\newblock Semi-supervised classification with graph convolutional networks.
+\newblock In \emph{International Conference on Learning Representations
+  (ICLR)}, 2017.
+
+\bibitem[Mnih et~al.(2015)Mnih, Kavukcuoglu, Silver, Rusu, Veness, Bellemare,
+  Graves, Riedmiller, Fidjeland, Ostrovski, et~al.]{mnih2015dqn}
+Volodymyr Mnih, Koray Kavukcuoglu, David Silver, Andrei~A. Rusu, Joel Veness,
+  Marc~G. Bellemare, Alex Graves, Martin Riedmiller, Andreas~K. Fidjeland,
+  Georg Ostrovski, et~al.
+\newblock Human-level control through deep reinforcement learning.
+\newblock \emph{Nature}, 518\penalty0 (7540):\penalty0 529--533, 2015.
+
+\bibitem[Schaul et~al.(2016)Schaul, Quan, Antonoglou, and
+  Silver]{schaul2016per}
+Tom Schaul, John Quan, Ioannis Antonoglou, and David Silver.
+\newblock Prioritized experience replay.
+\newblock In \emph{International Conference on Learning Representations
+  (ICLR)}, 2016.
+
+\bibitem[Sutton and Barto(2018)]{suttonbarto2018}
+Richard~S. Sutton and Andrew~G. Barto.
+\newblock \emph{Reinforcement Learning: An Introduction}.
+\newblock MIT Press, 2 edition, 2018.
+
+\bibitem[Trenta et~al.(2025)Trenta, Gravina, and Bacciu]{trenta2025sonar}
+Alessandro Trenta, Alessio Gravina, and Davide Bacciu.
+\newblock Sonar: Long-range graph propagation through information waves.
+\newblock In \emph{39th Conference on Neural Information Processing Systems
+  (NeurIPS 2025)}, 2025.
+
+\bibitem[van Hasselt et~al.(2016)van Hasselt, Guez, and
+  Silver]{vanhasselt2016double}
+Hado van Hasselt, Arthur Guez, and David Silver.
+\newblock Deep reinforcement learning with double q-learning.
+\newblock In \emph{Proceedings of the AAAI Conference on Artificial
+  Intelligence}, 2016.
+
+\bibitem[Varaiya(2013)]{varaiya2013maxpressure}
+Pravin Varaiya.
+\newblock Max pressure control of a network of signalized intersections.
+\newblock \emph{Transportation Research Part C: Emerging Technologies},
+  36:\penalty0 177--195, 2013.
+
+\bibitem[Vaswani et~al.(2017)Vaswani, Shazeer, Parmar, Uszkoreit, Jones, Gomez,
+  Kaiser, and Polosukhin]{vaswani2017attention}
+Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones,
+  Aidan~N. Gomez, Lukasz Kaiser, and Illia Polosukhin.
+\newblock Attention is all you need.
+\newblock In \emph{Advances in Neural Information Processing Systems
+  (NeurIPS)}, 2017.
+
+\bibitem[Veli{\v{c}}kovi{\'c} et~al.(2018)Veli{\v{c}}kovi{\'c}, Cucurull,
+  Casanova, Romero, Li{\`o}, and Bengio]{velickovic2018gat}
+Petar Veli{\v{c}}kovi{\'c}, Guillem Cucurull, Arantxa Casanova, Adriana Romero,
+  Pietro Li{\`o}, and Yoshua Bengio.
+\newblock Graph attention networks.
+\newblock In \emph{International Conference on Learning Representations
+  (ICLR)}, 2018.
+
+\bibitem[Wang et~al.(2022)Wang, Wu, Li, Wu, Shi, and Ma]{wang2022metastgat}
+Min Wang, Libing Wu, Man Li, Dan Wu, Xiaochuan Shi, and Chao Ma.
+\newblock Meta-learning based spatial-temporal graph attention network for
+  traffic signal control.
+\newblock \emph{Knowledge-Based Systems}, 250:\penalty0 109166, 2022.
+\newblock \doi{10.1016/j.knosys.2022.109166}.
+
+\bibitem[Zhang et~al.(2019)Zhang, Feng, Liu, Ding, Zhu, Zhou, Zhang, Yu, Jin,
+  and Li]{zhang2019cityflow}
+Huichu Zhang, Siyuan Feng, Chang Liu, Yaoyao Ding, Yichen Zhu, Zihan Zhou,
+  Weinan Zhang, Yong Yu, Haili Jin, and Zhenhui Li.
+\newblock Cityflow: A multi-agent reinforcement learning environment for large
+  scale city traffic scenario.
+\newblock In \emph{The World Wide Web Conference (WWW)}, 2019.
+\newblock \doi{10.1145/3308558.3314139}.
+
+\end{thebibliography}

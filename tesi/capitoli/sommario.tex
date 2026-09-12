@@ -1,0 +1,41 @@
+\chapter*{Sommario}
+\addcontentsline{toc}{chapter}{Sommario}
+
+Il controllo semaforico su una rete di intersezioni è un problema di
+coordinamento distribuito: la fase scelta a un incrocio influenza, con
+pochi secondi di ritardo, il traffico che raggiunge gli incroci vicini. Le
+soluzioni classiche, a tempi fissi o reattive sulla sola pressione locale
+(MaxPressure), non tengono conto di questa dipendenza spaziale in modo
+esplicito. MetaSTGAT (Wang et al., 2022) affronta il problema con un agente
+di reinforcement learning per intersezione, coordinato da una \emph{graph
+attention network} i cui pesi sono generati dinamicamente da un modulo di
+meta-learning condizionato su caratteristiche locali della rete stradale.
+
+Questo lavoro replica da zero l'architettura e la procedura di training di
+MetaSTGAT su un ambiente costruito su \textsc{CityFlow}, con reti a griglia
+di tre dimensioni ($4\times4$, $5\times5$, $6\times6$) e traffico generato
+parametricamente, incluso uno scenario con un'arteria a densità asimmetrica
+usato per misurare l'equità del controllo tra direzioni di traffico diverse.
+Ogni differenza introdotta rispetto alla procedura originale, dalla
+ricompensa alla struttura del replay buffer, è isolata da un sistema di
+preset di ablation e motivata singolarmente invece di essere presentata come
+un insieme indistinto di miglioramenti.
+
+I risultati sperimentali raccolti finora confrontano le baseline classiche
+(Fixed-Time, MaxPressure) con diverse varianti del modello proposto. Un
+risultato non atteso emerge dallo sweep sul peso $\alpha$ della penalità
+anti-starvation della ricompensa: rimuoverla del tutto ($\alpha=0$) non solo
+fa collassare l'equità direzionale verso i valori di MaxPressure, ma peggiora
+anche il travel time medio e massimo rispetto alle varianti con $\alpha>0$,
+escludendo un semplice compromesso tra equità e throughput. Il confronto tra
+il modello completo e la variante senza BPTT e burn-in sulla componente
+ricorrente conferma inoltre il contributo di questo meccanismo, con un
+effetto proporzionalmente maggiore sulla generalizzazione a topologie mai
+viste che sulle configurazioni di training.
+
+Al momento della stesura, lo studio di ablation copre due dei sei preset
+prospettati e l'estensione dell'architettura a meccanismi spaziali
+alternativi alla \emph{graph attention} (una convoluzione grafica e un
+meccanismo di propagazione a lungo raggio ispirato a SONAR) è in fase di
+progettazione: questo sommario e le conclusioni saranno aggiornati man mano
+che quel lavoro sarà completato.

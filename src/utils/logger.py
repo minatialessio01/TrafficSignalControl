@@ -37,6 +37,12 @@ class TrainingLogger:
         self.run_name = run_name
 
         os.makedirs(output_dir, exist_ok=True)
+        # I checkpoint periodici vivono in una sottocartella dedicata (riordino
+        # del 12/9/2026, vedi results/REORGANIZATION.md): best_model.pt/
+        # final_model.pth/selected_model.pth restano invece alla radice, sono
+        # i "puntatori" cercati da scripts/test.py::_find_checkpoint().
+        self.checkpoint_dir = os.path.join(output_dir, "checkpoints")
+        os.makedirs(self.checkpoint_dir, exist_ok=True)
 
         # File CSV per le metriche
         self.csv_path = os.path.join(output_dir, "training_log.csv")
@@ -58,25 +64,50 @@ class TrainingLogger:
 
         print(f"[Logger] Output in '{output_dir}/'")
 
+    _FIELDNAMES = [
+        "episode", "travel_time", "throughput",
+        "total_reward",
+        "avg_loss", "epsilon", "buffer_size",
+        "wait_max_ns", "wait_max_ew",
+        "episode_time_s", "total_time_s"
+    ]
+
     def _init_csv(self, resume: bool = False):
         """Inizializza il file CSV.
-        
+
         Se resume=True (training ripreso da checkpoint) apre in modalità append,
         altrimenti sovrascrive per evitare di mescolare dati di run diverse.
+
+        Se il CSV esistente ha un header piu' vecchio (es. un run iniziato prima
+        dell'aggiunta di wait_max_ns/wait_max_ew), lo migra prima di appendere:
+        rilegge le righe esistenti, le riscrive con l'header nuovo (colonne
+        mancanti = vuote), cosi' le righe nuove restano allineate sotto lo
+        stesso header invece di "sporcare" un CSV con colonne extra non nominate.
         """
         if resume and os.path.exists(self.csv_path):
+            self._migrate_csv_header_if_needed()
             mode = "a"   # append: continua dal punto in cui ci si era fermati
         else:
             mode = "w"   # sovrascrittura: nuovo run, CSV pulito
         self._csv_file = open(self.csv_path, mode, newline="")
-        self._csv_writer = csv.DictWriter(self._csv_file, fieldnames=[
-            "episode", "travel_time", "throughput",
-            "total_reward",
-            "avg_loss", "epsilon", "buffer_size",
-            "episode_time_s", "total_time_s"
-        ])
+        self._csv_writer = csv.DictWriter(self._csv_file, fieldnames=self._FIELDNAMES)
         if mode == "w":
             self._csv_writer.writeheader()
+
+    def _migrate_csv_header_if_needed(self):
+        """Riscrive training_log.csv con l'header corrente se quello su disco
+        e' piu' vecchio (mancano colonne aggiunte dopo l'inizio di questo run)."""
+        with open(self.csv_path, newline="") as f:
+            reader = csv.DictReader(f)
+            old_fieldnames = reader.fieldnames or []
+            if old_fieldnames == self._FIELDNAMES:
+                return  # gia' aggiornato, niente da fare
+            rows = list(reader)
+        with open(self.csv_path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=self._FIELDNAMES)
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({k: row.get(k, "") for k in self._FIELDNAMES})
 
     def _setup_signal_handler(self):
         """Cattura Ctrl+C per un'interruzione pulita."""
@@ -100,7 +131,9 @@ class TrainingLogger:
                     total_reward: float,
                     avg_loss: float,
                     epsilon: float,
-                    buffer_size: int):
+                    buffer_size: int,
+                    wait_max_ns: float = 0.0,
+                    wait_max_ew: float = 0.0):
         """Registra i risultati di un episodio su CSV e JSON."""
         now = time.time()
         episode_time = now - self.episode_start_time
@@ -115,6 +148,8 @@ class TrainingLogger:
             "avg_loss": round(avg_loss, 6) if avg_loss else 0.0,
             "epsilon": round(epsilon, 6),
             "buffer_size": buffer_size,
+            "wait_max_ns": round(wait_max_ns, 1),
+            "wait_max_ew": round(wait_max_ew, 1),
             "episode_time_s": round(episode_time, 1),
             "total_time_s": round(total_time, 1),
         }
@@ -144,7 +179,9 @@ class TrainingLogger:
                       epsilon: float,
                       total_reward: float = 0.0,
                       is_best: bool = False,
-                      eta_str: str = ""):
+                      eta_str: str = "",
+                      wait_max_ns: float = 0.0,
+                      wait_max_ew: float = 0.0):
         """Stampa il riassunto dell'episodio a schermo, inclusa la stima ETA."""
         best_marker = " ★ BEST" if is_best else ""
         loss_str = f"{loss:.5f}" if loss is not None else "  N/A  "
@@ -159,10 +196,14 @@ class TrainingLogger:
             f"{eta_display}"
             f"{best_marker}"
         )
+        print(
+            f"           Attesa max N/S={wait_max_ns:.0f}s  W/E={wait_max_ew:.0f}s"
+        )
 
     def checkpoint_path(self, episode: int) -> str:
-        """Restituisce il percorso del checkpoint per l'episodio dato."""
-        return os.path.join(self.output_dir, f"checkpoint_ep{episode:04d}.pt")
+        """Restituisce il percorso del checkpoint periodico per l'episodio dato
+        (sottocartella checkpoints/, vedi __init__)."""
+        return os.path.join(self.checkpoint_dir, f"checkpoint_ep{episode:04d}.pt")
 
     def should_save_checkpoint(self, episode: int) -> bool:
         """True ogni CHECKPOINT_INTERVAL episodi."""

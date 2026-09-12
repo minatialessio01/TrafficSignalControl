@@ -15,8 +15,8 @@ Due politiche disponibili (--policy):
     sarebbe così inefficiente) — utile solo come stress-test visivo estremo.
 
 Uso:
-  python scripts/inspect_replay.py --config configs/config_4x4_100m_train.json \\
-      --output-dir "analisi_configurazioni2/config_4x4_100m_train" --policy maxpressure
+  python scripts/inspect_replay.py --config configs/config_4x4_100m_train1.json \\
+      --output-dir "analisi_configurazioni2/config_4x4_100m_train1" --policy maxpressure
 """
 
 import argparse
