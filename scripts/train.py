@@ -244,6 +244,25 @@ def parse_args():
                         help="Salta l'episodio random periodico ogni 10 ep")
     parser.add_argument("--no-tanh-meta",         action="store_true",
                         help="Rimuove la Tanh finale dai meta-learner SMK/TMK")
+    parser.add_argument("--no-phase-pressure-meta", action="store_true",
+                        help="Rimuove la feature phase_pressure (N_PHASES dim) dal SMK "
+                             "(solo SMK, non TMK) aggiunta il 13/9/2026 (meta_v3, vedi "
+                             "descrizione_stato_meta_reward.md), tornando alle dimensioni meta_v2 (SMK 18, "
+                             "TMK 25 invariato). Serve SOLO per --resume di un checkpoint "
+                             "allenato prima di meta_v3 (dimensione dei pesi diversa).")
+    parser.add_argument("--pressure-reward-term", action="store_true",
+                        help="Nel reward_mode=custom, sostituisce il primo termine "
+                             "(throughput, 'passed - incoming') con la pressione stile paper "
+                             "('outgoing - incoming', = -P_i). Il resto della formula custom "
+                             "(alpha * anti-starvation, wasted_green_penalty, normalizzazione, "
+                             "clip) resta invariato. Ignorato se --reward-mode=paper.")
+    parser.add_argument("--phase-pressure-state", action="store_true",
+                        help="Aggiunge phase_pressure (8 dim, una per fase, stessa formula "
+                             "di MaxPressureAgent ma rispettando --no-vision-cutoff) allo STATO "
+                             "principale invece che al meta-learner (32->40 dim con wait_vec, "
+                             "20->28 senza). Indipendente da --no-phase-pressure-meta: si possono "
+                             "combinare per avere phase_pressure SOLO nello stato, SOLO nel meta, "
+                             "in entrambi, o in nessuno dei due.")
 
     # ── Output directory esplicita ───────────────────────────────────────────
     parser.add_argument("--output-dir", default=None,
@@ -490,6 +509,9 @@ def _prepare_cityflow_env(config_path: str, args, tmp_name: str = "cityflow_conf
         use_vision_cutoff=not args.no_vision_cutoff,
         use_wait_vec=not args.no_wait_vec,
         use_action_mask=not args.no_action_mask,
+        use_phase_pressure_meta=not args.no_phase_pressure_meta,
+        use_pressure_reward_term=args.pressure_reward_term,
+        use_phase_pressure_state=args.phase_pressure_state,
     )
     return env
 
@@ -797,7 +819,8 @@ def run_training(args):
                 temporal_meta = {
                     iid: env.get_temporal_meta_features(
                         iid, history=state_history[iid],
-                        history_len=DEFAULTS["history_len"]
+                        history_len=DEFAULTS["history_len"],
+                        current_state=obs[iid]
                     )
                     for iid in env.inter_ids
                 }

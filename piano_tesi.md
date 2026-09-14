@@ -117,6 +117,13 @@ ancora esistenti.
 - Meta-learning applicato ai pesi di una GNN (hypernetwork: una rete genera i
   pesi di un'altra rete, condizionandoli su feature locali) — concetto
   generale qui, dettaglio implementativo (MetaDense, MetaGATLayer) nel Cap. 3.
+- Nota per il discussion/limiti (Cap. 5): nessuno dei principali metodi SOTA
+  per il TSC (PressLight, MPLight, CoLight, AttendLight) usa un
+  meta-hypernetwork — mettono l'informazione nello stato o in un'attenzione
+  che fa parte del forward principale. Fonte:
+  `descrizione_letteratura_correlata.md` §6, che propone anche l'esperimento
+  (STGAT vs MetaSTGAT, `src/models/stgat.py`) per verificarlo su questo
+  problema specifico.
 
 **2.3 Traffic Signal Control come problema**
 - Tassonomia: controllo a tempi fissi, controllo reattivo (MaxPressure,
@@ -142,7 +149,10 @@ iniziato, §3.6).
 - MDP applicato: stato per intersezione (dim 32 avanzato / 20 paper), azione
   (indice di fase 0-7), reward (due modalità, formule in §4.5), struttura a
   grafo delle intersezioni.
-- Fonte: `descrizione_environment.md` §6, `metastgat_diff_analysis.md` §1.
+- Fonte: `descrizione_environment.md` §6, `metastgat_diff_analysis.md` §1,
+  `descrizione_stato_meta_reward.md` (descrizione completa di stato,
+  meta-learner SMK/TMK e reward — formula, significato e motivazione di
+  ciascuna feature, aggiornata al 13/9/2026).
 
 **3.2 Ambiente di simulazione** `[SCRITTO]`
 - CityFlow: motore, formato roadnet/flow, fasi semaforiche (8 fasi + gestione
@@ -179,9 +189,9 @@ iniziato, §3.6).
   `metastgat_diff_analysis.md` §1-3 per il confronto puntuale codice/paper,
   già scritto in quella forma, da trasporre in prosa di tesi.
 - Sistema di ablation a preset (`pro`/`paper`/`environment`/`temporal`/
-  `rl_core`/`replay_stability`) e razionale scientifica del raggruppamento:
-  fonte `proposte_ablation.md` (già argomentata, sezione "Raccomandazione per
-  la tesi" alla fine).
+  `rl_core`/`replay_stability`) e razionale scientifica del raggruppamento
+  (confronto con le 3 alternative scartate — Leave-One-Out, Dominio vs AI,
+  Incrementale a stadi): fonte `descrizione_modelli.md` §3.
 
 **3.4bis — Inquadramento narrativo di 3.4-3.5: dal paper al modello Pro** `[SCRITTO, integrato come §3.4.6 "Dal paper al modello Pro" nel capitolo]`
 
@@ -549,7 +559,6 @@ o anti-starvation.
   con cui è stato fatto per MaxPressure/FixedTime, o va completato.
 
 Tutto il resto (Cap. 1, Cap. 2, Cap. 3.1-3.5, Cap. 4.1-4.2) ha già il
-materiale necessario nei documenti `descrizione_*.md`,
-`metastgat_diff_analysis.md`, `proposte_ablation.md` e nei risultati in
-`results/`: può essere scritto in LaTeX ora, capitolo per capitolo, seguendo
-questo piano.
+materiale necessario nei documenti `descrizione_*.md` e
+`metastgat_diff_analysis.md`, e nei risultati in `results/`: può essere
+scritto in LaTeX ora, capitolo per capitolo, seguendo questo piano.

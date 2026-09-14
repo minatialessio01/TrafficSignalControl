@@ -282,6 +282,21 @@ vedi "Prossimi passi"): punto 5 di `istruzioni seconda parte.md` §6
 risultati di training completo, non disponibili al momento della stesura di
 questo documento.
 
+**Ri-verificato il 13/9/2026** dopo la revisione delle feature meta (SMK
+18→26, TMK invariato a 25 — vedi `descrizione_stato_meta_reward.md` §7):
+MetaSTGNN (1L/2L) e MetaSTSONAR (L=2/4) costruiti e forward+backward testati
+con le nuove dimensioni, nessuna modifica di codice necessaria — sia
+`train.py::build_model` sia `compare_spatial_mechanisms.py` (che richiama le
+funzioni di `train.py`) leggono `env.spatial_meta_dim`/`env.temporal_meta_dim`
+dinamicamente, la stessa proprietà usata da MetaSTGAT. Verificato anche,
+empiricamente (non solo per ragionamento): il self-loop mancante in
+`MetaSTSONAR`/`MetaSONARLayer` (a differenza di GAT/GCN/STGAT, dove è ormai
+permanente) **non è un'omissione** — è un no-op strutturale, confermato con
+un confronto diretto output-con-vs-senza-self-loop (differenza 0.00) perché
+il termine che SONAR propaga è una differenza `X_v − X_u` (Eq. 2 del paper):
+per `u=v` vale sempre `X_v − X_v = 0`, quindi un self-loop non contribuisce
+mai nulla al calcolo, indipendentemente da come è pesato.
+
 ---
 
 ## 7. Come allenare i modelli di questo confronto

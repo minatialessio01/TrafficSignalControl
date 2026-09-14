@@ -1,11 +1,12 @@
 # Descrizione dei Modelli — il "catalogo" del progetto
 
-> Fonde e sostituisce, come riferimento principale, [`proposte_ablation.md`](proposte_ablation.md)
-> e [`metastgat_diff_analysis.md`](metastgat_diff_analysis.md) (12/9/2026): i due documenti
-> restano nel repository con tutto il loro dettaglio (rispettivamente: le 4 proposte di
-> raggruppamento alternative per l'ablation study, e l'analisi riga-per-riga codice-vs-paper con
-> gli estratti di codice), ma per capire **quali modelli sono stati effettivamente testati e in
-> cosa differiscono l'uno dall'altro** questo è il documento da leggere per primo.
+> Fonde e sostituisce, come riferimento principale,
+> [`metastgat_diff_analysis.md`](metastgat_diff_analysis.md) (12/9/2026, l'analisi riga-per-riga
+> codice-vs-paper con gli estratti di codice, che resta nel repository con tutto il dettaglio) e il
+> razionale di raggruppamento per l'ablation study (§3 sotto, in origine in un documento di
+> brainstorm separato — le 4 proposte alternative, non più conservate a parte, sono riassunte lì).
+> Per capire **quali modelli sono stati effettivamente testati e in cosa differiscono l'uno
+> dall'altro** questo è il documento da leggere per primo.
 >
 > L'idea è quella di un catalogo/concessionaria: ogni modello è un'"auto in esposizione" con la
 > propria scheda tecnica, e la domanda a cui questo file risponde per ciascuno è sempre la stessa
@@ -18,7 +19,8 @@
 > 2. **Rispetto ad alpha** — a parità di tutto il resto (preset `pro`), quanto pesa la penalità
 >    anti-starvation nella reward: 4 valori testati, 0.5/0.2/0.1/0.0.
 > 3. **Rispetto all'ablation** — quale sottosistema funzionale del modello Pro viene disattivato
->    per isolarne il contributo (Proposta 1 di `proposte_ablation.md`, l'unica implementata).
+>    per isolarne il contributo (raggruppamento per "sottosistemi funzionali", una di 4 alternative
+>    valutate — vedi §3 per il confronto con le altre 3 e perché questa è l'unica implementata).
 >
 > Ogni modello ha una cartella `results/<model_id>/` con le proprie metriche (vedi
 > `results/REORGANIZATION.md` per la struttura interna) e compare in almeno uno dei grafici
@@ -50,7 +52,8 @@
 | `maxpressure` | baseline classica | Euristico max-pressure (Varaiya, 2013), non richiede checkpoint — non toccato dalla modifica |
 | `metastgat_pro_0.2_self_loop` | esperimento fondativo | Come `metastgat_pro_0.2` con self-loop — l'esperimento che ha stabilito il nuovo standard (vedi §4) |
 | `metastgat_pro_0.0_self_loop` | esperimento fondativo | Come sopra su `metastgat_pro_0.0` — stesso esito, miglioramento ancora più marcato |
-| `ablation_environment_self_loop` | esperimento fondativo | Come `ablation_environment`, con self-loop — verifica se il miglioramento regge anche quando l'MDP torna a quello del paper (in addestramento) |
+| `ablation_environment_self_loop` | esperimento fondativo | Come `ablation_environment`, con self-loop |
+| `metastgat_pro_0.2_meta_v2` | esperimento SMK/TMK | Come `metastgat_pro_0.2_self_loop`, ma con le feature del meta-learner riviste (`descrizione_stato_meta_reward.md` §3/§4) — vedi §4bis per il risultato |
 
 Tutti i modelli allenabili condividono la stessa procedura (`scripts/train.py`, Algorithm 1 del
 paper con le aggiunte descritte in `descrizione_scripts.md`), le stesse 3 config di training
@@ -137,12 +140,27 @@ TT e equità direzionale fianco a fianco nei grafici di `compare_models.py`, mai
 
 ## 3. Rispetto all'ablation: i 4 sottosistemi funzionali
 
-Dei 10 interruttori M1-M10, la Proposta 1 di `proposte_ablation.md` (l'unica implementata) li
-raggruppa in 4 aree funzionali coerenti, ciascuna disattivata da un preset `--ablation` dedicato.
-A differenza del sweep su alpha (un solo numero), qui ogni preset spegne un **gruppo** di flag
-insieme, perché sono componenti che cooperano strettamente e non avrebbe senso isolarle una a una
-in questo raggruppamento (per l'isolamento fattore-per-fattore puro, vedi la Proposta 2
-alternativa, non implementata, in `proposte_ablation.md` §3).
+Dei 10 interruttori M1-M10 (§1), il raggruppamento per **sottosistemi funzionali** li aggrega in 4
+aree funzionali coerenti, ciascuna disattivata da un preset `--ablation` dedicato. A differenza del
+sweep su alpha (un solo numero), qui ogni preset spegne un **gruppo** di flag insieme, perché sono
+componenti che cooperano strettamente e non avrebbe senso isolarle una a una in questo
+raggruppamento.
+
+**Perché questo raggruppamento e non uno dei 3 alternativi valutati** (max 6 modelli ciascuno,
+copertura 100% delle 10 modifiche in tutti e 4):
+
+| Alternativa | Concetto | Perché scartata |
+|---|---|---|
+| **Leave-One-Out ad alto impatto** | Isola i 4 grandi driver (reward+visibilità, wait_vec, BPTT, Double DQN) uno a uno, tenendo fissi gli stabilizzatori di base (Huber/clip/warmup/Tanh/maschera) come "buone pratiche" condivise | Massimo rigore (nessuna ambiguità di attribuzione), ma lascia fuori dall'ablation proprio il gruppo più numeroso di modifiche (PER/IS, ottimizzazione robusta, warm-up/esplorazione) — non risponde a "quanto pesa la stabilità di training nel suo insieme" |
+| **Ingegneria del dominio vs algoritmi RL** | Due soli gruppi: modellazione del traffico (reward, visibilità, stato, maschera) vs algoritmo RL (BPTT, Double DQN, PER, stabilizzatori) | Narrativa pulita (trasporti vs machine learning), ma richiede spiegare bene la distinzione concettuale tra le due sfere, e il gruppo "algoritmo RL" resterebbe comunque un aggregato di 6 modifiche eterogenee |
+| **Incrementale a stadi** | Dal modello Paper si aggiunge un livello alla volta (traffico → ricorrenza → RL robusto → stabilità), 5 modelli invece di 6 | Costo computazionale minimo e progressione narrativa naturale, ma l'effetto di ogni blocco è cumulativo: uno stadio successivo non isola il proprio contributo dagli stadi precedenti, meno adatto a un confronto diretto per sottosistema |
+
+Il raggruppamento scelto (sottosistemi funzionali) copre il 100% delle modifiche con lo stesso
+numero di modelli (6) della maggior parte delle alternative, mappa direttamente sui capitoli
+naturali della tesi (Ambiente/MDP, Ricorrenza Temporale, Algoritmo RL, Stabilità & Memoria) — il
+compromesso esplicito è che i gruppi `environment` e `replay_stability` aggregano più componenti
+strettamente cooperanti, quindi un degrado misurato lì è cumulativo, non attribuibile a una singola
+causa (vedi "Lettura dei risultati" sotto per `replay_stability`).
 
 | Preset | `reward_mode` | Flag `--no-*` attivati (disattiva quella modifica) | Cosa isola | TT medio train1 / 6x6 peak (s) |
 |---|---|---|---|---:|
@@ -165,8 +183,8 @@ generalizzazione (+18.6%) — indizio che BPTT+burn-in non è solo un dettaglio 
 contribuisce alla capacità di generalizzare, non solo a convergere più in fretta sulle config viste
 in training. `replay_stability` è il preset col degrado più marcato in assoluto (295.3s contro i
 215.2s del Pro, +37%): il gruppo che disattiva è il più numeroso (7 flag), quindi l'effetto
-osservato è cumulativo, non attribuibile a una singola causa — coerente con la scelta dichiarata
-di questo raggruppamento (vedi "Svantaggi" della Proposta 1 in `proposte_ablation.md`).
+osservato è cumulativo, non attribuibile a una singola causa — coerente con il compromesso
+dichiarato sopra per questo raggruppamento.
 
 ---
 
@@ -229,12 +247,51 @@ per confrontare tre meccanismi di aggregazione spaziale invece di uno. Implement
 (shape/gradienti/non-regressione), ma non ancora sottoposti a un training completo al momento
 della stesura di questo file — dettaglio in `descrizione_gcn_sonar.md`.
 
+### 4bis. Feature del meta-learner riviste (`metastgat_pro_0.2_meta_v2`)
+
+> ⚠️ **Numeri superati (13/9/2026)**: questo confronto usa una versione di
+> `lane_pressure` con un bug corretto successivamente (media globale invece
+> che locale sulle corsie in uscita raggiungibili — vedi
+> `descrizione_stato_meta_reward.md` §7). I modelli `_official` (§0) usano la
+> formula corretta; questa sezione resta come nota storica di come si è
+> arrivati alla revisione, non come risultato da citare in tesi.
+
+Dopo la decisione di mantenere la struttura "meta" (§0, §4 sopra), le feature
+date in pasto a SMK/TMK sono state riviste per rimuovere ridondanze con lo
+stato principale e una feature degenere — dettaglio completo, formule e
+dimensioni esatte (versione corrente) in `descrizione_stato_meta_reward.md`
+§3/§4. Stato e reward non toccati; unico confronto valido:
+`metastgat_pro_0.2_meta_v2` (feature nuove) contro
+`metastgat_pro_0.2_self_loop` (feature vecchie), entrambi con self-loop.
+
+| | TT medio | TT massimo | Attesa max N/S | Attesa max W/E |
+|---|---:|---:|---:|---:|
+| meta_v2 vs self_loop, train (media 3 config) | +0.5% | −1.5% | −1.9% | −4.0% |
+| meta_v2 vs self_loop, test (media 7 config) | +1.6% | −1.0% | **−13.7%** | −5.3% |
+
+Il vantaggio di entrambi (self_loop e meta_v2) sul modello senza self-loop
+resta intatto (circa −9% di TT medio per entrambi, confermando che il
+redesign non ha eroso il guadagno del self-loop). Tra loro, il quadro è
+**a metà, ma interpretabile**: il TT medio è sostanzialmente invariato (un
+run solo, senza medie su più seed — una differenza dell'1-2% qui non è un
+segnale, è rumore di training). Le metriche di equità/coda invece migliorano
+in modo consistente, con il salto più netto proprio sull'attesa N/S in
+generalizzazione (−13.7%, dove il solo self-loop non aveva dato nessun
+guadagno su questa metrica specifica: `wait_max_ns` era invariato rispetto al
+modello senza self-loop). Coerente con l'intento delle feature aggiunte
+(`pressure_diff_neighbors`, `traffic_asymmetry_ns_ew`): pensate per informare
+sullo *squilibrio* tra corsie/vicini, non sulla congestione media — l'effetto
+si vede infatti dove ci si aspetterebbe, sull'equità direzionale, non sul TT
+medio. Non un esperimento concluso (un solo seed, 100 episodi): un segnale
+che vale la pena verificare con un secondo run prima di generalizzare.
+
 ---
 
 ## 5. Per approfondire
 
 - Dettaglio riga-per-riga codice-vs-paper (con estratti di codice): [`metastgat_diff_analysis.md`](metastgat_diff_analysis.md)
-- Le 4 proposte alternative di raggruppamento per l'ablation study (solo la Proposta 1 è implementata): [`proposte_ablation.md`](proposte_ablation.md)
+- Stato, meta-learner (SMK/TMK) e reward: cosa si usa, come si calcola, perché — [`descrizione_stato_meta_reward.md`](descrizione_stato_meta_reward.md)
+- Letteratura correlata (PressLight/MPLight/CoLight/AttendLight/MaCAR) e cosa dice sul meta-learner: [`descrizione_letteratura_correlata.md`](descrizione_letteratura_correlata.md)
 - Flag `--ablation`/`--no-*` e come li applica `train.py`: [`descrizione_scripts.md`](descrizione_scripts.md)
 - Definizione precisa di ogni metrica citata qui (TT medio, TT massimo, equità direzionale): [`descrizione_metriche.md`](descrizione_metriche.md)
 - Configurazioni di training/test/validazione (arterie, seed, densità): [`descrizione_configurazioni.md`](descrizione_configurazioni.md)

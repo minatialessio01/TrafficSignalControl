@@ -110,6 +110,9 @@ class CityFlowEnv:
         use_vision_cutoff: bool = True,     # True = cutoff VISION_CUTOFF_M; False = visibilità globale
         use_wait_vec: bool = True,          # True = stato a 32 dim; False = 20 dim (no wait)
         use_action_mask: bool = True,       # True = maschera anti-starvation; False = nessuna
+        use_phase_pressure_meta: bool = True,  # True = SMK include phase_pressure (meta_v3, solo SMK); False = meta_v2 (18/25 dim)
+        use_pressure_reward_term: bool = False,  # True = 1o termine del reward custom = pressione (stile paper) invece di throughput
+        use_phase_pressure_state: bool = False,  # True = aggiunge phase_pressure (8 dim) allo STATO principale
     ):
         """
         Args:
@@ -120,6 +123,37 @@ class CityFlowEnv:
             use_vision_cutoff: se True limita la visibilità a VISION_CUTOFF_M dal semaforo
             use_wait_vec: se True include wait_vec nello stato (dim=32); se False stato a 20 dim
             use_action_mask: se True abilita la maschera anti-starvation
+            use_phase_pressure_meta: se True (default) il SMK include la feature
+                phase_pressure (N_PHASES dim, esperimento meta_v3, 13/9/2026, vedi
+                descrizione_stato_meta_reward.md) -- SMK 18->26, TMK invariato a 25 (deciso il
+                13/9/2026: phase_pressure va solo nel SMK, non nel TMK -- e' un
+                dato spaziale per fase, non una dinamica temporale). Se False,
+                il SMK resta alla revisione meta_v2 del 12/9/2026 -- dim 18.
+                Serve SOLO per poter riprendere (--resume) i checkpoint allenati
+                con meta_v2 prima che phase_pressure diventasse la feature di
+                default: la dimensione dei pesi di smk_learner.fc1 dipende da
+                questa dimensione, quindi un checkpoint meta_v2 non si carica in
+                un modello costruito con le dimensioni meta_v3 (e viceversa).
+            use_pressure_reward_term: se True, nel reward_mode="custom" il primo
+                termine (di norma "passed - incoming", throughput) e' sostituito da
+                "outgoing - incoming_ora" (-P_i, stessa identica quantita' calcolata
+                dal reward_mode="paper"), ma qui SOLO per il primo termine: il resto della
+                formula custom (penalita' anti-starvation pesata da alpha,
+                wasted_green_penalty, normalizzazione /100, clip [-20,5]) resta
+                invariato. Esperimento 13/9/2026 (vedi descrizione_stato_meta_reward.md): vedere se
+                allenare direttamente sulla pressione, invece che sul throughput,
+                aiuta il modello ad avvicinarsi al comportamento di MaxPressure.
+                Ignorato se reward_mode="paper" (che ha gia' -P_i come unico termine).
+            use_phase_pressure_state: se True, aggiunge allo stato principale
+                (`_get_observations`) un vettore di 8 valori (`N_PHASES`), uno per
+                fase candidata, con la stessa formula (e la stessa funzione,
+                `_compute_phase_pressure_vector`) usata dal SMK con
+                use_phase_pressure_meta -- dim 32->40 (con wait_vec) o 20->28
+                (senza). Rispetta `use_vision_cutoff` come tutto il resto dello
+                stato (vedi descrizione_stato_meta_reward.md §1). Esperimento 13/9/2026: la stessa
+                informazione, spostata dal meta-learner allo stato diretto, per
+                vedere se aiuta di piu' quando la Q-network la vede direttamente
+                invece che tramite pesi generati dal meta-learner.
         """
         if not CITYFLOW_AVAILABLE:
             raise RuntimeError(
@@ -135,6 +169,9 @@ class CityFlowEnv:
         self.use_vision_cutoff = use_vision_cutoff
         self.use_wait_vec = use_wait_vec
         self.use_action_mask = use_action_mask
+        self.use_phase_pressure_meta = use_phase_pressure_meta
+        self.use_pressure_reward_term = use_pressure_reward_term
+        self.use_phase_pressure_state = use_phase_pressure_state
 
         # Carica la configurazione
         with open(config_path, "r") as f:
@@ -167,10 +204,28 @@ class CityFlowEnv:
         self.road_lengths = self._get_road_lengths()
         self.inter_distances = self._compute_distances()
 
+        # Cache della pressione media per nodo, un valore per intersezione,
+        # ricalcolata una sola volta per step (non per ogni singola chiamata di
+        # get_spatial_meta_features) e riusata per calcolare pressure_diff_neighbors
+        # di ogni nodo -- vedi descrizione_stato_meta_reward.md §2.5. Invalidata in reset().
+        self._node_pressure_cache: Dict[str, float] = {}
+        self._node_pressure_cache_step: Optional[int] = None
+
         # Movimenti (lane-link) abilitati per fase, dal roadnet — usati da
         # MaxPressureAgent per la pressione classica (Varaiya 2013), vedi
         # _build_phase_lanelinks().
         self.phase_lanelinks = self._build_phase_lanelinks()
+
+        # Per ogni corsia in ingresso, le corsie in uscita raggiungibili dal
+        # roadnet (indipendentemente da quale fase le abiliti) -- usata da
+        # _compute_lane_pressure_vector per una media LOCALE (solo le uscite
+        # che quella specifica corsia puo' davvero raggiungere), non globale
+        # su tutte le uscite dell'incrocio. Corretto il 13/9/2026 (vedi
+        # descrizione_stato_meta_reward.md), su segnalazione: la versione precedente usava
+        # la stessa media (su TUTTE le corsie in uscita dell'incrocio) per
+        # ogni corsia in ingresso, indipendentemente da quali uscite fossero
+        # davvero raggiungibili da quella corsia.
+        self.lane_reachable_outgoing = self._build_lane_reachable_outgoing()
 
         # Stato corrente
         self.current_step = 0
@@ -363,6 +418,41 @@ class CityFlowEnv:
             result[iid] = phase_pairs
         return result
 
+    def _build_lane_reachable_outgoing(self) -> Dict[str, List[str]]:
+        """
+        Per ogni corsia in ingresso a un'intersezione, la lista delle corsie
+        in uscita da quella STESSA intersezione che quella corsia può
+        raggiungere — dal roadnet (`roadLinks[i].laneLinks[j]`), indipendente
+        da quale fase abilita il movimento (una corsia fisica può raggiungere
+        certe corsie in uscita indipendentemente da quale fase è attiva ora;
+        è la stessa unione di `pairs_per_roadlink` in `_build_phase_lanelinks`,
+        ma indicizzata per corsia_in invece che raggruppata per fase).
+
+        Usata da `_compute_lane_pressure_vector` per calcolare una media LOCALE
+        delle corsie in uscita raggiungibili da ciascuna corsia in ingresso,
+        invece di una media GLOBALE su tutte le corsie in uscita
+        dell'incrocio — corretto il 13/9/2026 (vedi descrizione_stato_meta_reward.md): la
+        versione precedente usava la stessa media (su tutte le uscite
+        dell'incrocio) per ogni corsia in ingresso, anche quando quella
+        corsia in realtà porta solo verso un sottoinsieme specifico delle
+        uscite (es. una corsia di svolta a destra non raggiunge le stesse
+        corsie di una corsia dritta) — più vicino alla nozione di pressione
+        per MOVIMENTO di MaxPressure (Varaiya 2013), non un aggregato
+        indifferenziato per l'intero incrocio.
+        """
+        result: Dict[str, List[str]] = {}
+        for inter in self.roadnet.get("intersections", []):
+            if inter.get("id") not in self.inter_id_to_idx:
+                continue
+            for rl in inter.get("roadLinks", []):
+                start_road = rl.get("startRoad")
+                end_road = rl.get("endRoad")
+                for ll in rl.get("laneLinks", []):
+                    lane_in = f"{start_road}_{ll['startLaneIndex']}"
+                    lane_out = f"{end_road}_{ll['endLaneIndex']}"
+                    result.setdefault(lane_in, []).append(lane_out)
+        return result
+
     def get_lane_vehicle_count(self) -> Dict[str, int]:
         """
         Conteggio veicoli per corsia, nativo del motore CityFlow, sulla corsia
@@ -436,6 +526,13 @@ class CityFlowEnv:
         self.vehicle_max_wait_ew = {}
         self.arrived_max_wait_ns = []
         self.arrived_max_wait_ew = []
+
+        # Invalida la cache di pressione per nodo (vedi __init__): senza
+        # questo, il primo step del nuovo episodio (current_step=0) potrebbe
+        # riusare per errore la cache dell'ultimo step dell'episodio
+        # precedente, che aveva anch'esso current_step=0 all'inizio.
+        self._node_pressure_cache = {}
+        self._node_pressure_cache_step = None
 
         return self._get_observations()
 
@@ -590,6 +687,11 @@ class CityFlowEnv:
         Modalità paper (use_wait_vec=False, use_vision_cutoff=False):
           s_i^t = [n_vec (12), p_vec (8)] — dim 20 (solo conteggio + fase)
 
+        Se use_phase_pressure_state=True (esperimento 13/9/2026, vedi
+        descrizione_stato_meta_reward.md §1): si aggiunge in coda phase_pressure (8 dim,
+        una per fase candidata, stessa formula di MaxPressureAgent ma
+        rispettando use_vision_cutoff) — dim 32->40 o 20->28.
+
         n_vec: numero di veicoli sulle corsie in ingresso
         wait_vec: max waiting time normalizzato (0.0-1.0) per corsia
         p_vec: fase corrente (one-hot encoding 8 bit)
@@ -647,10 +749,10 @@ class CityFlowEnv:
             p_vec = np.zeros(N_PHASES, dtype=np.float32)
             p_vec[self.current_phase[iid]] = 1.0
 
-            if self.use_wait_vec:
-                observations[iid] = np.concatenate([n_vec, wait_vec, p_vec])  # dim=32
-            else:
-                observations[iid] = np.concatenate([n_vec, p_vec])            # dim=20 (paper)
+            parts = [n_vec, wait_vec, p_vec] if self.use_wait_vec else [n_vec, p_vec]
+            if self.use_phase_pressure_state:
+                parts.append(self._compute_phase_pressure_vector(iid, lane_vehicles, vehicle_distances))
+            observations[iid] = np.concatenate(parts)
 
         return observations
 
@@ -682,6 +784,10 @@ class CityFlowEnv:
 
         reward_mode="custom" (avanzato):
           Reward = (Passed - Incoming - alpha * max_red_wait_time - wasted_green_penalty) / 100, clip [-20, 5]
+          Se use_pressure_reward_term=True, "Passed - Incoming" e' sostituito da
+          "Outgoing - Incoming_ora" (= -P_i, stessa quantita' del ramo "paper" sotto)
+          -- vedi nota nel docstring del costruttore. Il resto della formula (termine
+          anti-starvation, penalita', normalizzazione, clip) resta invariato.
 
         reward_mode="paper" (originale Wang et al. 2022):
           Reward = -P_i / 100  (negativo della pressione: veicoli in ingresso - veicoli in
@@ -759,7 +865,20 @@ class CityFlowEnv:
                 # tipicamente decine di veicoli — non derivato analiticamente, vedi
                 # analisi_bug.md #8.
                 wasted_green_penalty = 50.0 if (passed == 0 and incoming > 0) else 0.0
-                raw_reward = float(passed) - float(incoming) - (self.alpha * max_red_wait_time) - wasted_green_penalty
+
+                if self.use_pressure_reward_term:
+                    # Primo termine sostituito da -P_i, stessa identica quantita'
+                    # del ramo reward_mode="paper" sopra (outgoing - veicoli in
+                    # ingresso ADESSO, len(in_t1) -- non "incoming"=len(in_t0),
+                    # che e' il conteggio PRIMA dello step, usato solo per
+                    # wasted_green_penalty). Vedi docstring del costruttore
+                    # (use_pressure_reward_term).
+                    outgoing = self._get_outgoing_vehicles_count(iid)
+                    first_term = float(outgoing) - float(len(in_t1))
+                else:
+                    first_term = float(passed) - float(incoming)
+
+                raw_reward = first_term - (self.alpha * max_red_wait_time) - wasted_green_penalty
                 normalized_reward = raw_reward / 100.0
                 rewards[iid] = max(min(normalized_reward, 5.0), -20.0)
 
@@ -809,87 +928,310 @@ class CityFlowEnv:
 
     # ─── Meta-features (per SMK-Learner e TMK-Learner) ───────────────────────
 
+    def _count_incoming_lane(self, lane_id: str, lane_vehicles: dict, vehicle_distances: dict) -> int:
+        """Veicoli su una corsia in INGRESSO a un'intersezione. Con
+        self.use_vision_cutoff=True, conta solo i veicoli vicini alla FINE
+        della corsia (dist >= road_length - VISION_CUTOFF_M) -- vicini
+        all'intersezione che questa corsia sta per raggiungere, stessa
+        convenzione di n_vec in _get_observations(). Senza cutoff, l'intera
+        corsia. Helper condiviso da _compute_lane_pressure_vector e
+        _compute_phase_pressure_vector (13/9/2026, vedi descrizione_stato_meta_reward.md):
+        prima ciascuna delle due aveva una propria logica di cutoff
+        (una addirittura nessuna, vedi nota storica in
+        _compute_phase_pressure_vector) invece di applicare consistentemente
+        la stessa regola "pressione = vicino a QUESTA intersezione, sia in
+        ingresso che in uscita" ovunque nel file.
+        """
+        if lane_id.startswith("missing_"):
+            return 0
+        vehicles = lane_vehicles.get(lane_id, [])
+        if not self.use_vision_cutoff:
+            return len(vehicles)
+        road_id = "_".join(lane_id.split("_")[:-1])
+        cutoff = max(0.0, self.road_lengths.get(road_id, 340.0) - VISION_CUTOFF_M)
+        return sum(1 for veh in vehicles if vehicle_distances.get(veh, 0.0) >= cutoff)
+
+    def _count_outgoing_lane(self, lane_id: str, lane_vehicles: dict, vehicle_distances: dict) -> int:
+        """Veicoli su una corsia in USCITA da un'intersezione. Con
+        self.use_vision_cutoff=True, conta solo i veicoli vicini all'INIZIO
+        della corsia (dist <= VISION_CUTOFF_M) -- vicini all'intersezione da
+        cui questa corsia parte, stessa convenzione di
+        _get_outgoing_vehicles_count(). Senza cutoff, l'intera corsia. Vedi
+        _count_incoming_lane per il contesto della fattorizzazione."""
+        if lane_id.startswith("missing_"):
+            return 0
+        vehicles = lane_vehicles.get(lane_id, [])
+        if not self.use_vision_cutoff:
+            return len(vehicles)
+        return sum(1 for veh in vehicles if vehicle_distances.get(veh, 0.0) <= VISION_CUTOFF_M)
+
+    def _compute_lane_pressure_vector(self, inter_id: str,
+                                       lane_vehicles: Optional[dict] = None,
+                                       vehicle_distances: Optional[dict] = None) -> np.ndarray:
+        """Vettore di pressione per corsia (N_LANES dim) per un nodo:
+
+            lane_pressure[k] = (veicoli_in_corsia_k - media(veicoli su ogni
+                                corsia in uscita RAGGIUNGIBILE da k)) / 30
+
+        Corretto il 13/9/2026 (vedi descrizione_stato_meta_reward.md, su segnalazione): la
+        media in uscita era prima GLOBALE (tutti i veicoli in uscita
+        dall'incrocio / tutte le corsie in uscita dell'incrocio), la stessa
+        per ogni corsia in ingresso indipendentemente da quali uscite quella
+        corsia potesse davvero raggiungere. Ora è LOCALE: solo le corsie in
+        uscita che `self.lane_reachable_outgoing[k]` elenca per quella
+        specifica corsia in ingresso — più vicina alla nozione di pressione
+        per MOVIMENTO di MaxPressure (Varaiya 2013), che è definita per
+        coppia (corsia_in, corsia_out) specifica, non per un aggregato
+        indifferenziato sull'intero incrocio.
+
+        Fattorizzato da get_spatial_meta_features il 12/9/2026 perche' riusato
+        anche da _get_avg_pressure_all_nodes() per calcolare la pressione
+        media di TUTTI i nodi (serve a pressure_diff_neighbors). lane_vehicles/
+        vehicle_distances possono essere passati gia' calcolati per evitare
+        di richiamare l'engine una volta per nodo quando si itera su tutte
+        le intersezioni.
+        """
+        if lane_vehicles is None:
+            lane_vehicles = self.engine.get_lane_vehicles()
+        if vehicle_distances is None:
+            vehicle_distances = self.engine.get_vehicle_distance()
+
+        lanes = self.inter_lanes.get(inter_id, [])
+        lane_pressure = np.zeros(N_LANES, dtype=np.float32)
+
+        for k, lid in enumerate(lanes[:N_LANES]):
+            count = self._count_incoming_lane(lid, lane_vehicles, vehicle_distances)
+            reachable_out = self.lane_reachable_outgoing.get(lid, [])
+            if reachable_out:
+                avg_out = float(np.mean([
+                    self._count_outgoing_lane(o, lane_vehicles, vehicle_distances)
+                    for o in reachable_out
+                ]))
+            else:
+                avg_out = 0.0
+            lane_pressure[k] = (count - avg_out) / 30.0
+        return lane_pressure
+
+    def _get_avg_pressure_all_nodes(self) -> Dict[str, float]:
+        """Pressione media (media di _compute_lane_pressure_vector) per ogni
+        intersezione, ricalcolata una sola volta per step e cachata (vedi
+        self._node_pressure_cache in __init__/reset) -- usata da
+        pressure_diff_neighbors in get_spatial_meta_features per non
+        ricalcolare la pressione di ogni vicino ad ogni chiamata per-nodo."""
+        if self._node_pressure_cache_step == self.current_step and self._node_pressure_cache:
+            return self._node_pressure_cache
+        lane_vehicles = self.engine.get_lane_vehicles()
+        vehicle_distances = self.engine.get_vehicle_distance()
+        cache = {
+            iid: float(np.mean(self._compute_lane_pressure_vector(iid, lane_vehicles, vehicle_distances)))
+            for iid in self.inter_ids
+        }
+        self._node_pressure_cache = cache
+        self._node_pressure_cache_step = self.current_step
+        return cache
+
+    def _compute_phase_pressure_vector(self, inter_id: str,
+                                        lane_vehicles: Optional[dict] = None,
+                                        vehicle_distances: Optional[dict] = None) -> np.ndarray:
+        """Vettore di pressione PER FASE (N_PHASES dim) -- la stessa identica
+        quantita' che MaxPressureAgent.select_actions() usa per l'argmax
+        (vedi src/agents/maxpressure_agent.py e _build_phase_lanelinks()),
+        solo riscalata per una costante positiva (non altera l'ordine tra
+        fasi, l'unica informazione che l'argmax usa):
+
+            phase_pressure[k] = (Σ_{(in,out) ∈ movimenti(fase k)} count(in) - count(out)) / 30.0
+
+        Corretto il 13/9/2026 (vedi descrizione_stato_meta_reward.md, su segnalazione):
+        prima ignorava SEMPRE self.use_vision_cutoff (piena visibilita' anche
+        con use_vision_cutoff=True), per dare fedelmente al meta-learner il
+        "vero" valore usato da MaxPressure. Ora rispetta il cutoff come tutto
+        il resto del file, usando gli stessi helper di _compute_lane_pressure_vector
+        (_count_incoming_lane per le corsie di provenienza, _count_outgoing_lane
+        per quelle di destinazione — sono ai lati opposti dell'incrocio, quindi
+        "vicino a questo nodo" significa cose diverse in termini di distanza
+        dall'inizio del segmento per l'una e per l'altra). Con
+        use_vision_cutoff=False resta a piena visibilita' come prima
+        (nessun cambiamento per i preset "paper"/"environment").
+
+        Usata sia da get_spatial_meta_features (SMK, meta_v3) sia da
+        _get_observations (use_phase_pressure_state, esperimento sullo
+        stato) -- unica funzione, stessa formula, stesso rispetto del
+        cutoff in entrambi i punti di utilizzo.
+        """
+        if lane_vehicles is None:
+            lane_vehicles = self.engine.get_lane_vehicles()
+        if vehicle_distances is None:
+            vehicle_distances = self.engine.get_vehicle_distance()
+
+        phase_pairs = self.phase_lanelinks.get(inter_id, [])[:N_PHASES]
+        pressure = np.zeros(N_PHASES, dtype=np.float32)
+        for k, pairs in enumerate(phase_pairs):
+            pressure[k] = sum(
+                self._count_incoming_lane(s, lane_vehicles, vehicle_distances)
+                - self._count_outgoing_lane(e, lane_vehicles, vehicle_distances)
+                for s, e in pairs
+            ) / 30.0
+        return pressure
+
     def get_spatial_meta_features(self, inter_id: str) -> np.ndarray:
         """
-        Features spaziali per il SMK-Learner (Section 4.3.1, Fig. 5b):
-        - Pressione di ogni corsia in ingresso (normalizzata)
-        - Numero di veicoli per ogni corsia (normalizzato)
-        - Distanza dai vicini (normalizzata)
+        Features spaziali per il SMK-Learner (Section 4.3.1, Fig. 5b), riviste
+        il 12/9/2026 per rimuovere ridondanze con lo stato principale e una
+        feature degenere -- vedi descrizione_stato_meta_reward.md §2.2/§2.5 per la
+        motivazione completa di ciascuna:
+        - lane_pressure (N_LANES): pressione approssimata per corsia,
+          invariata rispetto a prima.
+        - real_degree (1): frazione di vicini reali su num_neighbors --
+          varia per ruolo topologico del nodo (angolo/bordo/interno).
+          Sostituisce "distanze dai vicini": su una griglia a lunghezza di
+          strada uniforme (tutte le nostre config lo sono) la distanza
+          euclidea normalizzata tra vicini reali è quasi sempre 1.0 per
+          costruzione, una feature di fatto costante — non informativa per
+          un meta-learner (vedi §2.1).
+        - pressure_diff_neighbors (num_neighbors): pressione media propria
+          meno quella di ciascun vicino reale (0 per gli slot di padding).
+        - traffic_asymmetry_ns_ew (1): pressione media sulle corsie N/S
+          (indici 0-5, ordine canonico di GREEN_LANES_PER_PHASE) meno quella
+          sulle corsie E/O (indici 6-11) dello stesso nodo.
+        - phase_pressure (N_PHASES): AGGIUNTA il 13/9/2026 per l'esperimento
+          meta_v3 (vedi descrizione_stato_meta_reward.md), SOLO nel SMK (non nel TMK, deciso
+          il 13/9/2026 -- e' un dato spaziale per fase, non una dinamica
+          temporale) -- la stessa formula di pressione per movimento usata
+          da MaxPressureAgent (vedi _compute_phase_pressure_vector),
+          rispettando use_vision_cutoff come tutto il resto del file.
+          Obiettivo dell'esperimento: verificare se dare al meta-learner il
+          segnale che MaxPressure usa per decidere (non solo una sua
+          approssimazione ricostruibile da lane_pressure) permette al
+          modello allenabile di avvicinarsi o superare il baseline.
 
         Returns:
-            array di dim = N_LANES * 2 + num_neighbors
+            array di dim = N_LANES + 1 + num_neighbors + 1 + N_PHASES
         """
         lane_vehicles = self.engine.get_lane_vehicles()
-        lanes = self.inter_lanes.get(inter_id, [])
-
-        # Lane pressure (veicoli per corsia, normalizzato)
-        lane_pressure = np.zeros(N_LANES, dtype=np.float32)
-        n_vehicles = np.zeros(N_LANES, dtype=np.float32)
-        out_count = self._get_outgoing_vehicles_count(inter_id)
-        avg_out = out_count / max(1.0, len(self._get_outgoing_lanes(inter_id)))
-
-        # Bug corretto il 13/9/2026: il cutoff di visibilita' era applicato
-        # incondizionatamente qui, ignorando self.use_vision_cutoff -- con
-        # use_vision_cutoff=False (preset "paper"/"environment") le feature
-        # spaziali del SMK-Learner restavano limitate a ~144m dal semaforo
-        # anche quando il resto dell'ambiente era in modalita' a visibilita'
-        # globale, rendendo quei due preset incompleti sul ramo meta-learning.
         vehicle_distances = self.engine.get_vehicle_distance()
-        for k, lid in enumerate(lanes[:N_LANES]):
-            count = 0
-            if not lid.startswith("missing_"):
-                if self.use_vision_cutoff:
-                    road_id = "_".join(lid.split("_")[:-1])
-                    cutoff = max(0.0, self.road_lengths.get(road_id, 340.0) - VISION_CUTOFF_M)
-                    for veh in lane_vehicles.get(lid, []):
-                        if vehicle_distances.get(veh, 0.0) >= cutoff:
-                            count += 1
-                else:
-                    count = len(lane_vehicles.get(lid, []))
-            lane_pressure[k] = (count - avg_out) / 30.0
-            n_vehicles[k] = count / 30.0
 
-        # Distanze dai vicini (ordinate)
+        lane_pressure = self._compute_lane_pressure_vector(inter_id, lane_vehicles, vehicle_distances)
+
         neighbors = self.adjacency.get(inter_id, [])
-        distances = np.zeros(self.num_neighbors, dtype=np.float32)
-        for k, nb in enumerate(neighbors[:self.num_neighbors]):
-            distances[k] = self.inter_distances.get((inter_id, nb), 1.0)
+        real_degree = np.array(
+            [len(neighbors) / max(1, self.num_neighbors)], dtype=np.float32
+        )
 
-        return np.concatenate([lane_pressure, n_vehicles, distances])
+        avg_pressure_all = self._get_avg_pressure_all_nodes()
+        own_avg_pressure = avg_pressure_all.get(inter_id, 0.0)
+        pressure_diff_neighbors = np.zeros(self.num_neighbors, dtype=np.float32)
+        for k, nb in enumerate(neighbors[:self.num_neighbors]):
+            pressure_diff_neighbors[k] = own_avg_pressure - avg_pressure_all.get(nb, own_avg_pressure)
+
+        # Corsie 0-5 = N/S, 6-11 = E/O (ordine canonico, vedi commento in
+        # reset() e GREEN_LANES_PER_PHASE in cima al file).
+        traffic_asymmetry_ns_ew = np.array(
+            [float(np.mean(lane_pressure[:6]) - np.mean(lane_pressure[6:]))],
+            dtype=np.float32
+        )
+
+        parts = [lane_pressure, real_degree, pressure_diff_neighbors, traffic_asymmetry_ns_ew]
+        if self.use_phase_pressure_meta:
+            parts.append(self._compute_phase_pressure_vector(inter_id, lane_vehicles, vehicle_distances))
+
+        return np.concatenate(parts)
+
+    # Quanti step indietro guardare per queue_trend in get_temporal_meta_features
+    # (vedi descrizione_stato_meta_reward.md §2.5).
+    _TREND_STEPS_BACK = 3
+    # Soglia di saturazione per phase_dwell_time, per normalizzare in [0,1].
+    # Corretta il 13/9/2026 (vedi descrizione_stato_meta_reward.md, su segnalazione): con
+    # use_action_mask=True, self.consecutive_phases non supera mai 2 (la
+    # maschera anti-starvation forza un cambio fase al 3o step consecutivo,
+    # vedi get_invalid_actions()) -- un CAP=10 (il valore precedente, mai
+    # derivato da questo vincolo) squiacciava il segnale in {0, 0.1, 0.2},
+    # sprecando il 90% del range [0,1]. Senza maschera invece non c'e' alcun
+    # vincolo strutturale sulla durata di una fase, quindi si mantiene un
+    # CAP arbitrario piu' permissivo.
+    _DWELL_TIME_CAP_MASKED = 2.0
+    _DWELL_TIME_CAP_UNMASKED = 10.0
 
     def get_temporal_meta_features(self, inter_id: str,
                                    history: Optional[List[np.ndarray]] = None,
-                                   history_len: int = 5) -> np.ndarray:
+                                   history_len: int = 5,
+                                   current_state: Optional[np.ndarray] = None) -> np.ndarray:
         """
-        Features temporali per il TMK-Learner (Section 4.3.1):
-        - Lunghezza queue per corsia (proxy: veicoli a bassa velocità)
-        - Storico degli stati (ultimi history_len timestep)
+        Features temporali per il TMK-Learner (Section 4.3.1), riviste il
+        12/9/2026 -- vedi descrizione_stato_meta_reward.md §2.3/§2.5 per la motivazione
+        completa di ciascuna:
+        - queue_trend (N_LANES): n_vec(ora) − n_vec(qualche step fa), per
+          corsia. Sostituisce queue_len (che ripeteva n_vec dello stato
+          principale, e per di più senza rispettare use_vision_cutoff).
+        - phase_dwell_time (1): da quanti step consecutivi la fase corrente
+          è attiva (self.consecutive_phases, già tracciato per la maschera
+          anti-starvation, mai esposto come feature finora), saturato e
+          normalizzato in [0,1] (CAP=2 con maschera attiva, vedi
+          _DWELL_TIME_CAP_MASKED). Rivista il 13/9/2026: NON è più "quanto
+          e' rimasto aperto il verde" in senso di smaltimento coda (con la
+          maschera anti-starvation il range reale è {0,1,2}, troppo corto
+          per rappresentare uno smaltimento) — è invece un segnale su
+          QUANTO E' VINCOLATA la prossima decisione: a 1 (fase appena
+          scelta) la prossima scelta è libera su tutte le 8 fasi; a 2 la
+          maschera eliminerà la fase corrente dalle opzioni valide al passo
+          successivo — un vincolo strutturale imminente che la LSTM può
+          imparare ad anticipare (es. "tra un istante dovrò comunque
+          cambiare fase, non ha senso costruire memoria sull'assunto che
+          questa prosegua"). Il valore 0 compare solo al primissimo step di
+          un episodio, prima di qualunque azione.
+        - queue_volatility (N_LANES): deviazione standard di n_vec per
+          corsia sulla finestra recente disponibile. Sostituisce lo storico
+          grezzo (ridondante con la memoria che la LSTM mantiene già da
+          sola in (h,c) — vedi §2.1/§2.3).
+
+        Nota 13/9/2026: `phase_pressure` (l'estensione di meta_v3) NON è più
+        qui — solo nel SMK (get_spatial_meta_features). E' un dato spaziale
+        per fase, non una dinamica temporale, e ripeterlo identico nel TMK
+        non aggiungeva alcuna informazione che il TMK potesse usare in modo
+        diverso dal SMK.
+
+        Args:
+            history: osservazioni PASSATE (non include lo stato corrente:
+                     nei chiamanti, viene aggiornato con obs solo DOPO
+                     questa chiamata — vedi train.py/test.py).
+            current_state: stato corrente del nodo (obs[inter_id]), se
+                     disponibile — usato come estremo "adesso" per
+                     queue_trend/queue_volatility. Se assente (retrocompatibilità),
+                     si usa l'ultimo elemento di history come proxy di "adesso".
 
         Returns:
-            array di dim = N_LANES + N_LANES * history_len
+            array di dim = 2 * N_LANES + 1
         """
-        lane_vehicles = self.engine.get_lane_vehicles()
-        lanes = self.inter_lanes.get(inter_id, [])
+        # Finestra di n_vec grezzi, dal più vecchio al più recente, includendo
+        # lo stato corrente in coda se fornito -- unica fonte per trend e
+        # volatilità, cosi' le due feature sono coerenti tra loro.
+        window = [np.asarray(h[:N_LANES], dtype=np.float32) for h in (history or [])[-history_len:]]
+        if current_state is not None:
+            window.append(np.asarray(current_state[:N_LANES], dtype=np.float32))
 
-        # Queue length (approssimazione: veicoli in coda ≈ veicoli fermi)
-        # In CityFlow non abbiamo accesso diretto alle velocità per corsia,
-        # usiamo il numero di veicoli come proxy
-        queue_len = np.zeros(N_LANES, dtype=np.float32)
-        for k, lid in enumerate(lanes[:N_LANES]):
-            queue_len[k] = len(lane_vehicles.get(lid, [])) / 30.0
-
-        # Storico stati (padding con zeri se non disponibile)
-        if history and len(history) > 0:
-            hist_array = np.array(history[-history_len:])  # (T, STATE_DIM)
-            # Padding se meno di history_len steps disponibili
-            pad = history_len - len(hist_array)
-            if pad > 0:
-                hist_array = np.vstack([np.zeros((pad, self.observation_dim)), hist_array])
-            hist_flat = hist_array[:, :N_LANES].flatten()  # solo n_vec
+        if window:
+            current_n_vec = window[-1]
+            if len(window) > self._TREND_STEPS_BACK:
+                past_n_vec = window[-1 - self._TREND_STEPS_BACK]
+            else:
+                # Storico troppo corto per guardare _TREND_STEPS_BACK indietro:
+                # usa il punto più vecchio disponibile invece di azzerare il trend.
+                past_n_vec = window[0]
+            queue_trend = current_n_vec - past_n_vec
         else:
-            hist_flat = np.zeros(N_LANES * history_len, dtype=np.float32)
+            queue_trend = np.zeros(N_LANES, dtype=np.float32)
 
-        return np.concatenate([queue_len, hist_flat])
+        if len(window) > 1:
+            queue_volatility = np.std(np.stack(window), axis=0).astype(np.float32)
+        else:
+            queue_volatility = np.zeros(N_LANES, dtype=np.float32)
+
+        dwell_cap = self._DWELL_TIME_CAP_MASKED if self.use_action_mask else self._DWELL_TIME_CAP_UNMASKED
+        phase_dwell_time = np.array(
+            [min(self.consecutive_phases.get(inter_id, 0), dwell_cap) / dwell_cap],
+            dtype=np.float32
+        )
+
+        return np.concatenate([queue_trend, phase_dwell_time, queue_volatility])
 
     # ─── Utilità ──────────────────────────────────────────────────────────────
 
@@ -1146,15 +1488,29 @@ class CityFlowEnv:
 
     @property
     def observation_dim(self) -> int:
-        """Dimensione del vettore di osservazione per agente (dipende da use_wait_vec)."""
-        return STATE_DIM_FULL if self.use_wait_vec else STATE_DIM_PAPER
+        """Dimensione del vettore di osservazione per agente (dipende da
+        use_wait_vec e, se attivo, da use_phase_pressure_state: +N_PHASES,
+        esperimento 13/9/2026, vedi descrizione_stato_meta_reward.md §1)."""
+        base = STATE_DIM_FULL if self.use_wait_vec else STATE_DIM_PAPER
+        return base + (N_PHASES if self.use_phase_pressure_state else 0)
 
     @property
     def spatial_meta_dim(self) -> int:
-        """Dimensione delle feature spaziali per SMK-Learner."""
-        return N_LANES * 2 + self.num_neighbors
+        """Dimensione delle feature spaziali per SMK-Learner (rivista il
+        12/9/2026, vedi descrizione_stato_meta_reward.md §2.5, ed estesa il 13/9/2026 per
+        meta_v3): lane_pressure (N_LANES) + real_degree (1) +
+        pressure_diff_neighbors (num_neighbors) + traffic_asymmetry_ns_ew (1)
+        + phase_pressure (N_PHASES) se use_phase_pressure_meta=True (default),
+        altrimenti dim meta_v2 (senza phase_pressure). Deciso il 13/9/2026:
+        phase_pressure va SOLO qui, non nel TMK (vedi temporal_meta_dim)."""
+        return N_LANES + 1 + self.num_neighbors + 1 + (N_PHASES if self.use_phase_pressure_meta else 0)
 
     @property
     def temporal_meta_dim(self) -> int:
-        """Dimensione delle feature temporali per TMK-Learner."""
-        return N_LANES + N_LANES * 5  # queue + 5 step history
+        """Dimensione delle feature temporali per TMK-Learner (rivista il
+        12/9/2026, vedi descrizione_stato_meta_reward.md §2.5): queue_trend (N_LANES) +
+        phase_dwell_time (1) + queue_volatility (N_LANES). Fissa a 25 --
+        non dipende da use_phase_pressure_meta: dal 13/9/2026 la feature
+        phase_pressure di meta_v3 va solo nel SMK (vedi spatial_meta_dim),
+        mai qui."""
+        return N_LANES + 1 + N_LANES

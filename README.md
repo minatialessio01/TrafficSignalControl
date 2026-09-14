@@ -16,16 +16,17 @@ Questo repository usa un file Markdown per argomento, pensato per essere letto (
 |---|---|
 | [descrizione_src.md](descrizione_src.md) | Codice sorgente (`src/`): ambiente MDP, architettura MetaSTGAT/STGAT e sotto-moduli, agenti (DQN/MaxPressure/FixedTime), replay buffer, logger |
 | [descrizione_environment.md](descrizione_environment.md) | L'ambiente di simulazione in dettaglio: CityFlow, gestione verde/giallo/rosso, formulazione MDP, ablation lato ambiente, replay/visualizzazione |
+| [descrizione_stato_meta_reward.md](descrizione_stato_meta_reward.md) | Stato, meta-learner (SMK/TMK) e reward del modello Pro: cosa si usa, come si calcola, perché — formula/significato/motivazione per ogni feature |
 | [descrizione_metriche.md](descrizione_metriche.md) | Ogni metrica di valutazione prodotta dal codice: travel time (3 varianti), throughput, percentuali di fase, coda del travel time, equità direzionale N/S vs W/E |
 | [descrizione_scripts.md](descrizione_scripts.md) | Script eseguibili (`scripts/`): training, test, orchestrazione della pipeline, generazione dati, grafici |
 | [descrizione_configurazioni.md](descrizione_configurazioni.md) | Dataset e config CityFlow: roadnet, flussi di traffico, nomenclatura, densità calibrate, arteria e varianti multi-seed per la generalizzazione |
-| [descrizione_modelli.md](descrizione_modelli.md) | **Il catalogo dei modelli**: quali sono stati testati e in cosa differiscono, lungo i 3 assi paper/alpha/ablation — punto di partenza, fonde `metastgat_diff_analysis.md` e `proposte_ablation.md` |
+| [descrizione_modelli.md](descrizione_modelli.md) | **Il catalogo dei modelli**: quali sono stati testati e in cosa differiscono, lungo i 3 assi paper/alpha/ablation — punto di partenza, fonde `metastgat_diff_analysis.md` e il razionale di raggruppamento dell'ablation study |
 | [metastgat_diff_analysis.md](metastgat_diff_analysis.md) | Confronto sistematico codice vs paper originale, differenza per differenza, con estratti di codice (dettaglio dietro `descrizione_modelli.md` §1) |
-| [proposte_ablation.md](proposte_ablation.md) | Le 4 proposte alternative di raggruppamento per l'ablation study, con vantaggi/svantaggi di ciascuna (dettaglio dietro `descrizione_modelli.md` §3, solo la Proposta 1 è implementata) |
+| [descrizione_letteratura_correlata.md](descrizione_letteratura_correlata.md) | Come PressLight/MPLight/CoLight/AttendLight/MaCAR battono MaxPressure, e cosa dicono sull'opportunità di un meta-learner in questo progetto |
 | [piano_tesi.md](piano_tesi.md) | Piano di stesura della tesi vera e propria: struttura dei capitoli, stato di ciascuna sezione (pronta/da completare), notazione matematica unificata, bibliografia nota, convenzioni LaTeX |
 | [descrizione_gcn_sonar.md](descrizione_gcn_sonar.md) | Seconda parte del progetto: MetaSTGNN (GAT→GCN) e MetaSTSONAR (GAT→SONAR) — design, decisioni D1-D6, verifica pre-training, come riprodurre |
 
-`implementation_plan.md` e `task.md` (spec/pianificazione iniziale della tesi) sono stati rimossi il 12/9/2026: riferivano script (`run_experiment.py`) e config (`config_4x4_200m_2k_flat`, ecc.) mai più esistiti nell'albero attuale, completamente superati dalla pipeline reale (`main.py`/`train.py`/`test.py`) e dalle config effettivamente in uso — nessuna informazione persa, recuperabili dalla cronologia git se mai servisse. [istruzioni seconda parte.md](istruzioni%20seconda%20parte.md) resta invece il piano di riferimento per `descrizione_gcn_sonar.md` (implementato il 13/9/2026), non uno storico.
+`implementation_plan.md` e `task.md` (spec/pianificazione iniziale della tesi) sono stati rimossi il 12/9/2026: riferivano script (`run_experiment.py`) e config (`config_4x4_200m_2k_flat`, ecc.) mai più esistiti nell'albero attuale, completamente superati dalla pipeline reale (`main.py`/`train.py`/`test.py`) e dalle config effettivamente in uso — nessuna informazione persa, recuperabili dalla cronologia git se mai servisse. `proposte_cambi.md`, `proposte_articoli.md` e `proposte_ablation.md` (documenti di brainstorm/proposta) sono stati rimossi il 13/9/2026 una volta decise le scelte che discutevano: il loro contenuto utile vive ora in `descrizione_stato_meta_reward.md`, `descrizione_letteratura_correlata.md` e `descrizione_modelli.md` §3. `Walkthrough_iniziale` (spiegazione introduttiva del codice, senza estensione) è stato rimosso lo stesso giorno: descriveva script (`ablation.py`, `download_real_data.py`) mai più esistiti nell'albero attuale, completamente superato da `descrizione_src.md`/`descrizione_scripts.md`. [istruzioni seconda parte.md](istruzioni%20seconda%20parte.md) resta invece il piano di riferimento per `descrizione_gcn_sonar.md` (implementato il 13/9/2026), non uno storico.
 
 ---
 
@@ -106,7 +107,7 @@ Per training/test più mirati (una config sola, preset di ablation specifico, re
 | `fixedtime` | Fasi cicliche a tempo fisso | — | no (solo baseline) |
 | `maxpressure` | MaxPressure (Varaiya 2013) | — | no (solo baseline) |
 
-Dettaglio di ogni meccanismo di ablation (M1-M10) e della loro mappatura sui preset in [metastgat_diff_analysis.md](metastgat_diff_analysis.md) e [proposte_ablation.md](proposte_ablation.md).
+Dettaglio di ogni meccanismo di ablation (M1-M10) e della loro mappatura sui preset in [metastgat_diff_analysis.md](metastgat_diff_analysis.md) e [descrizione_modelli.md](descrizione_modelli.md) §3.
 
 ---
 

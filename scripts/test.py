@@ -126,6 +126,20 @@ def parse_args():
     parser.add_argument("--no-tanh-meta",     action="store_true",
                         help="Costruisce il modello senza la Tanh finale nei meta-learner "
                              "(deve corrispondere a come e' stato allenato il checkpoint)")
+    parser.add_argument("--no-phase-pressure-meta", action="store_true",
+                        help="SMK senza la feature phase_pressure (dim meta_v2: SMK 18, "
+                             "TMK 25) invece della revisione meta_v3 (SMK 26, TMK invariato "
+                             "a 25) -- deve corrispondere a come e' stato allenato il "
+                             "checkpoint (vedi train.py).")
+    parser.add_argument("--pressure-reward-term", action="store_true",
+                        help="Il reward_mode=custom usa la pressione (outgoing - incoming, "
+                             "stile paper) come primo termine invece del throughput -- deve "
+                             "corrispondere a come e' stato allenato il checkpoint. Non "
+                             "influenza le metriche di valutazione (solo tracciabilita').")
+    parser.add_argument("--phase-pressure-state", action="store_true",
+                        help="Stato principale con phase_pressure aggiunta (8 dim) -- deve "
+                             "corrispondere a come e' stato allenato il checkpoint (vedi "
+                             "train.py).")
 
     # ── Valutazione ─────────────────────────────────────────────────────────
     parser.add_argument("--n-eval", type=int, default=1,
@@ -177,6 +191,12 @@ def _resolve_env_flags(args):
             args.no_tanh_meta = True
     if not hasattr(args, "no_tanh_meta"):
         args.no_tanh_meta = False
+    if not hasattr(args, "no_phase_pressure_meta"):
+        args.no_phase_pressure_meta = False
+    if not hasattr(args, "pressure_reward_term"):
+        args.pressure_reward_term = False
+    if not hasattr(args, "phase_pressure_state"):
+        args.phase_pressure_state = False
 
 
 def _find_checkpoint(output_dir):
@@ -272,6 +292,9 @@ def evaluate(args):
         use_vision_cutoff=not args.no_vision_cutoff,
         use_wait_vec=not args.no_wait_vec,
         use_action_mask=not args.no_action_mask,
+        use_phase_pressure_meta=not args.no_phase_pressure_meta,
+        use_pressure_reward_term=args.pressure_reward_term,
+        use_phase_pressure_state=args.phase_pressure_state,
     )
     edge_index = env.get_edge_index().to(device)
 
@@ -372,7 +395,8 @@ def evaluate(args):
                     temporal_meta = {
                         iid: env.get_temporal_meta_features(
                             iid, history=state_history[iid],
-                            history_len=DEFAULTS["history_len"]
+                            history_len=DEFAULTS["history_len"],
+                            current_state=obs[iid]
                         )
                         for iid in env.inter_ids
                     }

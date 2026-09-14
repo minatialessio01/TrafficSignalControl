@@ -1,8 +1,8 @@
 # Analisi delle Differenze: Codice vs Paper MetaSTGAT
 
 > 📖 **Per capire quali modelli sono stati testati e in cosa differiscono, parti da
-> [`descrizione_modelli.md`](descrizione_modelli.md)** (12/9/2026): quel documento fonde questo
-> file con `proposte_ablation.md` in un unico catalogo. Questo file resta il riferimento di
+> [`descrizione_modelli.md`](descrizione_modelli.md)** (12/9/2026): quel documento riassume questo
+> file in un unico catalogo. Questo file resta il riferimento di
 > dettaglio riga-per-riga con gli estratti di codice, che `descrizione_modelli.md` §1 riassume
 > in una singola tabella (M1-M10).
 >
@@ -17,7 +17,7 @@
 > `temporal`/`rl_core`/`replay_stability`). Il preset `paper` disattiva **tutte** le differenze
 > elencate qui, riproducendo la procedura originale con lo stesso codice usato per il modello
 > avanzato — vedi [descrizione_scripts.md](descrizione_scripts.md) per la mappa preset→flag e
-> [proposte_ablation.md](proposte_ablation.md) per la razionale scientifica del raggruppamento
+> [descrizione_modelli.md](descrizione_modelli.md) §3 per la razionale scientifica del raggruppamento
 > (che è, letteralmente, i 10 "M1..M10" di questo documento riorganizzati in sottosistemi).
 > Alcuni valori numerici citati sotto (buffer size, episodi di default) sono stati rivisti dopo
 > la stesura originale di questo documento — vedi le note puntuali dove rilevante.
@@ -308,7 +308,7 @@ for t in range(L):
     else:
         ...  # BPTT attivo
 ```
-Nota (13/9/2026): questo documento riportava ancora `L=8`/`burn_in=4`, i valori di una versione precedente del codice — il default attuale, verificato direttamente nel costruttore di `DQNAgent` e mai sovrascritto da `train.py`/`test.py`, è `seq_len=4`/`burn_in=2`. Corretto qui; vedi anche `proposte_ablation.md` (stessa correzione).
+Nota (13/9/2026): questo documento riportava ancora `L=8`/`burn_in=4`, i valori di una versione precedente del codice — il default attuale, verificato direttamente nel costruttore di `DQNAgent` e mai sovrascritto da `train.py`/`test.py`, è `seq_len=4`/`burn_in=2`. Corretto qui.
 
 **Differenza**: Il codice implementa **R2D2-style training** (Kapturowski et al., ICLR 2019):
 BPTT su sequenze di L=4 step + burn-in di 2 step. Non presente nel paper.

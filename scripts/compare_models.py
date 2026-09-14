@@ -75,6 +75,27 @@ MODEL_COLORS = {
     "maxpressure":                  "#b23a56",  # cremisi -- ritinta dal rosso originale (troppo vicino ad arancio/rosa)
     "metastgat_pro_0.2_self_loop":  "#1f6b40",  # verde foresta -- esperimenti self-loop su Meta-GAT (non applicati in via definitiva)
     "metastgat_pro_0.0_self_loop":  "#1f6b40",  # stessa tinta: "esperimento self-loop", a prescindere dall'alpha di base
+    "metastgat_pro_0.2_meta_v2":    "#b8860b",  # senape -- meta-learner rivisto (SMK/TMK, 12/9/2026), validata con --pairs all contro pro_0.2/self_loop/maxpressure
+    "metastgat_pro_0.2_meta_v3":    "#2a78d6",  # blu -- meta-learner con phase_pressure (13/9/2026). Riusa la tinta di
+                                                 # metastgat_pro_0.5 (non compaiono mai insieme in questi confronti "0.2"),
+                                                 # validata con --pairs all contro l'intero gruppo 0.2 (WARN nella fascia
+                                                 # 6-8 su blu/viola sotto deutan, legale qui: il grafico ha gia' etichette
+                                                 # numeriche dirette su ogni barra + legenda testuale, la "relief rule").
+    "metastgat_pro_0.2_meta_v3_ep100_150": "#1b9e77",  # verde acqua -- stesso modello, +50 episodi (13/9/2026)
+    # Coda "official" (13-14/9/2026): ri-addestramento con formule meta corrette
+    # (lane_pressure a media locale, phase_pressure solo SMK e cutoff-aware,
+    # dwell cap ricalibrato -- vedi descrizione_stato_meta_reward.md §7). Stessa
+    # tinta del modello concettualmente corrispondente (stesso alpha/ablation):
+    # nessuna nuova validazione CVD necessaria, sono gli stessi valori esadecimali
+    # gia' verificati per i gruppi "main" e "ablation study" sopra.
+    "metastgat_pro_0.2_official":            "#8e44ad",  # purple
+    "metastgat_pro_0.1_official":            "#c2185b",  # rose
+    "metastgat_pro_0.0_official":            "#1b9e77",  # teal
+    "metastgat_paper_official":              "#eb6834",  # orange
+    "ablation_environment_official":         "#1baf7a",  # aqua
+    "ablation_temporal_official":            "#c7ad1a",  # senape
+    "ablation_rl_core_official":             "#b8508f",  # magenta-viola
+    "ablation_replay_stability_official":    "#0f7a5c",  # verde petrolio
 }
 _FALLBACK_COLORS = ["#1b9e77", "#d95f02", "#7570b3", "#e7298a", "#66a61e"]
 
@@ -122,6 +143,12 @@ def parse_args():
     parser.add_argument("--output-dir", default=None,
                         help="Cartella per i PNG, uno per config "
                              "(default: <results-dir>/plots/compare_per_config)")
+    parser.add_argument("--fixed-order", action="store_true",
+                        help="Disegna le barre nell'ordine esatto di --model-ids, identico in "
+                             "ogni config, invece di riordinarle per TT medio config per config "
+                             "(default). Utile per un ordine semantico deciso a monte (es. sweep "
+                             "su alpha in ordine decrescente, o modelli di ablation ordinati per "
+                             "TT medio AGGREGATO su tutte le config invece che per config singola).")
     return parser.parse_args()
 
 
@@ -219,20 +246,23 @@ def _row_major_legend_order(handles, labels, ncol):
     return new_h, new_l
 
 
-def make_config_plot(cfg, label, role, data, model_ids, output_dir):
+def make_config_plot(cfg, label, role, data, model_ids, output_dir, fixed_order=False):
     present_models = [m for m in model_ids if cfg in data.get(m, {})]
     if not present_models:
         return False
 
-    # Ordine dei modelli nel grafico: dal peggiore al migliore per TT medio
-    # su QUESTA config (non un ordine fisso globale — il ranking puo' cambiare
-    # da una config all'altra). "Peggiore" = TT medio piu' alto. Solo per i
-    # grafici: print_table() mantiene l'ordine di --model-ids cosi' come dato.
-    present_models = sorted(
-        present_models,
-        key=lambda m: data[m][cfg].get("avg_travel_time", float("inf")),
-        reverse=True,
-    )
+    if not fixed_order:
+        # Ordine dei modelli nel grafico: dal peggiore al migliore per TT medio
+        # su QUESTA config (non un ordine fisso globale — il ranking puo' cambiare
+        # da una config all'altra). "Peggiore" = TT medio piu' alto. Solo per i
+        # grafici: print_table() mantiene l'ordine di --model-ids cosi' come dato.
+        present_models = sorted(
+            present_models,
+            key=lambda m: data[m][cfg].get("avg_travel_time", float("inf")),
+            reverse=True,
+        )
+    # else: mantiene l'ordine di --model-ids cosi' come dato (--fixed-order),
+    # identico in ogni config -- vedi help del flag per il caso d'uso.
 
     # Scelta deliberata (13/9/2026): sia tt_max che wait_max_ns/ew includono SEMPRE
     # i veicoli che non sono ancora arrivati/non si sono ancora rimossi dallo stallo
@@ -327,7 +357,8 @@ def main():
     print(f"\n[INFO] Generazione grafici in: {output_dir}")
     n_saved = 0
     for cfg, label, role in ALL_CONFIGS:
-        out = make_config_plot(cfg, label, role, data, args.model_ids, output_dir)
+        out = make_config_plot(cfg, label, role, data, args.model_ids, output_dir,
+                                fixed_order=args.fixed_order)
         if out:
             print(f"  [OK] {cfg} -> {out}")
             n_saved += 1
