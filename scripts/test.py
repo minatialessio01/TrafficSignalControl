@@ -140,6 +140,10 @@ def parse_args():
                         help="Stato principale con phase_pressure aggiunta (8 dim) -- deve "
                              "corrispondere a come e' stato allenato il checkpoint (vedi "
                              "train.py).")
+    parser.add_argument("--soft-wait-scale", action="store_true",
+                        help="wait_vec = tanh(wait/300) invece del clip duro -- deve "
+                             "corrispondere a come e' stato allenato il checkpoint (vedi "
+                             "train.py). Non cambia la dimensione dello stato.")
 
     # ── Valutazione ─────────────────────────────────────────────────────────
     parser.add_argument("--n-eval", type=int, default=1,
@@ -197,6 +201,8 @@ def _resolve_env_flags(args):
         args.pressure_reward_term = False
     if not hasattr(args, "phase_pressure_state"):
         args.phase_pressure_state = False
+    if not hasattr(args, "soft_wait_scale"):
+        args.soft_wait_scale = False
 
 
 def _find_checkpoint(output_dir):
@@ -295,6 +301,7 @@ def evaluate(args):
         use_phase_pressure_meta=not args.no_phase_pressure_meta,
         use_pressure_reward_term=args.pressure_reward_term,
         use_phase_pressure_state=args.phase_pressure_state,
+        use_soft_wait_scale=args.soft_wait_scale,
     )
     edge_index = env.get_edge_index().to(device)
 

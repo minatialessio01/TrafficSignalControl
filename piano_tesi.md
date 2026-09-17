@@ -428,10 +428,25 @@ diventerebbe un errore di tesi.
 `descrizione_environment.md` §6 — già verificate contro il codice)
 
 - **Modalità `custom`** (default, usata dal modello Pro):
-  $$r_i = \operatorname{clip}\!\left(\frac{\text{Passed}_i - \text{Incoming}_i - \alpha \cdot \text{MaxRedWait}_i - \text{Penalty}_i}{100},\ -20,\ 5\right)$$
+  $$r_i = \operatorname{clip}\!\left(\frac{\text{Passed}_i - \text{Incoming}_i - \alpha \cdot \text{MaxRedWait}_i - \text{Penalty}_i}{100},\ -3,\ 0\right)$$
   dove $\text{Penalty}_i = 50$ se $\text{Passed}_i = 0 \land \text{Incoming}_i > 0$
-  (verde sprecato), altrimenti $0$; $\alpha$ è l'iperparametro anti-starvation
-  (sweep condotto su $\alpha \in \{0.2, 0.5\}$ in questo progetto).
+  (verde sprecato), altrimenti $0$; $\alpha$ è l'iperparametro anti-starvation.
+  Sweep storico $\alpha \in \{0.5, 0.2, 0.1, 0.0\}$; dal 15/9/2026, dopo la
+  correzione del tempo di attesa (vedi sotto), lo sweep ufficiale è
+  $\alpha \in \{0.08, 0.04, 0.00\}$ — vedi `descrizione_modelli.md` §2 per la
+  motivazione della ricalibrazione. Clip corretto tre volte: 14/9/2026
+  $[-20,5] \to [-10,0]$ ($\text{Passed}_i \le \text{Incoming}_i$ sempre per
+  costruzione, il lato $+5$ non era mai raggiungibile); 15/9/2026
+  $[-10,0] \to [-4,0]$, dopo che la correzione del tempo di attesa
+  (`vehicle_wait_times` si azzerava per errore anche senza che il veicolo
+  avesse attraversato l'incrocio — vedi `descrizione_stato_meta_reward.md`
+  §10) ha reso $\text{MaxRedWait}_i$ tipicamente 2-3x più grande, da cui il
+  ricalcolo di $\alpha$; stesso giorno $[-4,0] \to [-3,0]$ una volta fissato
+  lo sweep a valori tondi ($\{0.08,0.04,0.00\}$): il nuovo caso peggiore
+  fisico ($-3.50$ con $\alpha=0.08$) supera leggermente $-3$, quindi il clip
+  interviene anche nel limite assoluto invece di restare puramente teorico
+  — vedi `cityflow_env.py`, docstring di `_compute_rewards`, per il calcolo
+  completo.
 - **Modalità `paper`** (Wang et al., 2022, riproduzione fedele):
   $$r_i = -\frac{P_i}{100}, \qquad P_i = \text{Incoming}_i - \text{Outgoing}_i$$
 
@@ -553,12 +568,131 @@ o anti-starvation.
   scritto, nessun training effettuato.
 - **Cap. 4.3/4.5**: risultati completi di tutti i preset di ablation (solo
   `pro` e `temporal` avviati al momento della stesura di questo piano;
-  mancano `environment`, `rl_core`, `replay_stability`).
+  mancano `environment`, `rl_core`, `replay_stability`) **e dello sweep su
+  alpha, ancora in corso di ricalibrazione al 14/9/2026** (vedi nota sotto):
+  non riscrivere Cap. 4.3/4.4 finché i nuovi valori non sono definitivi.
 - **Cap. 4.4**: verificare se l'esperimento di generalizzazione (arteria +
   multi-seed) è già stato eseguito per MetaSTGAT Pro con lo stesso dettaglio
   con cui è stato fatto per MaxPressure/FixedTime, o va completato.
+- **`\graphicspath` in `tesi/main.tex`** punta a
+  `results/plots/compare_per_config/`, una cartella che non esiste più
+  (sostituita dalle cartelle specifiche `compare_alpha_official/`,
+  `compare_ablation_official/`, ecc. generate nel corso del lavoro):
+  compilazione di Cap. 4 attualmente fallisce su
+  `compare_config_4x4_100m_train1.png` non trovato. Non ancora corretto
+  perché la cartella "giusta" da referenziare dipende da quali risultati
+  finali Cap. 4 finirà per riportare (vedi punto sopra) — aggiornare
+  `\graphicspath` e le didascalie delle figure quando si riscrive Cap. 4.3.
 
 Tutto il resto (Cap. 1, Cap. 2, Cap. 3.1-3.5, Cap. 4.1-4.2) ha già il
 materiale necessario nei documenti `descrizione_*.md` e
 `metastgat_diff_analysis.md`, e nei risultati in `results/`: può essere
 scritto in LaTeX ora, capitolo per capitolo, seguendo questo piano.
+
+---
+
+## 8. Aggiornamento del 14/9/2026: correzioni a Cap. 3, Cap. 1-2 confermati pronti
+
+Verificati Cap. 1 e Cap. 2 riga per riga contro le novità di questa sessione
+(fix del tempo di attesa, ricalibrazione di alpha/clip, self-loop
+permanente, feature SMK/TMK riviste, esperimenti di reward scartati): nessun
+aggiornamento necessario, sono capitoli di background/motivazione che non
+citano numeri o formule specifiche di questo progetto soggetti a modifica
+(l'unico uso di "alpha" in Cap. 2 è quello di PER e dell'attenzione GAT, non
+l'iperparametro anti-starvation). **Cap. 1 e Cap. 2 restano pronti così come
+erano** (bozza del 13/9/2026).
+
+Cap. 3 conteneva invece tre errori fattuali, corretti oggi:
+
+- **Formula della reward custom** (§3.1, Equazione reward-custom): clip
+  aggiornato da `[-20,5]` (superato due volte da allora) a `[-3,0]`, con
+  spiegazione di perché il lato superiore non è mai raggiungibile per
+  costruzione e perché il lato inferiore è stato ricalibrato (bug del tempo
+  di attesa, vedi `descrizione_stato_meta_reward.md` §10). Rimosso lo sweep
+  di alpha hardcoded (`{0.0,0.2,0.5}`, oltretutto già incompleto): il valore
+  esatto dello sweep è ora demandato al Cap. 4, che lo riporterà quando sarà
+  definitivo (vedi §7 sopra) invece di doverlo aggiornare due volte in due
+  capitoli diversi.
+- **Dimensioni di SMK/TMK** (§3.4, sottosezione "Meta-knowledge learner"):
+  la bozza del 13/9 descriveva ancora la versione delle feature precedente
+  alla revisione del 12/9/2026 (SMK 28 = pressione+veicoli+distanza,
+  TMK 72 = coda+storico grezzo). Riscritta con le feature attuali: SMK 26
+  (lane\_pressure, real\_degree, pressure\_diff\_neighbors,
+  traffic\_asymmetry\_ns\_ew, phase\_pressure), TMK 25 (queue\_trend,
+  phase\_dwell\_time, queue\_volatility) — fonte
+  `descrizione_stato_meta_reward.md` §3/§4, verificato anche direttamente
+  contro `cityflow_env.py` (`spatial_meta_dim`/`temporal_meta_dim`).
+- **Self-loop nel Meta-GAT, del tutto assente**: aggiunto un paragrafo nella
+  sottosezione "Grafo" (§3.1) che descrive l'aggiunta permanente dei
+  self-loop, la motivazione (un nodo deve poter pesare anche il proprio
+  stato, non solo quello dei vicini) e il risultato empirico dell'A/B test
+  che ha portato a renderla permanente (-9.5\% TT medio a $\alpha=0.2$,
+  -18.4\% a $\alpha=0.0$, guadagno proporzionalmente identico tra
+  training e generalizzazione) — fonte `descrizione_modelli.md` §4.
+
+**Non toccato deliberatamente**: i risultati numerici di Cap. 4 (tabelle
+4.3/4.4, ancora sullo sweep $\alpha\in\{0.5,0.2,0.0\}$ pre-self-loop e
+pre-fix del tempo di attesa) restano quelli della bozza del 13/9/2026,
+esplicitamente segnalati in quella sede come preliminari. Riscriverli ora
+significherebbe rifarlo una terza volta: lo sweep ufficiale è in corso di
+ricalibrazione (tentativi $\alpha=0.08$ non ancora fatto, $\alpha=0.04$
+scartato perché di fatto equivalente al vecchio $\alpha=0.2$,
+$\alpha=0.02$ in training al momento di questa nota) e non ha ancora un
+valore finale. Aggiornare Cap. 4.3/4.4 solo quando la coda `_official`
+sarà completa con i valori di alpha definitivi.
+
+## 9. Aggiornamento del 14/9/2026 (2): arricchimento bibliografico da 8 nuovi articoli
+
+L'utente ha aggiunto 12 nuovi PDF in `Materiale per la scrittura della
+tesi/` (elencati in dettaglio nel `README.txt` di quella cartella). Di
+questi, 8 sono stati letti (abstract + introduzione, via `pdftotext`),
+verificati e citati nel testo per rendere più completa e meglio ancorata
+alla letteratura la descrizione del task (TSC) e delle tipologie di
+soluzione proposte:
+
+- **Cap. 2, sez. "Graph Neural Network"**: nuovo paragrafo "Reti
+  spatio-temporali su grafo" che introduce il termine consolidato
+  *spatiotemporal graph neural network* (STGNN, \citet{cini2025graphdl})
+  prima di descrivere i pesi generati da meta-learning, così MetaSTGAT è
+  esplicitamente inquadrato come istanza di una famiglia nota invece che
+  come architettura sui generis.
+- **Cap. 2, sez. "Traffic Signal Control come problema"**: il vecchio
+  paragrafo unico "Controllo appreso" è stato scorporato in cinque
+  paragrafi che coprono, con fonte citata per ciascuno: modellazione
+  indipendente/congiunta/comunicante e il problema della concatenazione a
+  indice fisso (\citet{wei2019colight}, CoLight); la pressione come
+  ingrediente di stato/reward oltre alla regola greedy di Max-Pressure, con
+  la critica di \citet{zhang2022advancedxlight} alla pressione che ignora i
+  veicoli in transito; i modelli universali/trasferibili tra strutture di
+  intersezione eterogenee (\citet{oroojlooy2020attendlight}, AttendLight);
+  il coordinamento oltre l'adiacenza fisica del grafo
+  (\citet{ruan2024coslight}, CoSLight) e tre framework 2025-2026 che
+  ripropongono la stessa combinazione GAT+ricorrente+RL di MetaSTGAT,
+  a riprova che l'area resta attiva; infine la distinzione tra incertezza
+  endogena ed esogena (\citet{rodrigues2019robust}) per motivare
+  esplicitamente perché questo lavoro riporta sempre il caso peggiore e non
+  solo la media.
+- **Cap. 1, Introduzione**: aggiunta la citazione mancante a CoLight (era
+  nominato senza `\citep` nella bozza del 13/9) e una nota di chiusura del
+  §1 che collega la combinazione architetturale di MetaSTGAT ai tre
+  framework 2025-2026 di cui sopra, per motivare la rilevanza della domanda
+  di ricerca oltre il singolo modello replicato.
+- **`tesi/bibliografia.bib`**: aggiunte 8 nuove entry (`wei2019colight`,
+  `oroojlooy2020attendlight`, `zhang2022advancedxlight`, `ruan2024coslight`,
+  `hu2026mpnnlight`, `wang2026astgcndrl`, `sun2026tgmaddpg`,
+  `rodrigues2019robust`, `cini2025graphdl` — 9 in totale), ciascuna con
+  commento di verifica diretta sul PDF allegato, seguendo la convenzione già
+  in uso nel file.
+
+Compilazione verificata con `pdflatex` + `bibtex` + `pdflatex` ×2: nessuna
+citazione non definita, nessun errore introdotto da queste modifiche.
+L'unico errore fatale rimasto (figure mancanti in Cap. 4 per il
+`\graphicspath` rotto, già segnalato al §7) è preesistente e non tocca i
+capitoli modificati oggi.
+
+**Non citati** (consultati ma tenuti da parte, materiale più tangenziale
+rispetto al taglio TSC/GAT/meta-learning di questa tesi): la survey
+generale su GNN per serie temporali (Jin et al.), il paper su Temporal
+Graph ODE, il paper PLOS ONE generico su DRL per TSC. Restano disponibili
+per un eventuale ampliamento del Cap. 2 o per il Cap. 5 (limiti e lavoro
+futuro).

@@ -30,6 +30,19 @@
 
 ## 0. Il piazzale: tutti i modelli testati
 
+> ⚠️ **Tempo di attesa corretto il 14/9/2026** (dettaglio in
+> `descrizione_stato_meta_reward.md` §10): `vehicle_wait_times` si azzerava
+> per errore anche quando un veicolo si spostava in coda senza attraversare
+> l'incrocio, sottostimando sia il termine anti-starvation della reward
+> (`alpha*MaxRedWait`) sia le metriche di equità riportate ovunque in questo
+> documento (`wait_max_ns/ew`). **Il TT medio non è toccato** (calcolato
+> indipendentemente da `spawn_times`/`arrived_tt`): tutti i confronti di TT
+> medio di questo documento, inclusi i modelli `_official` (§4), restano
+> validi. Non restano valide le metriche di equità e la reale intensità
+> applicata del termine anti-starvation per α > 0, per **ogni** modello
+> allenato/testato prima di questa data — inclusi tutti gli `_official` e
+> `metastgat_pro_0.0_seed7_official`.
+
 > ⚠️ **Self-loop nel Meta-GAT, decisione del 12/9/2026 (dettaglio in §4)**:
 > `src/models/metastgat.py` aggiunge ora sempre self-loop a `edge_index`, per
 > ogni preset — non più un esperimento a parte ma l'architettura standard.
@@ -74,7 +87,7 @@ non anche eventuali differenze di implementazione accidentali.
 
 | ID | Modifica | Paper originale (Wang et al., 2022) | Codice di questo progetto | Perché |
 |:--:|:---------|:-------------------------------------|:---------------------------|:-------|
-| **M1** | Reward multi-obiettivo pesata | Pura pressione: $r_i=-P_i$ | `Passed − Incoming − α·MaxRedWait − Penalty`, normalizzata /100, clip $[-20,5]$ | Incentiva il deflusso reale, penalizza sia lo stallo di corsie secondarie sia il verde concesso a vuoto |
+| **M1** | Reward multi-obiettivo pesata | Pura pressione: $r_i=-P_i$ | `Passed − Incoming − α·MaxRedWait − Penalty`, normalizzata /100, clip $[-10,0]$ (14/9/2026, era $[-20,5]$) | Incentiva il deflusso reale, penalizza sia lo stallo di corsie secondarie sia il verde concesso a vuoto |
 | **M2** | Campo visivo limitato | Visibilità teorica sull'intera strada | Solo veicoli entro `VISION_CUTOFF_M` (~144m) dal semaforo | Simula la portata reale di sensori/telecamere |
 | **M3** | Stato a 3 componenti | Dim 20: `[n_vec(12) \|\| p_vec(8)]` | Dim 32: `[n_vec(12) \|\| wait_vec(12) \|\| p_vec(8)]` | Aggiunge l'urgenza temporale (attesa massima per corsia), non solo la presenza |
 | **M4** | Maschera anti-starvation | Nessun vincolo sulle azioni consecutive | Una fase è invalida se scelta ≥2 volte di fila | Impedisce il collasso su "verde fisso permanente" |
@@ -111,13 +124,33 @@ $\alpha$ è l'unico iperparametro che cambia tra `metastgat_pro_0.5`, `_0.2`, `_
 il resto (preset `pro`, quindi tutte le M1-M10 attive) resta identico. Compare nella reward
 custom (M1):
 
-$$r_i = \operatorname{clip}\!\left(\frac{\text{Passed}_i - \text{Incoming}_i - \alpha \cdot \text{MaxRedWait}_i - \text{Penalty}_i}{100},\ -20,\ 5\right)$$
+$$r_i = \operatorname{clip}\!\left(\frac{\text{Passed}_i - \text{Incoming}_i - \alpha \cdot \text{MaxRedWait}_i - \text{Penalty}_i}{100},\ -3,\ 0\right)$$
+
+(clip corretto tre volte: 14/9/2026 $[-20,5] \to [-10,0]$; 15/9/2026 $[-10,0] \to [-4,0]$ dopo il
+fix del tempo di attesa e il ricalcolo di $\alpha$ sotto; stesso giorno $[-4,0] \to [-3,0]$ una
+volta fissato lo sweep a valori tondi — vedi `descrizione_stato_meta_reward.md` §10/§11 per il
+calcolo del range realmente raggiungibile con queste config)
 
 $\alpha$ pesa quanto la reward penalizza un'attesa massima prolungata su una corsia col rosso:
 $\alpha=0$ rimuove del tutto questo termine (la reward diventa "solo throughput", con lo stesso
 rischio di starvation di corsie secondarie che l'M1 originale voleva risolvere); $\alpha$ alto
 penalizza più severamente le attese lunghe, a costo di un possibile compromesso sul throughput
 puro.
+
+> ⚠️ **Sweep su alpha ricalibrato il 15/9/2026, valori fissati da Alessio** (dettaglio in
+> `descrizione_stato_meta_reward.md` §10/§11): la correzione del tempo di attesa ha reso
+> `MaxRedWait` tipicamente 2-3x più grande (misurato guidando i checkpoint `_official` veri
+> attraverso l'ambiente, non solo sul worst case teorico) — con lo stesso $\alpha$ di prima,
+> il termine anti-starvation avrebbe iniziato a pesare quanto o più del throughput, non solo
+> nei casi estremi. **Lo sweep ufficiale d'ora in poi è $\alpha \in \{0.08,\ 0.04,\ 0.00\}$**
+> (sostituisce $\{0.2,\ 0.1,\ 0.0\}$; valori tondi scelti al posto degli equivalenti calcolati
+> $\{0.07,\ 0.035,\ 0.0\}$ — $0.08$ resta vicino al punto di parità throughput/equità, quindi
+> il tetto superiore voluto, non un valore da superare). **Da questo momento, se viene chiesto
+> un nuovo modello Pro senza specificare quale di questi tre alpha usare, va chiesto prima di
+> allenare** — non assumere un default. La tabella e le conclusioni sotto restano quelle
+> misurate con lo sweep vecchio (valide come confronto interno fra loro, con clip e range di
+> `MaxRedWait` diversi) — da ripetere con i nuovi valori quando si ri-allenano i modelli
+> `_official`.
 
 | `model_id` | $\alpha$ | TT medio train1 (s) | TT medio 6x6 peak (s) |
 |---|---|---:|---:|

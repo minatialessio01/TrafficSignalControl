@@ -61,41 +61,108 @@ except ImportError:
 # legenda testuale (la "relief rule" della skill per i casi di sola-tinta
 # insufficiente).
 MODEL_COLORS = {
-    "metastgat_pro":                "#2a78d6",  # blue (alias legacy, vedi metastgat_pro_0.5)
-    "metastgat_pro_0.5":            "#2a78d6",  # blue -- alpha di default (0.5)
-    "metastgat_pro_0.2":            "#8e44ad",  # purple -- sweep alpha=0.2 (compare in tutti e 3 i gruppi sopra)
-    "metastgat_pro_0.1":            "#c2185b",  # rose -- sweep alpha=0.1
-    "metastgat_pro_0.0":            "#1b9e77",  # teal -- sweep alpha=0.0 (nessuna penalita' anti-starvation)
-    "metastgat_paper":              "#eb6834",  # orange
-    "ablation_environment":         "#1baf7a",  # aqua
-    "ablation_temporal":            "#c7ad1a",  # senape -- ritinta dal giallo originale (troppo vicino ad arancio/aqua in gruppo)
-    "ablation_rl_core":             "#b8508f",  # magenta-viola -- ritinta (il magenta originale era troppo vicino ad arancio)
-    "ablation_replay_stability":    "#0f7a5c",  # verde petrolio -- ritinta (il verde puro originale era troppo vicino ad arancio sotto CVD)
-    "fixedtime":                    "#4a3aa7",  # violetto
-    "maxpressure":                  "#b23a56",  # cremisi -- ritinta dal rosso originale (troppo vicino ad arancio/rosa)
-    "metastgat_pro_0.2_self_loop":  "#1f6b40",  # verde foresta -- esperimenti self-loop su Meta-GAT (non applicati in via definitiva)
-    "metastgat_pro_0.0_self_loop":  "#1f6b40",  # stessa tinta: "esperimento self-loop", a prescindere dall'alpha di base
-    "metastgat_pro_0.2_meta_v2":    "#b8860b",  # senape -- meta-learner rivisto (SMK/TMK, 12/9/2026), validata con --pairs all contro pro_0.2/self_loop/maxpressure
-    "metastgat_pro_0.2_meta_v3":    "#2a78d6",  # blu -- meta-learner con phase_pressure (13/9/2026). Riusa la tinta di
-                                                 # metastgat_pro_0.5 (non compaiono mai insieme in questi confronti "0.2"),
-                                                 # validata con --pairs all contro l'intero gruppo 0.2 (WARN nella fascia
-                                                 # 6-8 su blu/viola sotto deutan, legale qui: il grafico ha gia' etichette
-                                                 # numeriche dirette su ogni barra + legenda testuale, la "relief rule").
-    "metastgat_pro_0.2_meta_v3_ep100_150": "#1b9e77",  # verde acqua -- stesso modello, +50 episodi (13/9/2026)
-    # Coda "official" (13-14/9/2026): ri-addestramento con formule meta corrette
-    # (lane_pressure a media locale, phase_pressure solo SMK e cutoff-aware,
-    # dwell cap ricalibrato -- vedi descrizione_stato_meta_reward.md §7). Stessa
-    # tinta del modello concettualmente corrispondente (stesso alpha/ablation):
-    # nessuna nuova validazione CVD necessaria, sono gli stessi valori esadecimali
-    # gia' verificati per i gruppi "main" e "ablation study" sopra.
-    "metastgat_pro_0.2_official":            "#8e44ad",  # purple
-    "metastgat_pro_0.1_official":            "#c2185b",  # rose
-    "metastgat_pro_0.0_official":            "#1b9e77",  # teal
-    "metastgat_paper_official":              "#eb6834",  # orange
-    "ablation_environment_official":         "#1baf7a",  # aqua
-    "ablation_temporal_official":            "#c7ad1a",  # senape
-    "ablation_rl_core_official":             "#b8508f",  # magenta-viola
-    "ablation_replay_stability_official":    "#0f7a5c",  # verde petrolio
+    # ── Redesign sistematico del 15/9/2026 ──────────────────────────────────
+    # Ogni FAMIGLIA di modelli (Pro/alpha, MetaSTGCN/layer, MetaSTSONAR/L) ha
+    # una tinta base unica, con luminosita'/saturazione che varia in base
+    # all'intensita' del parametro (alpha piu' alto o piu' layer/ricorrenze =
+    # tinta piu' scura/satura, "piu' forte"). I modelli che non fanno parte
+    # di un continuum (le 4 ablation, paper, maxpressure, fixedtime) hanno
+    # ciascuno una tinta distinta, non imparentata alle altre.
+    #
+    # Validato con scripts/validate_palette.py (skill "dataviz"), --pairs all,
+    # sulle ANCORE di ogni famiglia (la tinta di riferimento, tipicamente la
+    # piu' scura) per ciascuno dei 4 grafici in cui compaiono insieme, non su
+    # tutte le 15+ tinte del progetto in blocco (oltre le 4-5 tinte simultanee
+    # nessuna combinazione supera il check all-pairs, limite intrinseco
+    # documentato dalla skill stessa):
+    #   - Grafico "pro + maxpressure + fixedtime" (6 tinte): ancore PASS
+    #   - Grafico "pro + ablation + paper + maxpressure + fixedtime" (8 tinte):
+    #     PASS su tutto tranne paper/temporal (arancio/oro), ΔE normale 8.2 --
+    #     residuo noto, mitigato dalle etichette numeriche dirette sempre
+    #     presenti sopra ogni barra e dalla legenda testuale ("relief rule").
+    #   - Grafico "pro/gcn/sonar 1-2 layer + maxpressure + fixedtime" (5
+    #     ancore): PASS su tutti i check.
+    #   - Grafico "150 episodi" (4 tinte): PASS tranne pro/replay_stability
+    #     (blu/ciano), ΔE normale 9.9 (appena sotto la soglia 15) -- stessa
+    #     mitigazione.
+    # Le sfumature chiare/scure DENTRO una stessa famiglia non sono validate
+    # una per una con lo stesso check "categoriale": sono una rampa sequenziale
+    # deliberata (stesso hue, luminosita' variabile), non un insieme di tinte
+    # indipendenti -- la skill stessa distingue i due usi (§color-formula.md).
+
+    # --- Famiglia Pro (MetaSTGAT 1 layer, sweep su alpha): blu ---
+    "metastgat_pro_0.08_official": "#2a78d6",  # blu di riferimento (ancora di famiglia)
+    "metastgat_pro_0.04_official": "#4a8ddf",  # blu piu' chiaro
+    # alpha=0.02 tolto dallo sweep e dalla tesi il 16/9/2026 (troppi modelli):
+    # voce colore rimossa, mai riaddestrato con soft-wait-scale.
+    "pro_0.00_softwait": "#94b9ed",  # blu piu' chiaro di tutti (nessuna penalita' anti-starvation; rinominato
+                                       # da metastgat_pro_0.00_official il 16/9/2026, non riaddestrato: alpha=0
+                                       # rende inerte il termine su cui agisce soft-wait-scale)
+    # Variante 2 layer (stessa famiglia Pro, stesso alpha=0.08): tinta piu'
+    # scura di 0.08, per segnalare "piu' profondo/complesso" con la stessa
+    # convenzione usata per GCN e SONAR sotto.
+    "metastgat_2l_pro_0.08_official": "#163f72",  # blu scuro
+    # Esperimento wait_vec morbido (tanh invece di clip duro, 16/9/2026): NON
+    # fa parte dello sweep alpha (asse diverso: rappresentazione dello stato,
+    # non peso della ricompensa), tinta deliberatamente fuori dalla famiglia
+    # blu di Pro per non suggerire un ordinamento di "intensita'" che qui non
+    # esiste. Un primo tentativo in verde falliva la separazione CVD contro
+    # il rosso di maxpressure (confusione deutan tipica rosso/verde);
+    # dark goldenrod validato con --pairs all contro fixedtime/pro_0.08_official/
+    # maxpressure (gli unici tre con cui compare in questo confronto): PASS.
+    "pro_0.08_softwait": "#b8860b",  # dark goldenrod
+
+    # --- Famiglia MetaSTGCN (GCN, sweep sui layer): oro ---
+    "metastgcn_2l_pro_0.08_official": "#c9a227",  # oro scuro (2 layer, "piu' forte")
+    "metastgcn_1l_pro_0.08_official": "#ddc066",  # oro chiaro (1 layer)
+
+    # --- Famiglia MetaSTSONAR (sweep su L, ricorrenze): verde-teal ---
+    "metastsonar_l4_pro_0.08_official": "#0f9e8a",  # teal scuro (L=4, piu' ricorrenze)
+    "metastsonar_l2_pro_0.08_official": "#4dbfae",  # teal chiaro (L=2)
+
+    # --- Ablation (sottosistemi distinti, non un continuum): tinte indipendenti ---
+    "ablation_environment_softwait":      "#1a9e77",  # verde (rinominato da ablation_environment_official
+                                                        # il 16/9/2026, non riaddestrato: preset "environment"
+                                                        # ha no_wait_vec=True, soft-wait-scale e' un no-op)
+    "ablation_temporal_official":         "#c9a227",  # oro -- stessa tinta di metastgcn_2l:
+                                                        # non compaiono mai nello stesso grafico
+    "ablation_rl_core_official":          "#c94f9e",  # magenta
+    "ablation_replay_stability_official": "#0891b2",  # ciano-blu
+    "metastgat_paper_softwait":           "#e08214",  # arancio (rinominato da metastgat_paper_official il
+                                                        # 16/9/2026, non riaddestrato: preset "paper" ha
+                                                        # no_wait_vec=True, soft-wait-scale e' un no-op)
+
+    # --- Baseline classiche, universali in tutti i grafici ---
+    "maxpressure": "#c0392b",  # rosso
+    "fixedtime":   "#6a3d9a",  # violetto
+
+    # --- Estensioni a 150 episodi: stessa tinta del modello a 100 episodi
+    #     (stesso modello, solo allenato piu' a lungo -- non compaiono mai
+    #     insieme alla versione a 100 episodi nello stesso grafico) ---
+    "metastgat_pro_0.08_official_150ep":          "#2a78d6",  # = pro_0.08 (blu)
+    "ablation_replay_stability_official_150ep":   "#0891b2",  # = replay_stability (ciano-blu)
+    "metastsonar_l2_pro_0.08_official_150ep":     "#4dbfae",  # = sonar L=2 (teal chiaro)
+
+    # ── Legacy (pre-15/9/2026, sweep {0.5,0.2,0.1,0.0} e esperimenti vari) ──
+    # Mantenuti per compatibilita' con grafici gia' generati in precedenza,
+    # non piu' usati per nuovi confronti.
+    "metastgat_pro":                "#2a78d6",
+    "metastgat_pro_0.5":            "#2a78d6",
+    "metastgat_pro_0.2":            "#8e44ad",
+    "metastgat_pro_0.1":            "#c2185b",
+    "metastgat_pro_0.0":            "#1b9e77",
+    "metastgat_paper":              "#eb6834",
+    "ablation_environment":         "#1baf7a",
+    "ablation_temporal":            "#c7ad1a",
+    "ablation_rl_core":             "#b8508f",
+    "ablation_replay_stability":    "#0f7a5c",
+    "metastgat_pro_0.2_self_loop":  "#1f6b40",
+    "metastgat_pro_0.0_self_loop":  "#1f6b40",
+    "metastgat_pro_0.2_meta_v2":    "#b8860b",
+    "metastgat_pro_0.2_meta_v3":    "#2a78d6",
+    "metastgat_pro_0.2_meta_v3_ep100_150": "#1b9e77",
+    "metastgat_pro_0.2_official":   "#8e44ad",
+    "metastgat_pro_0.1_official":   "#c2185b",
 }
 _FALLBACK_COLORS = ["#1b9e77", "#d95f02", "#7570b3", "#e7298a", "#66a61e"]
 
@@ -129,6 +196,30 @@ TEST_CONFIGS = [
 ]
 ALL_CONFIGS = TRAIN_CONFIGS + TEST_CONFIGS
 
+# Dal 15/9/2026: ognuna delle 7 config di TEST (non quelle di training) ha 2
+# varianti seed aggiuntive (stesso profilo di densita'/topologia/arteria,
+# spawn/percorsi diversi -- vedi descrizione_configurazioni.md §"Aggiunta del
+# 15/9/2026" per le config di validazione, stessa logica qui), generate come
+# test_summary_<cfg>2.json / <cfg>3.json accanto all'originale test_summary_<cfg>.json.
+# Motivo: un singolo seed e' un punto singolo deterministico, non una stima
+# della variabilita' tra realizzazioni di traffico plausibili. load_all_summaries
+# media le metriche numeriche sui seed disponibili (1, 2 o 3 a seconda di cosa
+# e' stato effettivamente testato) e make_config_plot disegna barre d'errore
+# (deviazione standard) quando n_seeds > 1. Le config di TRAINING non hanno
+# questo trattamento: train1/2/3 sono gia' 3 varianti concettualmente diverse
+# (righe arteria diverse), non ripetizioni seed della stessa config.
+SEED_SUFFIXES = ["", "2", "3", "4", "5"]
+
+# Campi numerici su cui ha senso mediare tra seed (gli altri campi, es. model_id/
+# config/checkpoint, sono stringhe/metadati: si tiene il valore del primo seed
+# disponibile).
+_AVERAGABLE_KEYS = [
+    "avg_travel_time", "avg_travel_time_completed_only", "tt_max", "tt_std",
+    "tt_p90", "tt_p95", "tt_p99", "avg_throughput", "total_vehicles",
+    "wait_avg_ns", "wait_max_ns", "wait_max_ns_resolved",
+    "wait_avg_ew", "wait_max_ew", "wait_max_ew_resolved", "wait_worst",
+]
+
 DEFAULT_MODEL_IDS = ["metastgat_pro_0.5", "metastgat_pro_0.2", "maxpressure"]
 
 
@@ -152,6 +243,41 @@ def parse_args():
     return parser.parse_args()
 
 
+def _load_one_summary(model_dir, fname):
+    path = os.path.join(model_dir, "test_summaries", fname)
+    if not os.path.exists(path):
+        path = os.path.join(model_dir, fname)
+    if not os.path.exists(path):
+        return None
+    with open(path) as f:
+        return json.load(f)
+
+
+def _merge_seed_summaries(summaries):
+    """Media i campi numerici di _AVERAGABLE_KEYS su piu' summary (stessa
+    config, seed diversi); i campi non numerici vengono presi dal primo
+    disponibile. Aggiunge '_n_seeds' (quanti seed sono stati effettivamente
+    mediati) e '_std' (deviazione standard per campo, 0.0 se n_seeds==1)."""
+    if len(summaries) == 1:
+        merged = dict(summaries[0])
+        merged["_n_seeds"] = 1
+        merged["_std"] = {k: 0.0 for k in _AVERAGABLE_KEYS}
+        return merged
+
+    merged = dict(summaries[0])
+    stds = {}
+    for key in _AVERAGABLE_KEYS:
+        vals = [s[key] for s in summaries if isinstance(s.get(key), (int, float))]
+        if vals:
+            merged[key] = float(np.mean(vals))
+            stds[key] = float(np.std(vals))  # ddof=0: descrive i seed osservati, non stima una popolazione
+        else:
+            stds[key] = 0.0
+    merged["_n_seeds"] = len(summaries)
+    merged["_std"] = stds
+    return merged
+
+
 def load_all_summaries(results_dir, model_ids):
     """{model_id: {config_basename: summary_dict}}, solo per le combinazioni presenti.
 
@@ -161,18 +287,29 @@ def load_all_summaries(results_dir, model_ids):
     modello testato di fresco con test.py, che scrive ancora piatto in
     model_dir/), si cerca prima li' e poi, come fallback, direttamente in
     model_dir/.
+
+    Dal 15/9/2026: per le config di TEST (non quelle di training) cerca anche
+    le varianti seed test_summary_<cfg>2.json / <cfg>3.json (vedi SEED_SUFFIXES)
+    e le media con _merge_seed_summaries -- silenziosamente su 1, 2 o 3 seed
+    a seconda di cosa e' stato effettivamente testato per quel modello, mai
+    fatale se mancano le varianti aggiuntive.
     """
     data = {mid: {} for mid in model_ids}
+    test_basenames = {cfg for cfg, _l, _r in TEST_CONFIGS}
     for mid in model_ids:
         model_dir = os.path.join(results_dir, mid)
         for cfg, _label, _role in ALL_CONFIGS:
-            fname = f"test_summary_{cfg}.json"
-            path = os.path.join(model_dir, "test_summaries", fname)
-            if not os.path.exists(path):
-                path = os.path.join(model_dir, fname)
-            if os.path.exists(path):
-                with open(path) as f:
-                    data[mid][cfg] = json.load(f)
+            if cfg in test_basenames:
+                suffixes = SEED_SUFFIXES
+            else:
+                suffixes = [""]  # config di training: nessuna media tra seed
+            found = []
+            for suf in suffixes:
+                s = _load_one_summary(model_dir, f"test_summary_{cfg}{suf}.json")
+                if s is not None:
+                    found.append(s)
+            if found:
+                data[mid][cfg] = _merge_seed_summaries(found)
     return data
 
 
@@ -196,6 +333,10 @@ def print_table(data, model_ids):
             models_here = [m for m in present_models if cfg in data[m]]
             if not models_here:
                 continue
+            n_seeds_here = {m: data[m][cfg].get("_n_seeds", 1) for m in models_here}
+            if any(n > 1 for n in n_seeds_here.values()):
+                seed_note = "  ".join(f"{m}: {n} seed" for m, n in n_seeds_here.items())
+                print(f"    (media su seed disponibili -- {seed_note})")
             print(f"\n  {label}  ({cfg})")
             for key, mlabel in metrics:
                 vals = {m: data[m][cfg].get(key) for m in models_here if data[m][cfg].get(key) is not None}
@@ -203,8 +344,10 @@ def print_table(data, model_ids):
                     print(f"    {mlabel:<22}  dato mancante per tutti i modelli")
                     continue
                 best = min(vals, key=vals.get)
+                stds = {m: data[m][cfg].get("_std", {}).get(key, 0.0) for m in vals}
                 parts = "  ".join(
-                    f"{m}={v:>7.1f}{'*' if m == best else ' '}" for m, v in vals.items()
+                    f"{m}={v:>7.1f}" + (f"±{stds[m]:.1f}" if stds[m] else "") + ('*' if m == best else ' ')
+                    for m, v in vals.items()
                 )
                 print(f"    {mlabel:<22}  {parts}   (* = migliore)")
 
@@ -281,6 +424,15 @@ def make_config_plot(cfg, label, role, data, model_ids, output_dir, fixed_order=
     wait_ew = [data[m][cfg].get("wait_max_ew", np.nan) for m in present_models]
     colors = [_color_for(m, i) for i, m in enumerate(present_models)]
 
+    # Barre d'errore (deviazione standard tra seed, vedi SEED_SUFFIXES): 0 per
+    # le config di training o per un modello ancora testato su un solo seed --
+    # ax.bar(yerr=0) non disegna nulla, quindi il caso "nessun dato aggiuntivo"
+    # degrada in automatico alla barra piena di prima, senza rami separati.
+    std_tt_medio = [data[m][cfg].get("_std", {}).get("avg_travel_time", 0.0) for m in present_models]
+    std_tt_max = [data[m][cfg].get("_std", {}).get("tt_max", 0.0) for m in present_models]
+    std_wait_ns = [data[m][cfg].get("_std", {}).get("wait_max_ns", 0.0) for m in present_models]
+    std_wait_ew = [data[m][cfg].get("_std", {}).get("wait_max_ew", 0.0) for m in present_models]
+
     n = len(present_models)
     width = min(0.8 / n, 0.3)
 
@@ -290,19 +442,29 @@ def make_config_plot(cfg, label, role, data, model_ids, output_dir, fixed_order=
     # con la config precisa come prima -- l'etichetta descrittiva (label, es.
     # "Train 1") resta solo nella tabella testuale di print_table().
     role_title = {"training": "Train", "test": "Test"}.get(role, role.capitalize())
-    fig.suptitle(f"{role_title}\n{cfg}", fontsize=13, fontweight="bold")
+    n_seeds_seen = {data[m][cfg].get("_n_seeds", 1) for m in present_models}
+    if n_seeds_seen == {1}:
+        seed_note = ""
+    elif len(n_seeds_seen) == 1:
+        (n_only,) = n_seeds_seen
+        seed_note = f"  (media + dev.std. su {n_only} seed)"
+    else:
+        seed_note = f"  (media + dev.std. su {min(n_seeds_seen)}-{max(n_seeds_seen)} seed a seconda del modello)"
+    fig.suptitle(f"{role_title}\n{cfg}{seed_note}", fontsize=13, fontweight="bold")
 
-    def _grouped_bars(ax, group_values, group_names, ylabel, title):
+    def _grouped_bars(ax, group_values, group_names, ylabel, title, group_stds=None):
         group_pos = np.arange(len(group_names))
         for i, (model, color) in enumerate(zip(present_models, colors)):
             offsets = group_pos + (i - (n - 1) / 2) * width
             values = [group_values[g][i] for g in range(len(group_names))]
+            yerr = [group_stds[g][i] for g in range(len(group_names))] if group_stds else None
             bars = ax.bar(offsets, values, width=width, color=color, edgecolor="black",
-                          linewidth=0.6, label=model)
-            for x, v in zip(offsets, values):
+                          linewidth=0.6, label=model,
+                          yerr=yerr, capsize=2.5, ecolor="black", error_kw={"linewidth": 0.8, "alpha": 0.7})
+            for x, v, e in zip(offsets, values, yerr or [0] * len(values)):
                 if not np.isnan(v):
-                    ax.text(x, v + max([vv for vv in sum(group_values, []) if not np.isnan(vv)], default=1) * 0.015,
-                            f"{v:.0f}", ha="center", va="bottom", fontsize=8)
+                    label_y = v + (e or 0) + max([vv for vv in sum(group_values, []) if not np.isnan(vv)], default=1) * 0.015
+                    ax.text(x, label_y, f"{v:.0f}", ha="center", va="bottom", fontsize=8)
         ax.set_xticks(group_pos)
         ax.set_xticklabels(group_names)
         ax.set_ylabel(ylabel)
@@ -315,7 +477,11 @@ def make_config_plot(cfg, label, role, data, model_ids, output_dir, fixed_order=
         # risolto), non e' un secondo come un altro sull'asse. Estende l'asse Y
         # se serve, cosi' la riga e la sua etichetta sono sempre visibili anche
         # quando tutte le barre restano molto piu' basse.
-        all_vals = [v for vv in group_values for v in vv if not np.isnan(v)]
+        if group_stds:
+            all_vals = [v + (e or 0) for vv, ee in zip(group_values, group_stds)
+                        for v, e in zip(vv, ee) if not np.isnan(v)]
+        else:
+            all_vals = [v for vv in group_values for v in vv if not np.isnan(v)]
         top = max(all_vals + [EPISODE_DURATION_S]) * 1.08
         ax.set_ylim(0, top)
         ax.axhline(EPISODE_DURATION_S, color="black", linestyle=":", linewidth=1.1, zorder=0.5)
@@ -324,9 +490,9 @@ def make_config_plot(cfg, label, role, data, model_ids, output_dir, fixed_order=
                 bbox=dict(boxstyle="round,pad=0.2", facecolor="white", edgecolor="none", alpha=0.85))
 
     _grouped_bars(ax_tt, [tt_medio, tt_max], ["TT medio", "TT massimo"],
-                  "Secondi (s)", "Travel Time")
+                  "Secondi (s)", "Travel Time", group_stds=[std_tt_medio, std_tt_max])
     _grouped_bars(ax_wait, [wait_ns, wait_ew], ["Attesa N/S", "Attesa W/E"],
-                  "Secondi (s)", "Attesa massima direzionale")
+                  "Secondi (s)", "Attesa massima direzionale", group_stds=[std_wait_ns, std_wait_ew])
 
     handles, labels_ = ax_tt.get_legend_handles_labels()
     ncol = _balanced_legend_ncol(n, max_col=4)

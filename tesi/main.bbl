@@ -1,9 +1,22 @@
-\begin{thebibliography}{12}
+\begin{thebibliography}{19}
 \providecommand{\natexlab}[1]{#1}
 \providecommand{\url}[1]{\texttt{#1}}
 \expandafter\ifx\csname urlstyle\endcsname\relax
   \providecommand{\doi}[1]{doi: #1}\else
   \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Cini et~al.(2025)Cini, Marisca, Zambon, and Alippi]{cini2025graphdl}
+Andrea Cini, Ivan Marisca, Daniele Zambon, and Cesare Alippi.
+\newblock Graph deep learning for time series forecasting.
+\newblock \emph{ACM Computing Surveys}, 57\penalty0 (12):\penalty0 321, 2025.
+\newblock \doi{10.1145/3742784}.
+
+\bibitem[Hu et~al.(2026)Hu, Liu, Hu, Wang, Peng, and Zhang]{hu2026mpnnlight}
+Zhiyuan Hu, Bowen Liu, Jianming Hu, Zihang Wang, Lihui Peng, and Yi~Zhang.
+\newblock Mpnnlight: A self-attention enhanced message passing graph neural
+  network for multi-intersection traffic signal control.
+\newblock \emph{Electronics}, 15\penalty0 (8):\penalty0 1655, 2026.
+\newblock \doi{10.3390/electronics15081655}.
 
 \bibitem[Kapturowski et~al.(2019)Kapturowski, Ostrovski, Quan, Munos, and
   Dabney]{kapturowski2019r2d2}
@@ -17,6 +30,16 @@ Thomas~N. Kipf and Max Welling.
 \newblock Semi-supervised classification with graph convolutional networks.
 \newblock In \emph{International Conference on Learning Representations
   (ICLR)}, 2017.
+
+\bibitem[Lopez et~al.(2018)Lopez, Behrisch, Bieker-Walz, Erdmann, Flötteröd,
+  Hilbrich, Lücken, Rummel, Wagner, and Wießner]{lopez2018sumo}
+Pablo~Alvarez Lopez, Michael Behrisch, Laura Bieker-Walz, Jakob Erdmann,
+  Yun-Pang Flötteröd, Robert Hilbrich, Leonhard Lücken, Johannes Rummel,
+  Peter Wagner, and Evamarie Wießner.
+\newblock Microscopic traffic simulation using sumo.
+\newblock In \emph{2018 21st International Conference on Intelligent
+  Transportation Systems (ITSC)}, 2018.
+\newblock \doi{10.1109/ITSC.2018.8569938}.
 
 \bibitem[Mnih et~al.(2015)Mnih, Kavukcuoglu, Silver, Rusu, Veness, Bellemare,
   Graves, Riedmiller, Fidjeland, Ostrovski, et~al.]{mnih2015dqn}
@@ -32,6 +55,13 @@ Tom Schaul, John Quan, Ioannis Antonoglou, and David Silver.
 \newblock Prioritized experience replay.
 \newblock In \emph{International Conference on Learning Representations
   (ICLR)}, 2016.
+
+\bibitem[Sun et~al.(2026)Sun, Yang, Li, Fang, and Zhang]{sun2026tgmaddpg}
+Chao Sun, Yuhao Yang, Jiacheng Li, Weiyi Fang, and Peng Zhang.
+\newblock A multi-agent regional traffic signal control system integrating
+  traffic flow prediction and graph attention networks.
+\newblock \emph{Systems}, 14\penalty0 (1):\penalty0 47, 2026.
+\newblock \doi{10.3390/systems14010047}.
 
 \bibitem[Sutton and Barto(2018)]{suttonbarto2018}
 Richard~S. Sutton and Andrew~G. Barto.
@@ -73,12 +103,40 @@ Petar Veli{\v{c}}kovi{\'c}, Guillem Cucurull, Arantxa Casanova, Adriana Romero,
 \newblock In \emph{International Conference on Learning Representations
   (ICLR)}, 2018.
 
+\bibitem[Wang et~al.(2026)Wang, Wang, Mo, Huang, Li, Li, and
+  Zhang]{wang2026astgcndrl}
+Jing Wang, Xiaopeng Wang, Yang Mo, Chao Huang, Yanan Li, Guanghe Li, and Hao
+  Zhang.
+\newblock Attention-based spatio-temporal graph convolutional networks-enhanced
+  deep reinforcement learning for adaptive traffic signal control in urban
+  traffic networks.
+\newblock \emph{Scientific Reports}, 2026.
+\newblock \doi{10.1038/s41598-026-61371-3}.
+
 \bibitem[Wang et~al.(2022)Wang, Wu, Li, Wu, Shi, and Ma]{wang2022metastgat}
 Min Wang, Libing Wu, Man Li, Dan Wu, Xiaochuan Shi, and Chao Ma.
 \newblock Meta-learning based spatial-temporal graph attention network for
   traffic signal control.
 \newblock \emph{Knowledge-Based Systems}, 250:\penalty0 109166, 2022.
 \newblock \doi{10.1016/j.knosys.2022.109166}.
+
+\bibitem[Wei et~al.(2019)Wei, Xu, Zhang, Zheng, Zang, Chen, Zhang, Zhu, Xu, and
+  Li]{wei2019colight}
+Hua Wei, Nan Xu, Huichu Zhang, Guanjie Zheng, Xinshi Zang, Chacha Chen, Weinan
+  Zhang, Yanmin Zhu, Kai Xu, and Zhenhui Li.
+\newblock Colight: Learning network-level cooperation for traffic signal
+  control.
+\newblock In \emph{Proceedings of the 28th ACM International Conference on
+  Information and Knowledge Management (CIKM)}, 2019.
+\newblock \doi{10.1145/3357384.3357902}.
+
+\bibitem[Xiao et~al.(2025)Xiao, Lu, Li, Tu, and Li]{xiao2025tscreview}
+Feng Xiao, Jiaming Lu, Lu~Li, Wenwen Tu, and Chaojing Li.
+\newblock Advances in reinforcement learning for traffic signal control: a
+  review of recent progress.
+\newblock \emph{Intelligent Transportation Infrastructure}, 2025:\penalty0
+  liaf009, 2025.
+\newblock \doi{10.1093/iti/liaf009}.
 
 \bibitem[Zhang et~al.(2019)Zhang, Feng, Liu, Ding, Zhu, Zhou, Zhang, Yu, Jin,
   and Li]{zhang2019cityflow}

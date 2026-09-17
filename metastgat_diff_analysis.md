@@ -119,7 +119,7 @@ rewards[iid] = max(min(normalized_reward, 5.0), -20.0)
 | Formula base | `-P_i` (pressione) | `Passed - Incoming - alpha·MaxWait - Penalty` |
 | Penalita' attesa corsie rosse | Non presente | `-alpha·max_red_wait_time` (alpha=0.5) |
 | Penalita' verde sprecato | Non presente | `-50.0` se nessun veicolo passa |
-| Normalizzazione | Non presente | Divisione /100, clip [-20, +5] |
+| Normalizzazione | Non presente | Divisione /100, clip [-3, 0] (corretto tre volte: 14/9/2026 [-20,+5]→[-10,0], +5 irraggiungibile per costruzione; 15/9/2026 [-10,0]→[-4,0] dopo il fix del tempo di attesa; stesso giorno [-4,0]→[-3,0] con lo sweep su alpha fissato a {0.08,0.04,0.00} — vedi descrizione_stato_meta_reward.md §10/§11 e descrizione_modelli.md §2) |
 | Finestra veicoli | Intera intersezione | Solo entro VISION_CUTOFF_M dal semaforo (~144m) |
 
 > **Motivazione**: Il reward originale (pura pressione) puo' essere instabile. La formula

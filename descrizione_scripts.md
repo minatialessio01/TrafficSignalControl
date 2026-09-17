@@ -48,7 +48,7 @@ Ogni flag atomico (`--reward-mode`, `--no-vision-cutoff`, `--no-wait-vec`, `--no
 ### Checkpoint, interruzione, resume
 
 - **Periodico**: ogni `checkpoint_interval=10` episodi (`logger.should_save_checkpoint()`), file `checkpoint_epXXXX.pt`.
-- **Best model**: `best_model.pt`, aggiornato ogni volta che il travel time dell'episodio migliora il minimo storico (`agent.save_best()`).
+- **Best model**: `best_model.pt`, aggiornato ogni volta che si stabilisce un nuovo record (`agent.save_best()`). **Cambiato il 15/9/2026**: il criterio non è più il TT grezzo del singolo episodio, ma la media mobile degli ultimi 10 episodi (`RunningMetrics.last_n_avg_travel_time`, la stessa convenzione dichiarata dal paper originale — "the average value of the last ten tests"). Un minimo su un solo episodio è troppo sensibile al rumore (variante di traffico ciclata quell'episodio, stocasticità della simulazione): può stabilire un record che nessun episodio successivo, pur con una policy migliore, riesce più a battere per puro caso. Vale solo per i modelli allenati da zero dopo questa modifica, non retroattivo su checkpoint di modelli già allenati.
 - **Ctrl+C**: `TrainingLogger` intercetta SIGINT, ma non interrompe a metà episodio — imposta un flag, l'episodio in corso finisce, poi si salva un checkpoint d'emergenza e si stampa il comando `--resume` esatto. **Se il processo gira in un container Docker headless**, Ctrl+C da tastiera non arriva: va inviato un SIGINT esplicito al processo (es. `docker stop -s SIGINT -t <timeout>`, con timeout abbastanza lungo da coprire la fine dell'episodio in corso).
 - **`--resume <checkpoint>`**: ripristina pesi, optimizer, `episode`, `epsilon`, `best_travel_time` e **il replay buffer** (bug corretto l'11/9/2026 — senza, il buffer ripartiva vuoto). Il ciclo tra varianti di training riprende automaticamente allineato, perché `_variant_idx()` dipende solo dal numero assoluto di episodio, non da uno stato salvato a parte.
 - **`--stop-at N`**: ferma il training a un episodio specifico (utile per test/debug), salva un checkpoint.
@@ -56,7 +56,26 @@ Ogni flag atomico (`--reward-mode`, `--no-vision-cutoff`, `--no-wait-vec`, `--no
 
 ### Selezione finale del modello (`run_final_selection`)
 
-A fine training confronta `final_model.pth` (ultimo episodio) e `best_model.pt` (miglior travel time mai visto) su `--select-best-config` (una config di validazione a seed fisso, default `config_4x4_100m_6k_flat.json`), con `--select-best-episodes=1` episodio ciascuno (a epsilon=0 e simulazione deterministica, ripetere non aggiunge informazione). Il vincitore è copiato in `selected_model.pth`, che `test.py` cerca con priorità massima. Disattivabile con `--no-select-best`.
+A fine training confronta `final_model.pth` (ultimo episodio) e `best_model.pt` (miglior media mobile mai vista, vedi sopra) su `--select-best-config`, con `--select-best-episodes=1` episodio per config ciascuno (a epsilon=0 e simulazione deterministica, ripetere non aggiunge informazione). Il vincitore è copiato in `selected_model.pth`, che `test.py` cerca con priorità massima. Disattivabile con `--no-select-best`.
+
+> **Cambiato il 15/9/2026**: `--select-best-config` accetta ora una **lista** di config (`nargs="+"`), non più una sola. Default: 3 varianti seed della stessa config di validazione (`config_4x4_100m_6k_flat.json` + `...flat2.json` + `...flat3.json`, stessa densità/topologia/arteria, seed 42/52/62, generate con `generate_synthetic_data.py`, mai viste in training né nelle altre due). Il punteggio di ciascun candidato (`final_model`/`best_model`) è la media del TT sulle 3, non il valore di una sola — un solo episodio su una sola config è un test statistico troppo debole per una decisione che poi si applica all'intero test suite finale (10 config). `selection_summary.json` riporta sia la media (`*_tt_avg`) sia il dettaglio per config (`*_tt_per_config`). Retrocompatibile: passare una sola config si comporta come prima.
+
+> **Bug trovato e corretto il 15/9/2026**: l'`eval_args` costruito internamente da
+> `run_final_selection` per richiamare `scripts.test.evaluate()` non includeva
+> `num_layers`, quindi con `--num-layers 2` la valutazione ricostruiva sempre un
+> modello a 1 layer e falliva il caricamento del checkpoint ("Unexpected key(s)
+> in state_dict", chiavi `meta_gat_cst.1.*`/`meta_gat_cs.1.*` mancanti). Non un
+> bug di caching tra processi (quello già noto e documentato altrove): qui è
+> deterministico, si presenta ogni volta con `--num-layers 2`. Effetto pratico
+> non fatale: la funzione cade nel fallback già previsto ("uso final_model.pth
+> come fallback"), quindi il training non si interrompe e il modello resta
+> utilizzabile, solo senza il confronto automatico final/best. Fix: aggiunto
+> `num_layers=getattr(args, "num_layers", 1)` all'`eval_args`. Il primo
+> `metastgat_2l_pro_0.08_official` (15/9/2026, coda notturna) ha incontrato
+> questo bug prima del fix: la sua selezione finale ha usato il fallback, non
+> il confronto vero — non invalida il modello, ma vale la pena saperlo se in
+> futuro si nota che `best_model.pt` sembrava oggettivamente migliore di
+> `final_model.pth` per quel run.
 
 ### Modelli addestrabili
 

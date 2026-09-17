@@ -78,6 +78,26 @@ ALL_RED_PHASE = N_PHASES
 VEHICLE_SPEED_MS = 11.1                                    # ~40 km/h
 VISION_CUTOFF_M = (GREEN_TIME + YELLOW_TIME) * VEHICLE_SPEED_MS  # 13 * 11.1 = 144.3 m
 
+# ─── Scala morbida per wait_vec (esperimento 16/9/2026) ────────────────────
+# Il clip duro originale (max_wt/100, poi clip a [0,1] -- vedi _get_observations)
+# rende IDENTICO, nello stato, un veicolo fermo da 105s e uno fermo da 1800s
+# (l'intero episodio): superata la soglia, l'informazione su QUANTO l'attesa
+# sia grave e' persa per l'agente, anche se la ricompensa (max_red_wait_time,
+# mai tagliato prima del clip finale del reward a [-2,0]) la conserva durante
+# il training. use_soft_wait_scale=True sostituisce il clip con
+# tanh(wait/WAIT_SCALE_TAU_S), che resta in [0,1) senza mai saturare
+# esattamente, preservando gradazione ben oltre i 100s.
+# TAU scelto sui dati osservati in questo lavoro, non a tavolino: l'attesa
+# massima direzionale aggregata sulle 10 config (compare_ablation_study,
+# compare_architectures, compare_150ep, 15-16/9/2026) varia tipicamente tra
+# ~700s (modelli migliori) e ~1400s (i peggiori, MaxPressure incluso), con
+# singole configurazioni fino a 1800s (censura di fine episodio). TAU=300
+# tiene la parte "in aggravamento ma non ancora patologica" (100-600s) ben
+# distribuita in [0.32, 0.96], lasciando che oltre i ~900s (gia' chiaramente
+# grave in ogni caso osservato) la curva si appiattisca verso 1 -- un
+# compromesso deliberato, non un secondo taglio netto spostato piu' in la'.
+WAIT_SCALE_TAU_S = 300.0
+
 # Mappatura delle corsie con semaforo verde per ogni fase (indici 0-11, ordinamento canonico)
 GREEN_LANES_PER_PHASE = {
     0: [1, 2, 4, 5],       # NTST: Nord Dritto/Destra (1,2) + Sud Dritto/Destra (4,5)
@@ -113,6 +133,7 @@ class CityFlowEnv:
         use_phase_pressure_meta: bool = True,  # True = SMK include phase_pressure (meta_v3, solo SMK); False = meta_v2 (18/25 dim)
         use_pressure_reward_term: bool = False,  # True = 1o termine del reward custom = pressione (stile paper) invece di throughput
         use_phase_pressure_state: bool = False,  # True = aggiunge phase_pressure (8 dim) allo STATO principale
+        use_soft_wait_scale: bool = False,  # True = wait_vec = tanh(wt/WAIT_SCALE_TAU_S) invece di clip(wt/100, 0, 1)
     ):
         """
         Args:
@@ -139,7 +160,7 @@ class CityFlowEnv:
                 "outgoing - incoming_ora" (-P_i, stessa identica quantita' calcolata
                 dal reward_mode="paper"), ma qui SOLO per il primo termine: il resto della
                 formula custom (penalita' anti-starvation pesata da alpha,
-                wasted_green_penalty, normalizzazione /100, clip [-20,5]) resta
+                wasted_green_penalty, normalizzazione /100, clip [-2,0]) resta
                 invariato. Esperimento 13/9/2026 (vedi descrizione_stato_meta_reward.md): vedere se
                 allenare direttamente sulla pressione, invece che sul throughput,
                 aiuta il modello ad avvicinarsi al comportamento di MaxPressure.
@@ -154,6 +175,11 @@ class CityFlowEnv:
                 informazione, spostata dal meta-learner allo stato diretto, per
                 vedere se aiuta di piu' quando la Q-network la vede direttamente
                 invece che tramite pesi generati dal meta-learner.
+            use_soft_wait_scale: se True, wait_vec usa tanh(wt/WAIT_SCALE_TAU_S)
+                invece del clip duro (wt/100, poi clip a [0,1]): non satura mai
+                esattamente, preserva gradazione tra attese "gravi" (200-300s) e
+                "patologiche" (900-1800s) che il clip a 100s rende identiche.
+                Esperimento 16/9/2026, vedi commento su WAIT_SCALE_TAU_S.
         """
         if not CITYFLOW_AVAILABLE:
             raise RuntimeError(
@@ -172,6 +198,7 @@ class CityFlowEnv:
         self.use_phase_pressure_meta = use_phase_pressure_meta
         self.use_pressure_reward_term = use_pressure_reward_term
         self.use_phase_pressure_state = use_phase_pressure_state
+        self.use_soft_wait_scale = use_soft_wait_scale
 
         # Carica la configurazione
         with open(config_path, "r") as f:
@@ -561,6 +588,7 @@ class CityFlowEnv:
             self.current_phase[iid] = phase
 
         incoming_t0 = self._get_incoming_vehicles_ids()
+
         old_vehicles = set(self.engine.get_vehicles(include_waiting=True))
 
         # Esegui GREEN_TIME + YELLOW_TIME secondi sulla fase scelta dall'agente.
@@ -588,16 +616,32 @@ class CityFlowEnv:
 
         self.all_spawned_vehicles.update(self.engine.get_vehicles())
 
-        # Aggiorna il tempo di attesa dei veicoli
-        try:
-            speeds = self.engine.get_vehicle_speed()
-            for veh_id, speed in speeds.items():
-                if speed < 0.1:
-                    self.vehicle_wait_times[veh_id] = self.vehicle_wait_times.get(veh_id, 0) + STEP_TIME
-                else:
-                    self.vehicle_wait_times[veh_id] = 0
-        except Exception:
-            pass
+        incoming_t1 = self._get_incoming_vehicles_ids()
+
+        # Aggiorna il tempo di attesa dei veicoli: tempo CONTINUATIVO trascorso
+        # come veicolo "in ingresso" a un'intersezione (nel raggio di
+        # visibilita' se use_vision_cutoff, sull'intera corsia altrimenti --
+        # stessa definizione di incoming_t1 sopra), non piu' legato alla
+        # velocita' istantanea. Corretto il 14/9/2026 (vedi
+        # descrizione_stato_meta_reward.md §10): il vecchio criterio
+        # (velocita' < 0.1 m/s in un singolo istante, campionato una volta a
+        # step dopo il tutto-rosso) si azzerava appena il veicolo si spostava
+        # anche di poco all'interno della coda SENZA aver attraversato
+        # l'incrocio -- sottostimava sia il termine anti-starvation della
+        # reward (max_red_wait_time) sia le metriche di equita'
+        # (vehicle_max_wait_ns/ew, wait_vec dello stato). Verificato
+        # empiricamente: mediana 45s persi per reset spurio, fino a 330s, in
+        # un singolo episodio di test. Ora l'attesa cresce finche' il
+        # veicolo resta "in ingresso" a QUALCHE intersezione, si azzera solo
+        # quando la lascia (attraversato, o mai stato vicino a un incrocio).
+        all_incoming_now = set()
+        for s in incoming_t1.values():
+            all_incoming_now.update(s)
+        for veh_id in all_incoming_now:
+            self.vehicle_wait_times[veh_id] = self.vehicle_wait_times.get(veh_id, 0) + STEP_TIME
+        for veh_id in list(self.vehicle_wait_times.keys()):
+            if veh_id not in all_incoming_now:
+                self.vehicle_wait_times[veh_id] = 0
 
         # Aggiorna la massima attesa mai vista per intersezione, separata per
         # corsie N/S vs W/E (metriche di equita', vedi get_direction_fairness_stats()).
@@ -662,7 +706,9 @@ class CityFlowEnv:
             self.arrived_max_wait_ns.append(self.vehicle_max_wait_ns.pop(veh, 0.0))
             self.arrived_max_wait_ew.append(self.vehicle_max_wait_ew.pop(veh, 0.0))
 
-        incoming_t1 = self._get_incoming_vehicles_ids()
+        # incoming_t1 gia' calcolato sopra (nessuna chiamata a next_step()/
+        # set_tl_phase() nel frattempo: lo stato dell'engine e' identico, non
+        # serve ricalcolarlo).
 
         # Calcola stati, reward, e done
         observations = self._get_observations()
@@ -676,6 +722,19 @@ class CityFlowEnv:
         }
 
         return observations, rewards, done, info
+
+    def _scale_wait(self, max_wt: float) -> float:
+        """Normalizza un'attesa grezza (secondi) nella feature wait_vec.
+
+        Default (use_soft_wait_scale=False): clip duro, invariato rispetto
+        alla versione originale (wt/100, poi clip a [0,1]) -- 100s e 1800s
+        producono lo stesso 1.0.
+        use_soft_wait_scale=True: tanh(wt/WAIT_SCALE_TAU_S), mai esattamente
+        saturo, vedi commento su WAIT_SCALE_TAU_S per la scelta della costante.
+        """
+        if self.use_soft_wait_scale:
+            return float(np.tanh(max_wt / WAIT_SCALE_TAU_S))
+        return float(np.clip(max_wt / 100.0, 0.0, 1.0))
 
     def _get_observations(self) -> Dict[str, np.ndarray]:
         """
@@ -724,8 +783,7 @@ class CityFlowEnv:
                             if wt > max_wt:
                                 max_wt = wt
                     n_vec[k] = veicoli_vicini
-                    # 100s come tetto di saturazione: non derivato, vedi analisi_bug.md #8.
-                    wait_vec[k] = np.clip(max_wt / 100.0, 0.0, 1.0)
+                    wait_vec[k] = self._scale_wait(max_wt)
                 else:
                     # Paper: conta tutti i veicoli sulla corsia (visibilità globale)
                     n_vec[k] = float(len(vehicles))
@@ -734,7 +792,7 @@ class CityFlowEnv:
                             (self.vehicle_wait_times.get(veh, 0.0) for veh in vehicles),
                             default=0.0
                         )
-                        wait_vec[k] = np.clip(max_wt / 100.0, 0.0, 1.0)
+                        wait_vec[k] = self._scale_wait(max_wt)
 
             # Normalizza il numero di veicoli. 30 e' una capacita' di corsia
             # plausibile ma non derivata a partire da lunghezza corsia reale /
@@ -783,7 +841,7 @@ class CityFlowEnv:
         Calcola il reward per ogni intersezione.
 
         reward_mode="custom" (avanzato):
-          Reward = (Passed - Incoming - alpha * max_red_wait_time - wasted_green_penalty) / 100, clip [-20, 5]
+          Reward = (Passed - Incoming - alpha * max_red_wait_time - wasted_green_penalty) / 100, clip [-2, 0]
           Se use_pressure_reward_term=True, "Passed - Incoming" e' sostituito da
           "Outgoing - Incoming_ora" (= -P_i, stessa quantita' del ramo "paper" sotto)
           -- vedi nota nel docstring del costruttore. Il resto della formula (termine
@@ -807,6 +865,37 @@ class CityFlowEnv:
           episodi). Non tocchiamo i flag no_huber/no_grad_clip/no_double_dqn/no_soft_update
           (sono l'identita' dell'ablation "paper", vanno lasciati esattamente com'erano) ne'
           la definizione di P_i: solo l'unita' di misura del reward cambia.
+
+        Nota sul clip -- tre correzioni in sequenza:
+
+        (1) 14/9/2026, [-20,5] -> [-10,0]: "Passed <= Incoming" sempre (Passed e'
+        un sottoinsieme di Incoming per costruzione), quindi il lato +5 non era mai
+        raggiungibile per costruzione matematica, non solo raro. Sul lato negativo,
+        col vecchio bug del tempo di attesa (azzerato appena velocita' >= 0.1 m/s,
+        vedi punto 2), il worst case fisico con alpha=0.5 (il piu' alto dello sweep
+        di allora) era -156 - 0.5*1800 - 50 = -1106, cioe' -11.06 dopo /100 -- il
+        vecchio -20 non era mai raggiunto nemmeno nel caso limite assoluto.
+
+        (2) 15/9/2026, [-10,0] -> [-4,0]: dopo la correzione del tempo di attesa
+        (§10 di descrizione_stato_meta_reward.md: l'attesa ora e' ~2-3x piu' grande
+        a scala tipica, misurato su modelli allenati veri, non solo sul worst case
+        teorico) lo sweep su alpha e' stato riscalato in proporzione (0.2->0.07,
+        0.1->0.035, 0.0 invariato) per non far pesare l'anti-starvation piu' del
+        throughput. Worst case fisico con alpha=0.07: -156 - 0.07*1800 - 50 = -332,
+        cioe' -3.32 dopo /100.
+
+        (3) 15/9/2026 (stesso giorno), [-4,0] -> [-3,0] e sweep ufficiale fissato a
+        alpha in {0.08, 0.04, 0.00} (valori tondi, sostituiscono {0.07,0.035,0.0}
+        del punto 2 -- vedi descrizione_modelli.md §2): il worst case fisico coi
+        nuovi valori (alpha=0.08, il piu' alto) e' -156 - 0.08*1800 - 50 = -350,
+        cioe' -3.50 dopo /100 -- leggermente PIU' negativo di -3, quindi il clip
+        [-3,0] tocca (di poco) anche il caso limite assoluto, a differenza delle
+        due correzioni precedenti dove il bound restava sempre irraggiungibile.
+        Deciso cosi' esplicitamente: un margine piu' stretto rende il clip
+        significativo (interviene davvero nei casi peggiori) invece che
+        puramente decorativo. Se in futuro si sceglie un alpha massimo diverso da
+        0.08, ricalcolare con la stessa formula: -156 - alpha_max*1800 - 50, poi
+        /100, e verificare se [-3,0] resta un margine sensato.
         """
         if incoming_t0 is None or incoming_t1 is None:
             return {iid: 0.0 for iid in self.inter_ids}
@@ -822,7 +911,10 @@ class CityFlowEnv:
 
             if self.reward_mode == "paper":
                 # ── Reward originale del paper: -P_i ───────────────────────────────
-                # P_i = veicoli in ingresso - veicoli in uscita (pressione)
+                # P_i = veicoli in ingresso - veicoli in uscita (pressione), entrambi
+                # a t+1 (dopo lo step) -- ufficiale, vedi discussione in
+                # descrizione_stato_meta_reward.md §5 (valutata anche la variante a
+                # t0 per l'incoming, scartata: si mantiene t+1 per entrambi i lati).
                 outgoing = self._get_outgoing_vehicles_count(iid)
                 pressure = len(in_t1) - outgoing  # veicoli attuali - veicoli usciti
                 rewards[iid] = -float(pressure) / 100.0  # riscalatura numerica, vedi docstring
@@ -868,11 +960,10 @@ class CityFlowEnv:
 
                 if self.use_pressure_reward_term:
                     # Primo termine sostituito da -P_i, stessa identica quantita'
-                    # del ramo reward_mode="paper" sopra (outgoing - veicoli in
-                    # ingresso ADESSO, len(in_t1) -- non "incoming"=len(in_t0),
-                    # che e' il conteggio PRIMA dello step, usato solo per
-                    # wasted_green_penalty). Vedi docstring del costruttore
-                    # (use_pressure_reward_term).
+                    # del ramo reward_mode="paper" sopra (outgoing - "incoming" di
+                    # P_i, che e' len(in_t1) -- non l'"incoming" locale di questo
+                    # blocco, len(in_t0), usato per wasted_green_penalty). Vedi
+                    # docstring del costruttore (use_pressure_reward_term).
                     outgoing = self._get_outgoing_vehicles_count(iid)
                     first_term = float(outgoing) - float(len(in_t1))
                 else:
@@ -880,7 +971,10 @@ class CityFlowEnv:
 
                 raw_reward = first_term - (self.alpha * max_red_wait_time) - wasted_green_penalty
                 normalized_reward = raw_reward / 100.0
-                rewards[iid] = max(min(normalized_reward, 5.0), -20.0)
+                # Clip abbassato da -3 a -2 il 16/9/2026 (Alessio): vedi
+                # descrizione_stato_meta_reward.md per il calcolo del worst
+                # case teorico e l'implicazione di un bound piu' stretto.
+                rewards[iid] = max(min(normalized_reward, 0.0), -2.0)
 
         return rewards
 

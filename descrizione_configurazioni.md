@@ -86,8 +86,26 @@ Dal 2026-09-12, `--config` accetta comunque più file (vedi §4bis) — ma a dif
 | Ruolo | Config | Uso |
 |---|---|---|
 | **Train** | `config_4x4_100m_train1.json` + `train2.json` + `train3.json` | 3 varianti su cui si allena, ciclate un episodio alla volta (`train.py --config`, vedi §4bis) |
-| **Validation** | `config_4x4_100m_6k_flat.json` | Usata a fine training per scegliere tra `final_model.pth` e `best_model.pt` (`train.py --select-best-config`, `main.py --validation-config`) |
+| **Validation** | `config_4x4_100m_6k_flat.json` + `...flat2.json` + `...flat3.json` | Usate a fine training per scegliere tra `final_model.pth` e `best_model.pt` (`train.py --select-best-config`, ora una lista di 3 di default — vedi nota 15/9/2026 sotto e `descrizione_scripts.md`) |
 | **Test** | tutte le altre 7 config (`config_4x4_100m_6k_peak`, `config_4x4_200m_6k_flat/peak`, `config_5x5_100m_9.4k_flat/peak`, `config_6x6_100m_11.5k_flat/peak`) | Solo valutazione di generalizzazione (`main.py --test-configs`), mai viste in training o selezione |
+
+> **Aggiunta del 15/9/2026**: generate 2 varianti seed aggiuntive della config
+> di validazione, `config_4x4_100m_6k_flat2.json` (seed 52, 6239 veicoli) e
+> `config_4x4_100m_6k_flat3.json` (seed 62, 6308 veicoli) — stessa
+> densità/topologia/arteria dell'originale (seed 42, 6361 veicoli), stessa
+> logica "sostanza-preservante" di §4bis, mai usate in training. Motivo:
+> `run_final_selection` decideva quale checkpoint diventasse il modello
+> ufficiale sulla base di un solo episodio su una sola config — un test
+> statistico troppo debole per una decisione che poi vale per l'intero test
+> suite finale. Comando usato:
+> ```bash
+> python scripts/generate_synthetic_data.py --grid 4x4 --road-length 107 --road-length-label 100 \
+>     --duration 1800 --variance flat --vehicles 6k --seed 52 --name-suffix 2 \
+>     --artery-row 1 --artery-boost 3.0
+> # e lo stesso con --seed 62 --name-suffix 3
+> ```
+> Si applica solo ai modelli allenati da zero dopo questa data (`train.py`'s
+> `--select-best-config` di default ora include tutte e 3), non retroattivo.
 
 ---
 

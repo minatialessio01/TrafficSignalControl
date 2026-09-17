@@ -609,7 +609,24 @@ class DQNAgent:
         return episode
 
     def save_best(self, path: str, episode: int, travel_time: float):
-        """Salva il modello migliore se travel_time è migliorato."""
+        """Salva il modello migliore se travel_time è migliorato.
+
+        FIX 15/9/2026: il chiamante (scripts/train.py) passa ora la media
+        mobile degli ultimi 10 episodi (RunningMetrics.last_n_avg_travel_time,
+        la stessa convenzione del paper originale: "the average value of the
+        last ten tests"), non piu' il TT grezzo del singolo episodio. Un solo
+        episodio e' rumoroso (dipende dalla variante di traffico ciclata in
+        quel momento e dalla stocasticita' della simulazione): puo' stabilire
+        un record che nessun episodio successivo, pur con una policy
+        realmente migliore, riesce piu' a battere per puro caso. La media
+        mobile rende il record molto piu' difficile da ottenere per fortuna,
+        richiedendo un miglioramento sostenuto su piu' episodi consecutivi.
+        Il nome del parametro resta "travel_time" per non rompere la firma,
+        ma da questo momento e' semanticamente una media, non un valore
+        singolo -- vale per i modelli allenati da zero dopo questa modifica,
+        non retroattivo sui checkpoint di modelli gia' allenati (il cui
+        best_travel_time salvato era ancora sul minimo grezzo).
+        """
         if travel_time < self.best_travel_time:
             self.best_travel_time = travel_time
             self.save_checkpoint(path, episode, travel_time,

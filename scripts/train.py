@@ -156,18 +156,36 @@ def parse_args():
                              "(es. results/run/checkpoints/checkpoint_ep0050.pt)")
 
     # ── Selezione finale del modello (config di validazione) ──────────────────
-    parser.add_argument("--select-best-config", default="configs/config_4x4_100m_6k_flat.json",
-                        help="Config di validazione usata a fine training per scegliere tra "
-                             "final_model.pth e best_model.pt.")
+    # FIX 15/9/2026: da una singola config a una lista (default: 3 varianti
+    # "sostanza-preservante" della stessa config, seed diversi, mai viste in
+    # training) -- un solo episodio su una sola config e' un test statistico
+    # troppo debole per decidere quale checkpoint tenere (vedi
+    # descrizione_scripts.md). final_model e best_model competono ora sulla
+    # media tra le 3, non su un singolo numero potenzialmente fortunato.
+    parser.add_argument("--select-best-config", nargs="+",
+                        default=["configs/config_4x4_100m_6k_flat.json",
+                                 "configs/config_4x4_100m_6k_flat2.json",
+                                 "configs/config_4x4_100m_6k_flat3.json"],
+                        help="Una o piu' config di validazione usate a fine training per scegliere "
+                             "tra final_model.pth e best_model.pt (media del TT su tutte). Default: "
+                             "3 varianti seed della stessa config, stessa densita'/topologia/arteria, "
+                             "percorsi e istanti diversi -- vedi descrizione_configurazioni.md §4bis.")
     parser.add_argument("--select-best-episodes", type=int, default=1,
-                        help="Numero di episodi di valutazione (epsilon=0) per la selezione finale. "
-                             "Default 1: stessa ragione di --n-eval in test.py — a epsilon=0, con "
-                             "flow/seed CityFlow fissi, ripetere l'episodio non aggiunge varianza "
+                        help="Numero di episodi di valutazione (epsilon=0) per la selezione finale, "
+                             "PER OGNI config di --select-best-config. Default 1: stessa ragione di "
+                             "--n-eval in test.py — a epsilon=0, con flow/seed CityFlow fissi, ripetere "
                              "da mediare, raddoppia solo il tempo (la selezione valuta 2 candidati).")
     parser.add_argument("--no-select-best", action="store_true",
                         help="Disattiva la selezione automatica finale tra final_model e best_model.")
 
     # ── Iperparametri ───────────────────────────────────────────────────────
+    parser.add_argument("--buffer-size", type=int, default=None,
+                        help="Override esplicito della dimensione del replay buffer. Default: "
+                             "None, che lascia la logica automatica esistente (10k se --no-per, "
+                             "altrimenti DEFAULTS['buffer_size']=4800) -- usare questo flag per "
+                             "isolare l'effetto della sola dimensione del buffer da quello di "
+                             "--no-per/altri flag di replay_stability, es. 'pro' + buffer 10k "
+                             "con PER ancora attivo.")
     parser.add_argument("--batch-size",    type=int,   default=DEFAULTS["batch_size"])
     parser.add_argument("--lr",            type=float, default=DEFAULTS["lr"])
     parser.add_argument("--gamma",         type=float, default=DEFAULTS["gamma"])
@@ -263,6 +281,13 @@ def parse_args():
                              "20->28 senza). Indipendente da --no-phase-pressure-meta: si possono "
                              "combinare per avere phase_pressure SOLO nello stato, SOLO nel meta, "
                              "in entrambi, o in nessuno dei due.")
+    parser.add_argument("--soft-wait-scale", action="store_true",
+                        help="wait_vec usa tanh(wait/WAIT_SCALE_TAU_S=300) invece del clip duro "
+                             "(wait/100, poi clip [0,1]): il clip rende IDENTICO nello stato un "
+                             "veicolo fermo da 105s e uno fermo da 1800s, mentre tanh non satura "
+                             "mai esattamente (vedi commento su WAIT_SCALE_TAU_S in cityflow_env.py "
+                             "per la scelta della costante sui dati osservati). La dimensione dello "
+                             "stato non cambia (32 o 20), cambia solo la scala della feature.")
 
     # ── Output directory esplicita ───────────────────────────────────────────
     parser.add_argument("--output-dir", default=None,
@@ -399,7 +424,7 @@ def format_eta(seconds: float) -> str:
 def generate_comparison_plots(args, env, rl_agent, edge_index, logger):
     """
     Genera due grafici al termine del training:
-      1. training_curves.png  — Travel Time, Throughput e Loss vs Episodio
+      1. training_curves.png  — Travel Time, Attesa massima (N/S e W/E) e Loss vs Episodio
       2. baseline_comparison.png — Bar chart MetaSTGAT vs FixedTime vs MaxPressure
 
     I grafici vengono salvati nella stessa cartella del training log.
@@ -417,13 +442,14 @@ def generate_comparison_plots(args, env, rl_agent, edge_index, logger):
     print(f"{'='*60}")
 
     # ── Lettura CSV ────────────────────────────────────────────────────────────
-    csv_episodes, csv_tt, csv_tp, csv_loss = [], [], [], []
+    csv_episodes, csv_tt, csv_wait_ns, csv_wait_ew, csv_loss = [], [], [], [], []
     try:
         with open(logger.csv_path, newline="") as f:
             for row in csv.DictReader(f):
                 csv_episodes.append(float(row["episode"]))
                 csv_tt.append(float(row["travel_time"]))
-                csv_tp.append(float(row["throughput"]))
+                csv_wait_ns.append(float(row.get("wait_max_ns", 0)))
+                csv_wait_ew.append(float(row.get("wait_max_ew", 0)))
                 csv_loss.append(float(row.get("avg_loss", 0)))
     except Exception as exc:
         print(f"[Plot] Impossibile leggere il CSV: {exc}")
@@ -452,12 +478,16 @@ def generate_comparison_plots(args, env, rl_agent, edge_index, logger):
     ax.legend(loc="upper right", fontsize=9)
     ax.grid(True, alpha=0.3)
 
-    # Throughput
+    # Attesa massima (N/S e W/E) -- sostituisce il throughput su richiesta
+    # dell'utente (15/9/2026): stessa metrica di equita' direzionale usata
+    # nei confronti finali (compare_models.py), vista evolvere in training.
     ax = axes[1]
-    ax.plot(csv_episodes, csv_tp, alpha=0.25, color="forestgreen", linewidth=0.8)
-    ax.plot(csv_episodes, moving_avg(csv_tp), color="forestgreen", linewidth=2.0, label="MA(10)")
-    ax.set_ylabel("Throughput (vehicles)")
-    ax.legend(loc="lower right", fontsize=9)
+    ax.plot(csv_episodes, csv_wait_ns, alpha=0.2, color="darkorange", linewidth=0.6)
+    ax.plot(csv_episodes, moving_avg(csv_wait_ns), color="darkorange", linewidth=2.0, label="N/S MA(10)")
+    ax.plot(csv_episodes, csv_wait_ew, alpha=0.2, color="teal", linewidth=0.6)
+    ax.plot(csv_episodes, moving_avg(csv_wait_ew), color="teal", linewidth=2.0, label="W/E MA(10)")
+    ax.set_ylabel("Attesa massima (s)")
+    ax.legend(loc="upper right", fontsize=9)
     ax.grid(True, alpha=0.3)
 
     # Loss (escludi episodi con loss=0, ovvero prima che il buffer sia pieno)
@@ -512,6 +542,7 @@ def _prepare_cityflow_env(config_path: str, args, tmp_name: str = "cityflow_conf
         use_phase_pressure_meta=not args.no_phase_pressure_meta,
         use_pressure_reward_term=args.pressure_reward_term,
         use_phase_pressure_state=args.phase_pressure_state,
+        use_soft_wait_scale=args.soft_wait_scale,
     )
     return env
 
@@ -544,44 +575,64 @@ def run_final_selection(args, final_model_path: str, best_model_path: str, devic
         shutil.copy(final_model_path, selected_path)
         return {"selected": "final_model", "reason": "no_best_model", "selected_path": selected_path}
 
+    # FIX 15/9/2026: --select-best-config e' ora una lista (default: 3
+    # varianti seed della stessa config, vedi argparse sopra). final_model e
+    # best_model vengono valutati su OGNI config della lista, il punteggio di
+    # ciascun candidato e' la media tra tutte -- un solo episodio su una sola
+    # config e' un confronto troppo rumoroso per decidere quale checkpoint
+    # tenere (discusso in descrizione_scripts.md). Compatibile all'indietro:
+    # una lista di un solo elemento si comporta come prima.
+    select_configs = args.select_best_config
+    if isinstance(select_configs, str):
+        select_configs = [select_configs]
+
     print(f"\n{'='*60}")
     print(f"  SELEZIONE MODELLO FINALE")
-    print(f"  {args.select_best_episodes} episodi di valutazione su "
-          f"{os.path.basename(args.select_best_config)}")
+    print(f"  {args.select_best_episodes} episodi di valutazione su {len(select_configs)} config: "
+          f"{', '.join(os.path.basename(c) for c in select_configs)}")
     print(f"{'='*60}")
 
     from scripts.test import evaluate  # import locale: evita import circolare a livello di modulo
 
     candidates = {"final_model": final_model_path, "best_model": best_model_path}
-    scores = {}
+    per_config_scores = {name: {} for name in candidates}  # {name: {config: tt}}
     for name, ckpt in candidates.items():
-        eval_args = argparse.Namespace(
-            config=args.select_best_config,
-            model=args.model,
-            model_id=f"selection_{name}",
-            checkpoint=ckpt,
-            output_dir=os.path.join(args.output, "selection_eval", name),
-            ablation=args.ablation,
-            reward_mode=args.reward_mode,
-            alpha=args.alpha,
-            no_vision_cutoff=args.no_vision_cutoff,
-            no_wait_vec=args.no_wait_vec,
-            no_action_mask=args.no_action_mask,
-            no_tanh_meta=args.no_tanh_meta,
-            n_eval=args.select_best_episodes,
-            hidden_dim=args.hidden_dim,
-            num_heads=args.num_heads,
-            num_neighbors=args.num_neighbors,
-            device=str(device),
-        )
-        try:
-            summary = evaluate(eval_args)
-            scores[name] = summary["avg_travel_time"]
-            print(f"  [Select] {name:<12} TT medio = {scores[name]:.2f}s  ({ckpt})")
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            print(f"[Select] Errore durante la valutazione di '{name}': {e}")
+        for cfg in select_configs:
+            cfg_basename = os.path.splitext(os.path.basename(cfg))[0]
+            eval_args = argparse.Namespace(
+                config=cfg,
+                model=args.model,
+                model_id=f"selection_{name}",
+                checkpoint=ckpt,
+                output_dir=os.path.join(args.output, "selection_eval", name, cfg_basename),
+                ablation=args.ablation,
+                reward_mode=args.reward_mode,
+                alpha=args.alpha,
+                no_vision_cutoff=args.no_vision_cutoff,
+                no_wait_vec=args.no_wait_vec,
+                no_action_mask=args.no_action_mask,
+                no_tanh_meta=args.no_tanh_meta,
+                n_eval=args.select_best_episodes,
+                hidden_dim=args.hidden_dim,
+                num_heads=args.num_heads,
+                num_neighbors=args.num_neighbors,
+                num_layers=getattr(args, "num_layers", 1),
+                device=str(device),
+            )
+            try:
+                summary = evaluate(eval_args)
+                per_config_scores[name][cfg_basename] = summary["avg_travel_time"]
+                print(f"  [Select] {name:<12} su {cfg_basename:<28} TT = {summary['avg_travel_time']:.2f}s")
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                print(f"[Select] Errore durante la valutazione di '{name}' su '{cfg_basename}': {e}")
+
+    # Media solo sulle config valutate con successo per quel candidato (un
+    # fallimento isolato su una config non deve buttare via l'intero
+    # candidato se le altre 2 sono andate bene).
+    scores = {name: float(np.mean(list(vals.values())))
+              for name, vals in per_config_scores.items() if vals}
 
     if not scores:
         print("[Select] Nessuna valutazione riuscita: uso final_model.pth come fallback.")
@@ -593,18 +644,21 @@ def run_final_selection(args, final_model_path: str, best_model_path: str, devic
     shutil.copy(winner_path, selected_path)
 
     result = {
-        "final_model_tt": scores.get("final_model"),
-        "best_model_tt": scores.get("best_model"),
+        "final_model_tt_avg": scores.get("final_model"),
+        "best_model_tt_avg": scores.get("best_model"),
+        "final_model_tt_per_config": per_config_scores.get("final_model"),
+        "best_model_tt_per_config": per_config_scores.get("best_model"),
         "selected": winner,
         "selected_source": winner_path,
         "selected_path": selected_path,
-        "eval_config": args.select_best_config,
+        "eval_configs": select_configs,
         "n_eval_episodes": args.select_best_episodes,
     }
     with open(os.path.join(args.output, "selection_summary.json"), "w") as f:
         json.dump(result, f, indent=4)
 
-    print(f"\n[Select] Vincitore: {winner} (TT={scores[winner]:.2f}s) → salvato in {selected_path}")
+    print(f"\n[Select] Vincitore: {winner} (TT medio su {len(select_configs)} config = "
+          f"{scores[winner]:.2f}s) → salvato in {selected_path}")
     print(f"{'='*60}\n")
     return result
 
@@ -686,7 +740,15 @@ def run_training(args):
     # ── Salva configurazione e iperparametri ──────────────────────────────────
     config_out = os.path.join(args.output, "training_config.json")
     save_data = vars(args).copy()
-    save_data["buffer_size"] = DEFAULTS["buffer_size"]
+    # Bug fissato il 16/9/2026: qui veniva sempre salvato DEFAULTS["buffer_size"]
+    # (4800), anche quando la dimensione REALE del buffer (calcolata piu' sotto,
+    # subito prima di istanziare DQNAgent) e' 10_000 per --no-per (quindi per
+    # ogni ablation "replay_stability"/"paper" gia' allenato) o un valore
+    # esplicito passato con --buffer-size. Replicata qui la stessa logica cosi'
+    # il config salvato riflette il buffer davvero usato in training.
+    save_data["buffer_size"] = args.buffer_size if args.buffer_size is not None else (
+        10_000 if args.no_per else DEFAULTS["buffer_size"]
+    )
     with open(config_out, "w") as f:
         json.dump(save_data, f, indent=4)
 
@@ -748,7 +810,9 @@ def run_training(args):
                                     args.epsilon_start, args.epsilon_end)
 
         # Dimensione buffer: paper usa 10k flat; il nostro avanzato usa 2400 seq
-        buffer_sz = 10_000 if args.no_per else DEFAULTS["buffer_size"]
+        buffer_sz = args.buffer_size if args.buffer_size is not None else (
+            10_000 if args.no_per else DEFAULTS["buffer_size"]
+        )
         agent = DQNAgent(
             model=model,
             n_intersections=env.n_intersections,
@@ -918,10 +982,19 @@ def run_training(args):
         fairness = env.get_direction_fairness_stats()
 
         # ── Salva il best model ────────────────────────────────────────────
+        # FIX 15/9/2026: criterio spostato dal TT grezzo del singolo episodio
+        # alla media mobile degli ultimi 10 (stessa convenzione del paper:
+        # "the average value of the last ten tests"), gia' calcolata da
+        # RunningMetrics e usata altrove solo per il log a schermo. Un minimo
+        # su un solo episodio e' troppo sensibile al rumore (variante di
+        # traffico ciclata quell'episodio, stocasticita' della simulazione)
+        # per essere un buon criterio di selezione del checkpoint -- vedi
+        # descrizione_scripts.md per la discussione completa. Vale solo per i
+        # modelli allenati da zero dopo questa modifica.
         is_best = agent.save_best(
             path=logger.best_path,
             episode=episode,
-            travel_time=travel_time
+            travel_time=running_metrics.last_n_avg_travel_time
         )
 
         # ── Checkpoint periodico ───────────────────────────────────────────

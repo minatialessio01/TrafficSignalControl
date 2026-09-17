@@ -1,3 +1,4 @@
+%!TEX root = ../main.tex
 \chapter*{Sommario}
 \addcontentsline{toc}{chapter}{Sommario}
 
@@ -14,8 +15,9 @@ meta-learning condizionato su caratteristiche locali della rete stradale.
 Questo lavoro replica da zero l'architettura e la procedura di training di
 MetaSTGAT su un ambiente costruito su \textsc{CityFlow}, con reti a griglia
 di tre dimensioni ($4\times4$, $5\times5$, $6\times6$) e traffico generato
-parametricamente, incluso uno scenario con un'arteria a densità asimmetrica
-usato per misurare l'equità del controllo tra direzioni di traffico diverse.
+parametricamente: ogni configurazione include un'arteria a densità
+artificialmente maggiorata, usata per misurare l'equità del controllo tra
+direzioni di traffico diverse.
 Ogni differenza introdotta rispetto alla procedura originale, dalla
 ricompensa alla struttura del replay buffer, è isolata da un sistema di
 preset di ablation e motivata singolarmente invece di essere presentata come

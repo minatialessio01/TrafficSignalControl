@@ -1,438 +1,346 @@
+%!TEX root = ../main.tex
 \chapter{TSC e Modelli}
 \label{cap:tsc-modelli}
 
 \section{Formalizzazione del problema}
 \label{sec:formalizzazione}
 
-Il controllo semaforico su una rete di $M$ intersezioni si formalizza come un
-MDP multi-agente con osservabilità locale: ogni intersezione $i$ osserva uno
-stato $s_i^t$, sceglie un'azione $a_i^t$ e riceve una ricompensa $r_i^t$,
-mentre la topologia della rete (quali intersezioni sono collegate da una
-strada) definisce un grafo su cui l'informazione viene propagata a livello di
-modello, non di ambiente.
+Il Capitolo~\ref{sec:background-rl} introduce l'MDP
+come la tupla $\mathcal{M} = (\mathcal{S}, \mathcal{A}, P, R, \gamma)$ e
+il Capitolo \ref{sec:background-tsc} la sua estensione a una rete di $I$ intersezioni
+come un Dec-POMDP a osservabilità locale: ogni intersezione $i$ osserva solo
+il proprio stato, ma le sue azioni influenzano, con un ritardo proporzionale
+alla distanza spaziale, lo stato delle intersezioni adiacenti. Questa sezione
+istanzia ciascuna componente di quella tupla per il sistema di questo lavoro.
+Ad ogni istante $t$, l'intersezione $i$ osserva uno stato $s_i^t \in \mathcal{S}$, sceglie
+un'azione $a_i^t \in \mathcal{A}$ e riceve una ricompensa $r_i^t$, 
+mentre l'informazione viene propagata secondo la topologia del grafo stradale.
 
-\paragraph{Stato.} Ogni intersezione ha $\mathrm{N\_LANES}=12$ corsie in
-ingresso (tre per ciascuna delle quattro direzioni cardinali) e
-$\mathrm{N\_PHASES}=8$ fasi semaforiche selezionabili. Lo stato è la
+\paragraph{Stato ($\mathcal{S}$).} Ogni intersezione ha 4 strade in ingresso, 
+una per direzione cardinale, con 3 corsie per senso di marcia, per un totale 
+di  $\mathrm{N\_LANES}=12$ corsie in ingresso e altrettante in uscita. A 
+questa configurazione si aggiungono  $\mathrm{N\_PHASES}=8$ fasi semaforiche selezionabili. Lo stato è la
 concatenazione di tre componenti:
 \begin{equation}
   s_i^t = [\,n_i^t \,\|\, w_i^t \,\|\, p_i^t\,] \in \mathbb{R}^{d_0}
 \end{equation}
-dove $n_i^t \in [0,1]^{12}$ è il numero di veicoli per corsia (normalizzato,
-saturato a 30 veicoli), $w_i^t \in [0,1]^{12}$ è il tempo di attesa massimo
-per corsia (normalizzato, saturato a 100s) e $p_i^t \in \{0,1\}^8$ è la fase
-corrente in codifica one-hot. La componente $w_i^t$ non è presente nella
+dove $n_i^t \in [0,1]^{12}$ è il numero di veicoli per corsia in ingresso (normalizzato dividendo per 30 e poi limitato tra 0 e 1), 
+$w_i^t \in [0,1]^{12}$ è il vettore dei tempi di attesa dei veicoli da più tempo in corsia (normalizzato dividendo per 100 e poi limitato tra 0 e 1) e 
+$p_i^t \in \{0,1\}^8$ è la fase corrente in codifica one-hot. 
+La componente $w_i^t$ non è presente nella
 formulazione originale del paper, che usa $d_0 = 20$; la variante di questo
-lavoro con $w_i^t$ inclusa porta $d_0 = 32$ (§\ref{subsec:framing-pro}, punto
-A1). Nella modalità avanzata, $n_i^t$ conta solo i veicoli entro
-$\mathrm{VISION\_CUTOFF\_M}$ dal semaforo (§\ref{sec:ambiente}); nella
-modalità fedele al paper la visibilità è sull'intera corsia.
+lavoro con $w_i^t$ inclusa porta $d_0 = 32$. 
+Inoltre, nel presente studio, $n_i^t$ conta solo i veicoli entro una distanza
+$\mathrm{VISION\_CUTOFF\_M}$ dal semaforo (più nel dettaglio in §\ref{sec:ambiente}), mentre nell'articolo
+usato come riferimento la visibilità è sull'intera corsia.
+Infine, per preservare l'invarianza dimensionale del vettore di stato $s_i^{(t)}$, 
+le intersezioni periferiche con grado topologico inferiore a quattro vengono completate tramite \emph{zero-padding}. 
 
-\paragraph{Azione.} $a_i^t \in \{0, \dots, 7\}$ seleziona una delle otto fasi;
-la fase di tutto-rosso interna alla transizione (§\ref{sec:ambiente}) non è
-mai un'azione disponibile all'agente. Un vincolo anti-starvation invalida
+\paragraph{Azione ($\mathcal{A}$).} $a_i^t \in \{0, \dots, 7\}$ seleziona una delle otto fasi che verranno descritte in §\ref{sec:ambiente};
+La transizione di "tutto-rosso" è gestita internamente dal simulatore e non appartiene allo spazio delle azioni. 
+Un vincolo anti-starvation invalida
 la fase corrente come azione se è già stata selezionata due volte
 consecutive, forzando la rotazione:
 \begin{equation}
   \mathcal{A}_i^t = \{0,\dots,7\} \setminus \{a_i^{t-1}\} \quad \text{se } a_i^{t-1} = a_i^{t-2}, \qquad \mathcal{A}_i^t = \{0,\dots,7\} \text{ altrimenti}
 \end{equation}
-Questo vincolo si applica solo all'agente RL: MaxPressure (§\ref{sec:baseline})
-resta una pura $\operatorname{argmax}$ senza vincoli, fedele all'implementazione
-di riferimento. Il numero due non è arbitrario: nelle primissime fasi di
+Questo vincolo si applica solo agli agenti RL, mentre MaxPressure
+resta fedele all'implementazione di riferimento.
+Il numero due non è arbitrario: nelle primissime fasi di
 training, quando la politica è ancora vicina al caso e non ha alcuna
 preferenza appresa, un agente senza questo vincolo tende a bloccarsi sulla
 prima fase che produce un ritorno anche solo leggermente positivo, ripetendola
-indefinitamente (un "verde fisso" degenerato); vietare la ripetizione oltre la
+indefinitamente; vietare la ripetizione oltre la
 seconda volta consecutiva rompe questo ciclo senza impedire a una fase di
 restare attiva per un tempo ragionevole quando è davvero la scelta migliore
 per due passi di fila.
 
-Questo vincolo va tenuto distinto, concettualmente, dalla metrica di equità
-direzionale introdotta nel Capitolo~\ref{cap:confronto}
-(§\ref{sec:metriche}): sono due meccanismi indipendenti, che agiscono in
-punti diversi della pipeline. La maschera sulle azioni agisce \emph{a monte},
-sulla scelta della singola azione, e si limita a vietare tre ripetizioni
-consecutive della stessa fase; l'equità direzionale è invece una misura
-osservazionale \emph{a valle}, calcolata sull'intero episodio, che non impone
-alcun vincolo ma si limita a registrare quanto a lungo attende la direzione
-sfavorita. Un modello può rispettare rigorosamente il vincolo delle due
-ripetizioni (non sceglie mai la stessa fase tre volte di fila) e mostrare
-comunque una forte disparità tra le direzioni N/S e W/E, se torna
-sistematicamente sulla fase che serve la direzione dominante non appena il
-vincolo delle due ripetizioni glielo permette di nuovo: evitare il verde
-fisso non è la stessa cosa che garantire un'alternanza equa.
+\paragraph{Transizione ($P$).} Essendo l'algoritmo di addestramento (Double DQN) \\
+\emph{model-free}, le probabilità di transizione $P(s'\mid s,a)$ non vengono modellate esplicitamente, ma campionate empiricamente. 
+L'ambiente \textsc{CityFlow} è per natura deterministico, pertanto, fissati stato e azione, la transizione 
+collassa su un singolo stato successivo con probabilità $1$.
 
-\paragraph{Ricompensa.} Due modalità, selezionabili con il flag
-\texttt{reward\_mode}. La modalità \texttt{custom} (di default in questo
-lavoro):
+\paragraph{Fattore di sconto ($\gamma$).} In questo lavoro viene fissato $\gamma = 0.85$ per ogni modello, senza alcuna ottimizzazione iperparametrica dedicata.
+
+\paragraph{Ricompensa ($R$).} Vengono proposte due modalità. 
+\\La modalità \texttt{custom}, introdotta in questo lavoro:
 \begin{equation}
   r_i^t = \operatorname{clip}\!\left(
-    \frac{\mathrm{Passed}_i^t - \mathrm{Incoming}_i^t - \alpha \cdot \mathrm{MaxRedWait}_i^t - \mathrm{Penalty}_i^t}{100},\ -20,\ 5
+    \frac{-(\mathrm{Incoming}_i^t - \mathrm{Passed}_i^t) - \alpha \cdot \mathrm{MaxRedWait}_i^t - \mathrm{Penalty}_i^t}{100},\ -2,\ 0
   \right)
   \label{eq:reward-custom}
 \end{equation}
-dove $\mathrm{Passed}_i^t$ è il numero di veicoli che hanno lasciato la
-finestra visiva dell'intersezione tra $t$ e $t{+}1$, $\mathrm{Incoming}_i^t$
-il numero di veicoli entrati nella finestra visiva al tempo $t$,
-$\mathrm{Penalty}_i^t = 50$ se $\mathrm{Passed}_i^t = 0 \land
-\mathrm{Incoming}_i^t > 0$ (un verde che non fa passare nessuno) e $0$
-altrimenti, e $\alpha$ l'iperparametro anti-starvation (sweep condotto in
-questo lavoro su $\alpha \in \{0.0, 0.2, 0.5\}$). La modalità \texttt{paper}
-riproduce fedelmente Wang et al. (2022, Eq.~1):
+dove 
+$\mathrm{Incoming}_i^t$ è il numero di veicoli entrati nella finestra visiva dell'intersezione al tempo $t$,
+$\mathrm{Passed}_i^t$ il numero di veicoli che hanno lasciato la finestra visiva tra $t$ e $t{+}1$, 
+$\mathrm{MaxRedWait}_i^t$ il tempo di attesa massimo tra tutti i veicoli che si trovano nelle corsie con segnale rosso in ingresso all'istante $t$,
+$\mathrm{Penalty}_i^t = 50$ se $\mathrm{Passed}_i^t = 0 \land \mathrm{Incoming}_i^t > 0$ e $0$ altrimenti,
+e $\alpha > 0$ l'iperparametro anti-starvation, con il quale si modula la penalizzazione per lo starvation. 
+Il limite superiore del clip è $0$ per costruzione, il limite inferiore ($-2$) è stato invece calibrato sperimentalmente nel corso di questo lavoro.
+\\La modalità \texttt{paper} riproduce fedelmente Wang et al. (2022, Eq.~1):
 \begin{equation}
   r_i^t = -\frac{P_i^t}{100}, \qquad P_i^t = \mathrm{Incoming}_i^t - \mathrm{Outgoing}_i^t
   \label{eq:reward-paper}
 \end{equation}
-La divisione per 100 in entrambe le modalità è una riscalatura numerica
-aggiunta per la stabilità del training, non presente nella formula originale
-del paper ma priva di effetto sulla politica ottima indotta (è un fattore di
-scala costante sulla ricompensa). \emph{Nota terminologica}: il termine
-$P_i^t$ dell'Equazione~\ref{eq:reward-paper} è un conteggio aggregato per
-intersezione (ingresso meno uscita nella finestra visiva) e non va confuso
-con la pressione classica di Varaiya usata da MaxPressure
-(§\ref{sec:baseline}, Equazione~\ref{eq:maxpressure}), che è definita per
-movimento (coppia corsia di ingresso/corsia di uscita) e sull'intera corsia,
-senza alcun cutoff di visibilità: sono due formule distinte che condividono
-solo il nome informale di "pressione".
+dove $P_i^t$ è definito come la \emph{pressione dell'intersezione} $i$ al tempo $t$, 
+ovvero la differenza tra il numero di veicoli in entrata all'intersezione al tempo $t$ ($\mathrm{Incoming}_i^t$) e il numero di veicoli in uscita dall'intersezione al tempo $t$ ($\mathrm{Outgoing}_i^t$). 
+Il fattore di scala $1/100$ in entrambe le modalità è introdotto per stabilizzare i gradienti. 
+Per il calcolo di tutte queste metriche introdotte ciascun modello fa riferimento, se impostata, alla distanza $\mathrm{VISION\_CUTOFF\_M}$.
 
-\paragraph{Grafo.} Le $M$ intersezioni sono nodi di un grafo $G=(V,E)$; un
-arco $(i,j) \in E$ esiste se una strada collega direttamente $i$ e $j$ nel
-roadnet. Quando un nodo ha più di $\mathrm{num\_neighbors}=4$ vicini diretti,
-l'insieme è troncato ai 4 più vicini per distanza euclidea; sulle reti a
-griglia usate in questo lavoro (§\ref{sec:ambiente}) i nodi interni hanno
-già esattamente 4 vicini diretti, per cui il troncamento incide solo sui nodi
-con connettività superiore alla griglia regolare, se presenti.
-
-Un dettaglio rilevante per l'interpretazione dei risultati di generalizzazione
-(§\ref{cap:confronto}): né lo stato $s_i^t$ né le feature spaziali e
-temporali che alimentano SMK/TMK (§\ref{sec:architettura}) contengono
-l'identità o la posizione assoluta del nodo $i$ all'interno della griglia,
-solo conteggi di veicoli sulle proprie corsie e uno storico recente; il
-Meta-GAT, inoltre, condivide la stessa rete generatrice di pesi
-($W_h^{(i)}$, §\ref{subsec:meta-gat}) su tutti i nodi, condizionandola sul
-meta-embedding locale ma non su un identificatore del nodo. Una politica
-appresa non ha quindi, in linea di principio, alcun modo diretto di
-"memorizzare" che un'arteria si trova sempre sulla stessa riga della griglia:
-può solo imparare a reagire a un pattern osservato di pressione persistente,
-ovunque questo si presenti. Se questa aspettativa regga effettivamente alla
-prova sperimentale, e non solo in linea di principio, è una domanda aperta
-che l'uso di tre righe diverse per l'arteria nelle varianti di training
-(§\ref{sec:ambiente}) è pensato per non lasciare priva di un tentativo di
-verifica.
+\paragraph{Topologia di Rete ($G$).} Le $I$ intersezioni sono rappresentate dai nodi di un grafo $G=(V,E)$.
+Un arco orientato $(i,j) \in E$ esiste se un segmento stradale connette fisicamente $i$ a $j$.
+A ogni nodo è inoltre aggiunto un arco verso se stesso (\emph{self-loop}), cosicché i layer di \emph{graph attention} possano pesare tanto lo stato del nodo stesso quanto quello dei vicini. 
+Sotto il profilo della generalizzazione spaziale, la presente architettura impone che 
+lo stato $s_i^{(t)}$ e le \emph{meta feature} processino unicamente dati locali, 
+senza alcun accesso all'identità del nodo $i$ all'interno della rete. 
+Conseguentemente, la policy non può prendere decisioni in base alla posizione dell'incrocio o al suo ruolo all'interno della rete (es. questo incrocio rappresenta un'arteria), 
+ma è costretta ad apprendere euristiche reattive alle condizioni locali osservate. 
 
 \section{Ambiente di simulazione}
 \label{sec:ambiente}
 
-L'ambiente è costruito su \textsc{CityFlow} \citep{zhang2019cityflow}, un
-simulatore di traffico microscopico open source con motore in C++ e
-binding Python, pensato esplicitamente per il controllo semaforico
-multi-intersezione via reinforcement learning su reti di dimensione grande.
-I suoi stessi autori lo motivano con un limite pratico del simulatore
-open source più diffuso in letteratura, SUMO, non sufficientemente
-scalabile a reti di grandi dimensioni e a volumi di traffico elevati da
-permettere un addestramento RL su larga scala in tempi ragionevoli:
-\textsc{CityFlow} riporta, sulle proprie reti sintetiche di riferimento
-($30\times30$ intersezioni, decine di migliaia di veicoli, 8 thread), una
-velocità di simulazione circa 20-25 volte superiore a SUMO. Il compromesso
-alla base di questo guadagno è un livello di dettaglio fisico del singolo
-veicolo inferiore a quello di un simulatore come SUMO: adatto quando
-l'obiettivo primario è addestrare un agente su migliaia di episodi
-piuttosto che riprodurre con precisione millimetrica la dinamica di un
-incrocio specifico. La simulazione avanza a passi discreti di un secondo
-(\texttt{engine.next\_step()}): non esiste un modo nativo di avanzare di più
-secondi in una sola chiamata, per cui ogni passo di decisione dell'agente
-(§\ref{sec:formalizzazione}) richiede più chiamate consecutive al motore,
-gestite internamente dal wrapper.
+L'ambiente di simulazione si basa su \textsc{CityFlow} \citep{zhang2019cityflow}, un simulatore microscopico open source con motore in C++ e binding in Python, 
+progettato specificamente per il controllo semaforico su larga scala tramite reinforcement learning. 
+La necessità di un nuovo strumento, come argomentato dagli autori originali, nasce dai limiti prestazionali di SUMO \citep{lopez2018sumo}, 
+il simulatore open source più diffuso in letteratura. 
+SUMO risulta infatti computazionalmente proibitivo per l'addestramento di agenti RL su reti di grandi dimensioni e ad alta densità veicolare.
+\textsc{CityFlow} garantisce una velocità di simulazione circa 20 volte superiore rispetto a SUMO su griglie $30\times30$, 
+ma il compromesso è un dettaglio minore, il che si rispecchia su una dinamica veicolare semplificata.
+Tale trade-off risulta ottimale in questo contesto, dove il vincolo critico è l'esplorazione dello spazio delle policy su migliaia di episodi, 
+piuttosto che la fedeltà microscopica della singola traiettoria.
 
-\subsection{Struttura del roadnet e mappatura delle fasi}
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.7\textwidth]{screenshot_cityflow.png}
+\caption{Rendering del visualizzatore di \textsc{CityFlow} per una singola
+intersezione a quattro vie: le indicazioni verde/rosso ai margini
+dell'incrocio mostrano i movimenti abilitati dalla fase corrente, i
+rettangoli colorati sulle corsie i veicoli in transito o in coda.}
+\label{fig:cityflow-screenshot}
+\end{figure}
 
-La topologia di ogni rete è definita in un file di roadnet: una lista di
-intersezioni (posizione, e un'indicazione se l'intersezione è reale e
-semaforizzata oppure "virtuale", cioè un punto ai bordi della griglia dove
-le strade escono dalla mappa senza alcun semaforo) e una lista di strade,
-segmenti diretti tra due intersezioni con un numero di corsie ciascuno. Per
-ogni intersezione reale, il roadnet elenca inoltre le fasi semaforiche
-disponibili, ciascuna definita come l'insieme dei movimenti (coppie
-corsia-in/corsia-out) abilitati in quella fase: comandare il semaforo
-significa semplicemente indicare al motore l'indice della fase da attivare.
+\subsection{Struttura della rete e mappatura delle fasi}
 
-Ogni intersezione di questo lavoro ha $\mathrm{N\_LANES}=12$ corsie in
-ingresso modellate (quattro direzioni cardinali, tre corsie ciascuna: sinistra,
-diritto, destra) e $\mathrm{N\_PHASES}=8$ fasi verdi selezionabili, elencate
-in Tabella~\ref{tab:fasi} con la nomenclatura N/S/E/O (Nord/Sud/Est/Ovest)
-più T/L (\emph{Through}, diritto, e \emph{Left}, sinistra) usata anche nella
-Figura~1 del paper originale.
+La topologia della rete è codificata in un file di configurazione (\emph{roadnet}), 
+che definisce l'insieme delle intersezioni (nodi) e dei segmenti stradali (archi) con le relative molteplicità di corsia.
+Per ogni intersezione il \emph{roadnet} elenca le fasi semaforiche disponibili, ciascuna definita 
+come l'insieme dei movimenti (coppie corsia di origine e di destinazione) abilitati in quella fase.
+L'azione dell'agente si riduce pertanto alla selezione dell'indice corrispondente alla fase da attivare.
+Ogni intersezione di questo lavoro modella $\mathrm{N\_LANES}=12$ corsie in ingresso 
+(quattro direzioni cardinali, tre corsie ciascuna: sinistra, diritto, destra) e 
+$\mathrm{N\_PHASES}=8$ fasi semaforiche selezionabili. 
+La tabella ~\ref{tab:fasi} riporta la mappatura di tali fasi, adottando la 
+nomenclatura N/S/E/W (\emph{North/South/East/West}) e T/L (\emph{Through}, diritto, e \emph{Left}, sinistra).
 
 \begin{table}[htbp]
 \centering
 \small
-\caption{Le 8 fasi semaforiche e i movimenti che ciascuna abilita.}
-\label{tab:fasi}
 \begin{tabular}{@{}clp{7.5cm}@{}}
 \toprule
 Fase & Nome & Movimenti abilitati \\
 \midrule
 0 & NTST & Nord diritto+destra, Sud diritto+destra \\
 1 & NLSL & Nord sinistra, Sud sinistra \\
-2 & NTNL & Nord sinistra+diritto+destra (solo Nord) \\
-3 & STSL & Sud sinistra+diritto+destra (solo Sud) \\
+2 & NTNL & Nord sinistra+diritto+destra \\
+3 & STSL & Sud sinistra+diritto+destra \\
 4 & WTET & Ovest diritto+destra, Est diritto+destra \\
 5 & WLEL & Ovest sinistra, Est sinistra \\
-6 & ETEL & Est sinistra+diritto+destra (solo Est) \\
-7 & WTWL & Ovest sinistra+diritto+destra (solo Ovest) \\
+6 & ETEL & Est sinistra+diritto+destra \\
+7 & WTWL & Ovest sinistra+diritto+destra \\
 \bottomrule
 \end{tabular}
+\caption{Le 8 fasi semaforiche e i movimenti che ciascuna abilita.}
+\label{tab:fasi}
 \end{table}
 
-Una scelta di realismo dichiarata esplicitamente nel codice: la svolta a
-destra non è mai automaticamente abilitata (il cosiddetto \emph{free-right},
-una semplificazione comune in altri lavori sul controllo semaforico), ma
-attende la fase che la autorizza esplicitamente, come qualunque altro
-movimento. Quando un'intersezione ai margini della griglia ha fisicamente
-meno di quattro strade collegate, le corsie mancanti sono modellate come
-corsie fittizie sempre a zero veicoli, in modo che lo stato $s_i^t$
-(§\ref{sec:formalizzazione}) abbia sempre la stessa dimensione indipendentemente
-dalla posizione dell'intersezione nella griglia.
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.85\textwidth]{fasi_semaforiche.png}
+\caption{Rappresentazione grafica delle 8 fasi di Tabella~\ref{tab:fasi}:
+le frecce indicano i movimenti abilitati da ciascuna fase.}
+\label{fig:fasi}
+\end{figure}
 
-\subsection{Gestione di verde, giallo e tutto-rosso}
+Il paper originale permette ai veicoli che svoltano a destra di muoversi liberamente, senza attendere il semaforo verde, a patto che non vi siano veicoli provenienti da altre direzioni. 
+Al fine di prevenire una qualunque possibile interferenza tra diversi flussi e garantire un controllo più rigoroso, si è deciso di non adottare questo comportamento, permettendo la svolta a destra solo quando esplicitamente autorizzata dalla fase semaforica.
+L'insieme delle fasi sopra riportate rappresenta una configurazione tale da sfruttare al massimo lo spazio delle direzioni possibili, 
+evitando al contempo conflitti tra le traiettorie dei veicoli. 
 
-\textsc{CityFlow}, nella sua forma nativa, non ha alcun concetto di "giallo"
-o di fisica del semaforo ambra: una fase è solo un insieme binario di
-movimenti abilitati o disabilitati, senza stati intermedi. Qualunque
-comportamento di tipo giallo/tutto-rosso deve quindi essere costruito
-esplicitamente sopra questa primitiva, definendo fasi aggiuntive nel roadnet
-e pilotandole da codice passo per passo. Questo lavoro lo fa nel modo
-seguente. Ogni passo di decisione dura
-$\mathrm{STEP\_TIME} = \mathrm{GREEN\_TIME} + \mathrm{YELLOW\_TIME} +
-\mathrm{RED\_TIME} = 10 + 3 + 2 = 15$ secondi simulati: la fase scelta
-dall'agente resta attiva per i primi $\mathrm{GREEN\_TIME}+\mathrm{YELLOW\_TIME}
-= 13$ secondi (il giallo è trattato come un prolungamento del verde: il
-movimento resta abilitato per tutti e 13 i secondi, senza un vincolo di
-sicurezza aggiuntivo diverso dal tempo trascorso), seguiti da un'ulteriore
-fase, aggiunta appositamente al roadnet e mai selezionabile dall'agente
-(indice 8, fuori dallo spazio delle azioni $\{0,\dots,7\}$), che disabilita
-esplicitamente ogni movimento su ogni intersezione per $\mathrm{RED\_TIME}=2$
-secondi.
+\subsection{Gestione dell'interverde}
 
-Questo meccanismo non era presente nella prima versione di questo lavoro:
-inizialmente i 5 secondi finali di ogni passo venivano eseguiti sotto la
-stessa identica fase verde dei primi 10, senza una seconda chiamata di
-comando al semaforo, il che equivaleva funzionalmente a 15 secondi di verde
-continuo senza alcun istante di tutto-rosso. La finestra di rischio reale era
-stretta (un'intersezione larga circa 20 metri si attraversa in pochi
-secondi, per cui il problema riguardava solo i veicoli entrati negli
-ultimissimi istanti di verde) ma genuina: un veicolo ancora dentro
-l'incrocio al cambio di fase poteva in linea di principio sovrapporsi a un
-veicolo di un movimento conflittuale appena abilitato dalla fase successiva.
-La correzione, applicata in modo meccanico e uniforme a tutte le
-intersezioni semaforizzate di tutti i roadnet del progetto, è stata
-verificata non solo leggendo il codice ma ispezionando riga per riga il
-replay grezzo prodotto dal motore per una singola intersezione campione: lo
-stato delle corsie, per un ciclo completo, passa da \texttt{['r','g','g']}
-(verde più giallo, fase invariata) a \texttt{['r','r','r']} (tutte le corsie
-rosse simultaneamente, il tutto-rosso) per tornare a \texttt{['g','r','r']}
-(la fase successiva, verde su una corsia diversa): conferma diretta che il
-tutto-rosso è genuinamente simulato, non solo contabilizzato a parte, e che
-le fasi verdi si alternano davvero invece di ripetere sempre lo stesso
-schema. Poiché questo comportamento è identico per ogni modello confrontato
-in questo lavoro (Pro, ogni preset di ablation, Fixed-Time, MaxPressure
-passano tutti dallo stesso ciclo di step), il confronto relativo tra modelli
-resta valido; cambiano leggermente, in modo uniforme, i valori assoluti: due
-dei quindici secondi per ciclo (circa il 13\%) sono ora tempo morto reale
-invece che verde esteso.
+L'interverde è il periodo di tempo che intercorre tra la fine del verde di una fase semaforica 
+e l'inizio del verde di quella successiva.
+Il suo scopo è quello di garantire la sicurezza stradale, permettendo ai veicoli che si trovano nell'intersezione di 
+sgombrarla prima che venga attivata la fase successiva.
+Il motore di simulazione \textsc{CityFlow} non modella nativamente tale fase transitoria, nello specifico, non gestisce i semafori gialli e il conseguente passaggio sicuro tra due fasi consecutive;
+dunque l'interverde deve essere costruito esplicitamente.
+In questo lavoro, l'intervallo decisionale dell'agente (lo \emph{step} di simulazione) ha una durata complessiva $\Delta t_{\text{step}} = 15 \text{ s}$ simulati,
+idealmente ripartita in tre sotto-fasi:
+verde ($\Delta t_{\text{green}} = 10 \text{ s}$), giallo ($\Delta t_{\text{yellow}} = 3 \text{ s}$) e "tutto-rosso" ($\Delta t_{\text{red}} = 2 \text{ s}$).
+Per il limite di \textsc{CityFlow} sopra descritto e in questo studio accettato come compromesso, l'ambiente assimila il giallo al verde senza imporre modelli di decelerazione specifici,
+mantenendo pertanto i movimenti autorizzati dalla policy per una durata totale di  $\Delta t_{\text{green}}+\Delta t_{\text{yellow}} = 13 \text{ s}$ consecutivi.
+Al termine di questa finestra temporale, viene eseguita per $\Delta t_{\text{red}} = 2 \text{ s}$ una fase che non è presente tra le azioni selezionabili dal modello, 
+ovvero il semaforo rosso in contemporanea su tutte le corsie. 
+Questo intervallo di guardia è necessario per garantire lo svuotamento dell'intersezione prima del cambio di fase, così da prevenire collisioni. 
+A questo punto lo step giunge al termine e il modello formula una nuova decisione, scegliendo quale delle 8 fasi implementare nel ciclo successivo. 
+
+È importante sottolineare che questa accortezza riduce di fatto il tempo effettivo utile di decisione del singolo agente di controllo semaforico, in quanto due dei quindici secondi di ogni step sono 
+dedicati alla fase "tutto-rosso" e quindi da considerarsi tempo morto (rappresentando circa il 13\% del tempo totale).
 
 \subsection{Campo visivo}
 
-Nella modalità avanzata dello stato (§\ref{sec:formalizzazione}), i veicoli
-sono contati solo entro $\mathrm{VISION\_CUTOFF\_M}$ dal semaforo:
-\begin{equation}
-\begin{aligned}
-  \mathrm{VISION\_CUTOFF\_M} &= (\mathrm{GREEN\_TIME}+\mathrm{YELLOW\_TIME}) \cdot v_{\mathrm{urb}} \\
-  &= 13 \cdot 11.1 \approx 144.3\ \mathrm{m}
-\end{aligned}
-\end{equation}
-con $v_{\mathrm{urb}} = 11.1\ \mathrm{m/s}$ ($\approx 40$ km/h) velocità
-urbana di riferimento: rappresenta la distanza che un veicolo può
-effettivamente percorrere nella finestra temporale utile di un'azione (i 13
-secondi di verde più giallo, non i 15 secondi dell'intero passo, dato che
-nei 2 secondi di tutto-rosso nessun veicolo avanza), non un valore
-arbitrario scelto per convenienza. Se le costanti \texttt{GREEN\_TIME} o
-\texttt{YELLOW\_TIME} cambiassero, il cutoff si aggiornerebbe automaticamente
-di conseguenza. Il cutoff è specifico allo stato dell'agente RL: la
-pressione classica usata da MaxPressure (§\ref{sec:baseline}) non ne è
-soggetta, per fedeltà alla sua definizione originale, che non prevede alcun
-raggio di visibilità limitato.
-
-Un dettaglio implementativo corretto nel corso di questo lavoro, incluso qui
-come esempio del tipo di verifica applicata a ogni componente
-dell'ambiente: la distanza usata per calcolare il cutoff su ciascuna corsia
-va sottratta alla lunghezza reale della corsia stessa, che inizialmente era
-approssimata con la distanza punto-a-punto tra i centri delle due
-intersezioni collegate. \textsc{CityFlow} tronca però la distanza percorsa
-riportata per un veicolo alla larghezza fisica dell'intersezione a
-\emph{entrambe} le estremità della corsia: un veicolo lascia la corsia già
-alcuni metri prima del punto centrale dichiarato nel roadnet. Usare la
-distanza punto-a-punto sovrastimava quindi la lunghezza reale della corsia e
-rendeva, di conseguenza, il cutoff di visibilità più restrittivo di quanto
-derivato in teoria; la correzione sottrae esplicitamente la larghezza di
-entrambe le intersezioni coinvolte prima di applicare il cutoff.
+Un contributo originale di questo studio consiste nell'introduzione di un campo visivo limitato per ciascun incrocio, per cui i dati raccolti da ogni intersezione circoscritte entro un raggio di visibilità $d_{\text{vis}}$.
+Le motivazioni alla base di questa implementazione sono da ricercare in due ragioni distinte: una di carattere pratico e una di carattere teorico.
+La prima mira a ridurre il gap tra simulazione e realtà, per il quale è essenziale limitare l'uso della strumentazione tecnica necessaria per la raccolta dei dati ad un'area il più circoscritta possibile.
+La seconda trova fondamento nella cinematica dei veicoli: ogni veicolo in questa simulazione raggiunge una velocità di percorrenza massima $v_{\mathrm{max}} = 11.1 \text{ m/s}$ (circa $40 \text{ km/h}$) dettata dal limite di velocità imposto su ciascuna strada.
+Ciò implica che in un intervallo di tempo fissato $\Delta t = \Delta t_{\text{green}} + \Delta t_{\text{yellow}} = 13 \text{ s}$, un veicolo possa percorrere una distanza non superiore a  
+\[d_{\text{vis}} = v_{\mathrm{max}} \cdot \Delta t \approx 144.3 \text{ m} .\] Il calcolo esclude coerentemente i secondi di "tutto-rosso", in cui il deflusso è interrotto.
+Dunque la scelta è stata quella di introdurre un campo visivo ristretto anche per forzare l'agente RL a concentrarsi esclusivamente sui veicoli che una fase semaforica può effettivamente influenzare.
+Sebbene in questo lavoro il cutoff spaziale sia assunto omogeneo per l'intera rete, il codice che lo implementa tiene nativamente in considerazione 
+eventuali casi di limiti di velocità o intervalli temporali variabili.
+Inoltre la riduzione del campo visivo non viene applicata se la strada risulta essere più breve del cutoff stesso.
+Questa limitazione percettiva è comunque riservata ai soli modelli di reinforcement learning di questo studio e non viene applicata alla baseline (come MaxPressure). 
 
 \subsection{Dataset e generazione parametrica}
 \label{subsec:dataset}
 
 Ogni roadnet e ogni flusso di traffico usato in questo lavoro è generato
-parametricamente e in modo interamente deterministico da uno script dedicato,
-non raccolto da fonti esterne: questo permette di controllare esattamente
-quali variabili cambiano tra una configurazione e l'altra (topologia,
-densità, presenza di un'arteria) e di rigenerare l'intero dataset da zero se
-un parametro va rivisto, cosa che è avvenuta più volte nel corso del
-progetto (si veda più sotto la calibrazione della densità su $5\times5$ e
-$6\times6$).
+parametricamente e in modo interamente deterministico da uno script dedicato, 
+senza alcun campionamento empirico.
+Questo approccio consente di avere un pieno controllo sulle variabili operative come la 
+struttura della rete, la densità veicolare e presenza di arterie principali, oltre a 
+garantire l'esatta riproducibilità degli scenari di simulazione, un requisito metodologico fondamentale 
+per un equo confronto tra modelli di controllo semaforico.
 
-\paragraph{Topologie e calibrazione dell'onda verde.} Tre griglie regolari,
-$4\times4$ (16 intersezioni reali), $5\times5$ (25) e $6\times6$ (36), usate
-per misurare la generalizzazione a topologie di dimensione diversa da quella
-di training. Sulla griglia $4\times4$ esistono due varianti di spaziatura
-tra gli incroci, usate per isolare l'effetto di un fenomeno specifico:
-un'onda verde. Poiché tutte le intersezioni di questo lavoro cambiano fase in
-modo sincrono (non esiste una sfasatura temporale tra un incrocio e il
-successivo), l'unico modo per ottenere un'onda verde, cioè far sì che un
-veicolo che parte all'inizio di un verde arrivi al semaforo successivo
-esattamente quando questo torna verde, è calibrare la distanza fisica tra
-gli incroci sulla velocità di marcia e sulla durata del ciclo: alla velocità
-di riferimento $v_{\mathrm{urb}}=11.1$ m/s, un ciclo completo di 15 secondi
-corrisponde a $11.1 \times 15 \approx 166.5$ metri, la distanza reale a cui
-sono calibrate le reti etichettate "100m" in questo lavoro (l'etichetta
-indica un parametro di generazione interno, non la distanza reale, che
-tiene conto anche di un offset geometrico fisso). Una seconda variante della
-griglia $4\times4$, etichettata "200m" (260 metri reali), mantiene una
-spaziatura non calibrata, usata come configurazione di test aggiuntiva per
-misurare quanto un modello allenato sulla rete con onda verde regge quando
-la spaziatura cambia; non viene mai usata per il training. Le griglie
-$5\times5$ e $6\times6$ esistono solo nella variante calibrata, dato che il
-loro scopo è testare la generalizzazione alla dimensione della rete, non
-l'effetto dell'onda verde (già isolato sulla griglia $4\times4$).
+\paragraph{Topologie e spaziature.} 
+L'ambiente di simulazione implementa tre topologie a griglia regolare di dimensioni $4\times4$ (16 intersezioni), 
+$5\times5$ (25 intersezioni) e $6\times6$ (36 intersezioni), impiegate per l'addestramento e per valutare la capacità di generalizzazione 
+dei modelli rispetto alla scala spaziale.
 
-\paragraph{Densità di traffico.} Per ciascuna topologia sono generati flussi
-a tre livelli di densità: un flusso costante per l'intera durata
-dell'episodio (\emph{flat}), un flusso a tre fasi (\emph{peak}, un terzo
-dell'episodio a intensità bassa, un terzo a intensità raddoppiata, un terzo
-di nuovo bassa) e, solo per il training, un flusso "giornata lavorativa"
-descritto più sotto. Ogni episodio dura $\mathrm{maxStep}=1800$ secondi
-simulati, corrispondenti a $1800/\mathrm{STEP\_TIME} = 120$ passi di
-decisione per intersezione. La densità di traffico per ciascuna
-configurazione non è stata fissata arbitrariamente: una prima versione,
-calibrata assumendo che una griglia più grande assorbisse proporzionalmente
-meglio il traffico grazie a un minor numero di intersezioni di bordo, si è
-rivelata sbagliata quando verificata sperimentalmente con MaxPressure (un
-controllore reale, seppur semplice, il cui throughput riflette quindi quanto
-la rete regge il traffico assegnato, non solo quanto è inefficiente il
-controllore): a parità di veicoli per intersezione, le griglie più grandi
-assorbivano il traffico \emph{peggio}, non meglio, verosimilmente perché la
-congestione si accumula lungo percorsi che attraversano più intersezioni in
-sequenza. La densità di ciascuna configurazione di questo lavoro è stata
-quindi ricalibrata empiricamente fino a raggiungere un throughput
-confrontabile (90-94\%) con MaxPressure su tutte e tre le topologie, non
-assunta teoricamente corretta a tavolino.
+Un obiettivo centrale di questo lavoro consiste nell'indagare le capacità di coordinamento 
+implicito apprese dalle diverse policy di controllo. In quest'ottica, assume particolare 
+rilevanza la comparsa spontanea della così detta onda verde, uno standard strutturale nell'ingegneria del traffico contemporanea.
+La spaziatura tra incroci è pertanto di due tipi: calibrata per l'onda verde e non calibrata.
+In assenza di offset temporali, in quanto le transizioni di fase sono sincrone per tutti i nodi della rete, 
+l'unico modo per ottenere un'onda verde, ovvero un flusso di veicoli che si propagano
+attraverso la rete senza fermarsi ai semafori, è calibrare la distanza fisica tra
+gli incroci sulla velocità di marcia e sulla durata del ciclo:
+alla velocità di riferimento $v_{\mathrm{urb}} = 11.1 \text{ m/s}$, 
+in un ciclo di $\Delta t_{\text{step}} = 15 \text{ s}$ viene percorsa una distanza pari a $166.5 \text{ m}$. 
+Dunque la prima spaziatura proposta è proprio di questa misura, ma ne faremo 
+riferimento con l'etichetta "100m". 
+La spaziatura non calibrata invece è 100m più estesa e viene indicata con "200m".
 
-\paragraph{Il flusso di training "giornata lavorativa".} A differenza delle
-configurazioni di validazione e test, che usano una densità costante o a
-picco singolo, il flusso usato per il training mappa una giornata lavorativa
-di 24 ore su un episodio di 1800 secondi simulati, in cinque fasce di durata e
-intensità diverse (Tabella~\ref{tab:workday}): due fasce a intensità bassa
-(mattina presto e notte), due fasce di punta (pendolari mattutini e fine
-giornata lavorativa) e una fascia centrale a intensità sostenuta per la
-maggior parte dell'episodio. Questa non-stazionarietà interna a un singolo
-episodio è intenzionale: impedisce al modello di limitarsi a imparare una
-singola densità di traffico fissa, cosa che una configurazione di
-addestramento a densità costante permetterebbe.
+Le roadnet non condividono tutte lo stesso ruolo. La griglia $4\times4$ con spaziatura "100m" compare sia in training sia in test, 
+mentre le altre tre combinazioni topologia-spaziatura restano riservate esclusivamente al test e non vengono mai incontrate durante l'addestramento 
+(Tabella~\ref{tab:roadnet-uso}). Questa separazione serve a isolare due assi di generalizzazione: le griglie $5\times5$ e $6\times6$ misurano la tenuta 
+della policy su reti più estese di quella di addestramento, con più intersezioni da coordinare, mentre la spaziatura "200m" applicata alla griglia $4\times4$ 
+misura la tenuta su una topologia mai vista con incroci più distanziati, priva della calibrazione per l'onda verde descritta sopra.
 
 \begin{table}[htbp]
 \centering
 \small
-\caption{Le cinque fasce del flusso di training "giornata lavorativa"
-(totale: 4.620-4.728 veicoli a seconda della variante seed, §\ref{subsec:dataset}).}
-\label{tab:workday}
-\begin{tabular}{@{}p{4.3cm}rrr@{}}
+\begin{tabular}{@{}llc@{}}
 \toprule
-Fascia & Intervallo simulato & Passi di decisione & Veicoli/secondo \\
+Griglia & Spaziatura & Utilizzo \\
 \midrule
-Flat basso (mattina presto) & 0-525s & 0-35 & 1.2 \\
-Peak basso (pendolari mattutini) & 525-675s & 35-45 & 2.5 \\
-Flat alto (ore diurne) & 675-1200s & 45-80 & 3.5 \\
-Peak alto (fine giornata lavorativa) & 1200-1350s & 80-90 & 4.2 \\
-Flat basso (notte) & 1350-1800s & 90-120 & 1.2 \\
+$4\times4$ & 100m & Train, Validation, Test \\
+$4\times4$ & 200m & Test \\
+$5\times5$ & 100m & Test \\
+$6\times6$ & 100m & Test \\
 \bottomrule
 \end{tabular}
+\caption{Utilizzo di ciascuna combinazione topologia-spaziatura. Il dettaglio del confine tra training e validazione sulla griglia $4\times4$ a 100m è in Tabella~\ref{tab:split}.}
+\label{tab:roadnet-uso}
 \end{table}
 
-\paragraph{Tre varianti seed e arteria Est-Ovest.} Due accorgimenti,
-introdotti per evitare un rischio concreto di overfitting metodologico.
-Primo: poiché \textsc{CityFlow} è deterministico a parità di flusso e seed,
-usare sempre lo stesso file di flusso per il training esporrebbe il modello,
-episodio dopo episodio, alla sequenza \emph{esatta} di veicoli (stessi
-istanti di generazione, stessi percorsi), con il rischio che il modello
-impari quella sequenza specifica invece di una politica di controllo
-genuinamente generalizzabile. Il training di questo lavoro cicla quindi tra
-tre varianti dello stesso profilo di densità (stessa Tabella~\ref{tab:workday},
-un episodio di training appartiene sempre a una sola variante, alternata
-deterministicamente per numero di episodio), generate con seed diversi che
-cambiano il rumore applicato al peso di ciascun percorso e agli istanti
-esatti di generazione dei veicoli, lasciando invariato il profilo aggregato
-(quanti veicoli, quando, con quale forma). Le configurazioni di validazione e
-di test restano invece a seed singolo, dato che il loro scopo è offrire un
-metro di paragone stabile, non introdurre ulteriore varianza.
+\paragraph{Profili di traffico.} 
+Per ciascuna topologia sono stati generati tre profili di traffico:
+un flusso a intensità costante (\emph{flat}),
+un profilo a gradino (\emph{peak}, diviso in tre fasi temporali con un raddoppio del carico nel terzo centrale) e
+un profilo dinamico (\emph{complete}) che simula il traffico di una giornata lavorativa (dettagliato nel seguito), impiegato esclusivamente in fase di addestramento.
+Ogni episodio ha una durata di $T_{\text{max}} = 1800 \text{ s}$ simulati, corrispondenti a $1800 \text{ s} / \Delta t_{\text{step}} = 120$ cicli decisionali per agente.
 
-Secondo: un controllo preliminare sul flusso di training originale ha
-mostrato che il carico di traffico tra le diverse righe della griglia era
-già naturalmente quasi uniforme (entro il $\pm10\%$), un'asimmetria
-trascurabile che non avrebbe permesso di verificare una domanda specifica,
-cioè se il termine anti-starvation della ricompensa \texttt{custom}
-(Equazione~\ref{eq:reward-custom}) fornisca ai modelli RL un vantaggio di
-equità che MaxPressure, per costruzione, non ha. È stata quindi introdotta
-deliberatamente un'arteria Est-Ovest a densità di traffico maggiore delle
-strade trasversali: ogni percorso che attraversa un segmento orizzontale
-sulla riga designata vede il proprio peso, prima della normalizzazione,
-moltiplicato per un fattore 3, una \emph{ridistribuzione} dello stesso
-budget di veicoli (le altre righe ricevono proporzionalmente meno), non
-un'aggiunta di traffico complessivo. Per non lasciare non verificata
-l'ipotesi, discussa in §\ref{sec:formalizzazione}, che una politica appresa
-possa generalizzare a un'arteria posta su una riga qualsiasi invece di
-specializzarsi sulla posizione osservata durante il training, le tre
-varianti seed hanno l'arteria su tre righe diverse della griglia; le
-configurazioni di validazione e di tutte le 7 configurazioni di test la
-mantengono invece fissa sulla stessa riga, per restare un benchmark stabile
-tra un modello e l'altro.
+I volumi dei veicoli immessi nella rete per ciascuna configurazione topologica sono stati determinati tramite una calibrazione empirica, così da garantire un livello 
+di saturazione comparabile tra reti di dimensioni diverse e quindi una difficoltà del task di controllo invariata rispetto la scala topologica.
+In particolare la densità di ogni topologia è stata bilanciata affinché il \emph{throughput} ottenuto dalla baseline \textsc{Max-Pressure} risultasse omogeneo ($90\%\text{--}94\%$).
 
-\paragraph{Split training/validazione/test.} Tabella~\ref{tab:split}
-riassume l'uso di ciascuna configurazione. Le tre varianti di training non
-sono mai usate per la selezione del modello finale o per il confronto tra
-modelli: quel ruolo spetta a una configurazione di validazione indipendente
-(§\ref{sec:training}), mentre le rimanenti 7 configurazioni (griglia
-$4\times4$ a 200m, $5\times5$ e $6\times6$, ciascuna a densità \emph{flat}
-e \emph{peak}) non sono mai viste né in training né in validazione,
-riservate esclusivamente alla misura di generalizzazione riportata nel
-Capitolo~\ref{cap:confronto}.
+\paragraph{Profilo di addestramento \emph{complete}.}
+A differenza degli scenari di validazione e test, caratterizzati da densità costanti o a singolo picco,
+il profilo di addestramento sintetizza l'evoluzione della domanda veicolare di un'intera giornata solare (24 ore) all'interno di un singolo episodio di $1800 \text{ s}$.
+Come dettagliato nella Tabella~\ref{tab:workday}, il flusso è diviso in cinque fasce a intensità variabile:
+due fasce a basso carico (assimilabili agli orari notturni), 
+due picchi di massima domanda (flussi di traffico di inizio e fine turno lavorativo) e
+un intervallo di raccordo centrale a regime moderatamente sostenuto.
+Questa marcata variazione di domanda veicolare all'interno di un singolo episodio è funzionale poiché costringe il modello ad adattare dinamicamente il piano di controllo, 
+senza convergere verso una policy specializzata soltanto su un unico flusso di traffico.
 
 \begin{table}[htbp]
 \centering
 \small
-\caption{Ruolo di ciascun gruppo di configurazioni nella pipeline sperimentale.}
-\label{tab:split}
-\begin{tabular}{@{}lp{9.5cm}@{}}
+\begin{tabular}{@{}p{4.3cm}rrr@{}}
 \toprule
-Ruolo & Configurazioni \\
+Fascia & Intervallo simulato & Step di decisione & Veicoli/secondo \\
 \midrule
-Training & 3 varianti seed della griglia $4\times4$ a 100m con flusso
-  "giornata lavorativa", cicliche un episodio alla volta \\
-Validazione & Griglia $4\times4$ a 100m, densità \emph{flat}, seed singolo:
-  usata solo per scegliere tra i due checkpoint candidati a fine training
-  (§\ref{sec:training}) \\
-Test & Le 3 configurazioni di training stesse (prestazione in-distribuzione)
-  più le 7 configurazioni rimanenti mai viste (generalizzazione a topologia,
-  spaziatura e densità) \\
+Flat basso & 0-525s     & 0-35 & 1.2 \\
+Peak basso & 525-675s   & 35-45 & 3.5 \\
+Flat alto  & 675-1200s  & 45-80 & 2.5 \\
+Peak alto  & 1200-1350s & 80-90 & 4.2 \\
+Flat basso & 1350-1800s & 90-120 & 1.2 \\
 \bottomrule
 \end{tabular}
+\caption{Le cinque fasce del profilo di addestramento \emph{complete}
+(totale: $\sim$ 4.700 veicoli).}
+\label{tab:workday}
+\end{table}
+
+\paragraph{Stocasticità e sbilanciamento direzionale.}
+Per mitigare il rischio di \emph{overfitting} e garantire la robustezza del modello, 
+la generazione del profilo di addestramento integra due accorgimenti.
+
+Innanzi tutto, considerata la natura deterministica di \textsc{CityFlow}, 
+addestrare un modello su una singola configurazione esporrebbe l'agente all'apprendimento mnemonico di un'esatta sequenza di veicoli.
+Per prevenire questa eventualità, si generano con diversi \emph{seed} tre profili di traffico differenti, in modo da perturbare 
+la distribuzione dei percorsi e gli istanti di immissione, pur mantenendo la medesima struttura generale descritta in Tabella~\ref{tab:workday}; 
+tali varianti vengono quindi alternate ciclicamente durante l'addestramento.
+Anche le configurazioni di validazione e test, su cui i modelli vengono valutati metodicamente, vengono generate con diversi \emph{seed}, 
+così da ottenere statistiche più robuste e informative sui risultati conseguiti.
+
+In secondo luogo, per mettere alla prova la capacità del modello di adattarsi a situazioni locali di traffico differenti, 
+è stata indotta un'asimmetria direzionale, designando una riga orizzontale della griglia come arteria principale (Est-Ovest),
+dunque con densità di traffico maggiore delle strade trasversali, mantenendo comunque invariato il volume totale di veicoli. 
+Tale arteria viene posta su una riga diversa per ogni variante di addestramento, al fine di scongiurare l'ipotesi che le policy sviluppate siano dipendenti dalla posizione dell'incrocio, 
+mentre viene mantenuta fissa sulla stessa riga nelle configurazioni di validazione e di test, in modo da garantire la comparabilità dei risultati.
+
+\paragraph{Training, validation e test.} La Tabella~\ref{tab:split}
+raccoglie in un unico prospetto tutte le combinazioni di griglia, spaziatura
+e profilo di traffico introdotte in questo lavoro, con il relativo utilizzo
+nella pipeline sperimentale; le varianti seed di validazione e test sono
+omesse, poiché non introducono combinazioni distinte da quelle elencate. 
+In tutto possiamo contare 11 configurazioni: 3 di training, 1 di validation e 7 di test.
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{@{}llll@{}}
+\toprule
+Griglia & Spaziatura & Profilo di traffico & Utilizzo \\
+\midrule
+$4\times4$ & 100m & Complete (arteria riga 0) & Train \\
+$4\times4$ & 100m & Complete (arteria riga 1) & Train \\
+$4\times4$ & 100m & Complete (arteria riga 2) & Train \\
+$4\times4$ & 100m & Flat                                  & Validation \\
+$4\times4$ & 100m & Peak                                  & Test \\
+$4\times4$ & 200m & Flat                                  & Test \\
+$4\times4$ & 200m & Peak                                  & Test \\
+$5\times5$ & 100m & Flat                                  & Test \\
+$5\times5$ & 100m & Peak                                  & Test \\
+$6\times6$ & 100m & Flat                                  & Test \\
+$6\times6$ & 100m & Peak                                  & Test \\
+\bottomrule
+\end{tabular}
+\caption{Tutte le combinazioni di griglia, spaziatura e profilo di traffico impiegate in questo lavoro, a meno delle varianti seed di validazione e test, con il relativo utilizzo.}
+\label{tab:split}
 \end{table}
 
 \subsection{Semplificazioni dichiarate}
@@ -454,6 +362,54 @@ esplicitamente invece di lasciarle implicite nel codice:
     non disponibile per singola corsia in \textsc{CityFlow}) sono
     approssimazioni dichiarate, non un tentativo di modellare la fisica del
     traffico in ogni dettaglio.
+  \item Tutte le topologie di questo lavoro sono griglie regolari
+    (§\ref{subsec:dataset}), con strade parallele od ortogonali e isolati
+    della stessa lunghezza fisica all'interno di una data configurazione:
+    una rete stradale reale, con incroci irregolari e distanze variabili
+    tra loro, non è rappresentata. La scelta isola l'effetto della sola
+    dimensione della griglia sulla generalizzazione dagli effetti di
+    un'irregolarità geometrica che questo lavoro non intende studiare, non
+    è un tentativo di riprodurre la topologia di una città esistente.
+  \item L'unico tipo di traffico simulato è quello veicolare privato:
+    nessun pedone, ciclista, mezzo pubblico o veicolo di soccorso compare
+    nell'ambiente, e ogni veicolo generato condivide gli stessi parametri
+    fisici (lunghezza, accelerazione massima, velocità massima) definiti
+    nel file di flusso, indipendentemente dalla configurazione. Un
+    ambiente multimodale, con partecipanti dal comportamento eterogeneo,
+    resta fuori dallo scopo di questo lavoro (si veda anche la nota sulla
+    scalabilità multimodale nel Capitolo~\ref{cap:background}).
+  \item Il limite di velocità $v_{\mathrm{urb}}=11.1$ m/s
+    (§\ref{sec:formalizzazione}) è un'unica costante globale, identica per
+    ogni corsia della rete e per ogni veicolo generato: non esiste una
+    distinzione tra un'arteria a scorrimento più veloce e una strada
+    locale, né tra tipologie di veicolo con velocità massime diverse.
+  \item Ogni intersezione di questo lavoro è a quattro vie e dispone dello
+    stesso insieme di $\mathrm{N\_PHASES}=8$ fasi semaforiche
+    (§\ref{sec:ambiente}, Tabella~\ref{tab:fasi}), incluse le intersezioni
+    ai margini della griglia con fisicamente meno di quattro strade
+    collegate, per le quali le corsie mancanti sono modellate come corsie
+    fittizie sempre a zero veicoli: un incrocio a tre vie o a rotatoria,
+    con un numero di fasi diverso da otto, non è rappresentato in nessuna
+    configurazione di questo lavoro.
+  \item Ogni corsia in ingresso è dedicata a un solo movimento (sinistra,
+    diritto o destra, §\ref{sec:ambiente}): un veicolo entra già nella
+    corsia corrispondente alla propria prossima svolta, non deve mai
+    cambiare corsia per raggiungerla. Il cambio di corsia non è permesso
+    (\texttt{laneChange=False} nella configurazione \textsc{CityFlow},
+    già usato nel Capitolo~\ref{cap:confronto}, §\ref{sec:protocollo} per
+    argomentare il determinismo bit-per-bit della simulazione): un veicolo
+    resta sulla corsia di generazione per l'intero percorso, un'assunzione
+    di comodo che evita di modellare la contrattazione tra veicoli per
+    l'accesso a una corsia, non un tentativo di riprodurre il comportamento
+    di guida reale.
+  \item Ogni strada di questo lavoro è a doppio senso di marcia: la
+    generazione parametrica del roadnet (§\ref{subsec:dataset}) crea sempre
+    due oggetti "strada" indipendenti, uno per direzione, per ogni coppia di
+    intersezioni adiacenti, ciascuno con il proprio insieme di corsie. Non
+    esiste un meccanismo per generare una strada a senso unico in nessuna
+    configurazione di questo lavoro, una semplificazione che una rete
+    stradale reale, dove i sensi unici sono comuni specialmente nei centri
+    urbani, non condivide.
 \end{itemize}
 
 \section{Baseline classiche}
@@ -533,23 +489,50 @@ rappresentazione compatta di caratteristiche locali dell'intersezione, usata
 a valle solo per generare i pesi di Meta-GAT e Meta-LSTM, mai come input
 diretto del Q-value:
 \begin{align}
-  \mathrm{SMK}(i) &= f_{\mathrm{smk}}\big(x^{\mathrm{smk}}_i\big) \in \mathbb{R}^{28 \to 64} \\
-  \mathrm{TMK}(i) &= f_{\mathrm{tmk}}\big(x^{\mathrm{tmk}}_i\big) \in \mathbb{R}^{72 \to 64}
+  \mathrm{SMK}(i) &= f_{\mathrm{smk}}\big(x^{\mathrm{smk}}_i\big) \in \mathbb{R}^{26 \to 64} \\
+  \mathrm{TMK}(i) &= f_{\mathrm{tmk}}\big(x^{\mathrm{tmk}}_i\big) \in \mathbb{R}^{25 \to 64}
 \end{align}
-dove il vettore di ingresso spaziale $x^{\mathrm{smk}}_i \in \mathbb{R}^{28}$
-concatena pressione per corsia [12], numero di veicoli per corsia [12] e
-distanza dai vicini [4]; il vettore temporale $x^{\mathrm{tmk}}_i \in
-\mathbb{R}^{72}$ concatena la lunghezza di coda per corsia [12] e lo storico
-di $n_i^t$ (§\ref{sec:formalizzazione}) sugli ultimi 5 step [60].
-La feature "location" menzionata nel paper originale per il TMK non è
-implementata in questo lavoro: un'omissione dichiarata, non una scelta
-motivata a posteriori (§\ref{subsec:framing-pro}, punto C3).
+Il vettore spaziale $x^{\mathrm{smk}}_i \in \mathbb{R}^{26}$ concatena cinque
+gruppi di feature, nessuna delle quali entra anche nello stato principale
+$s_i^t$: pressione per corsia [12], frazione di vicini reali su
+$\mathrm{num\_neighbors}$ [1], differenza tra la pressione media propria e
+quella di ciascun vicino reale [4, con $0$ per gli eventuali slot senza
+vicino], asimmetria di pressione tra le corsie N/S e le corsie E/O dello
+stesso nodo [1] e pressione per fase [8], la stessa quantità usata da
+Max-Pressure (§\ref{sec:baseline}) per scegliere la propria azione, qui
+offerta al meta-learner come segnale invece che come regola di decisione
+diretta. La frazione di vicini reali sostituisce una feature di distanza dai
+vicini presente in una prima versione di questo lavoro: su reti a lunghezza
+di strada uniforme, come tutte quelle usate qui, la distanza euclidea
+normalizzata tra due vicini reali è quasi sempre pari a $1$ per costruzione,
+una feature di fatto costante e quindi non informativa per un meta-learner.
+Il vettore temporale $x^{\mathrm{tmk}}_i \in \mathbb{R}^{25}$ concatena la
+variazione della coda per corsia rispetto a qualche passo addietro [12], da
+quanti passi consecutivi è attiva la fase corrente, saturato e normalizzato
+in $[0,1]$ [1], e la deviazione standard della coda per corsia sulla
+finestra recente [12]; sostituisce una versione precedente che includeva
+direttamente lo storico grezzo di $n_i^t$ sugli ultimi passi, ridondante con
+la memoria che la componente ricorrente del modello (§\ref{subsec:meta-lstm})
+mantiene già autonomamente nel proprio stato interno. La feature "location"
+menzionata nel paper originale per il TMK non è implementata in questo
+lavoro: un'omissione dichiarata, non una scelta motivata a posteriori
+(§\ref{subsec:framing-pro}, punto C3).
 
 \subsection{Meta-GAT}
 \label{subsec:meta-gat}
 
-Il modello usa due istanze dello stesso layer Meta-GAT, con input e
-meta-embedding diversi:
+Il meccanismo qui descritto si discosta dal GAT di
+\citet{velickovic2018gat} presentato nel Capitolo~\ref{cap:background} su
+due fronti indipendenti, non uno solo. Il primo, già anticipato in quella
+sede, è la generazione dinamica dei pesi da parte del meta-learner al posto
+di una proiezione $W$ fissa e condivisa. Il secondo, introdotto solo qui,
+riguarda la funzione di compatibilità stessa: al posto della concatenazione
+additiva $\vec a^\top[Wh_i \| Wh_j]$ di GAT, Meta-GAT adotta Query, Key e
+Value esplicite e distinte, con un prodotto scalare scalato nello stile
+dell'attenzione multi-head di \citet{vaswani2017attention} (già introdotta
+nel Capitolo~\ref{cap:background}) al posto del layer feedforward a un
+vettore $\vec a$. Il modello usa due istanze dello stesso layer Meta-GAT,
+con input e meta-embedding diversi:
 
 \begin{itemize}
   \item \textbf{Modulo CS} (spaziale puro): $Q=K=V=e_j^t$, meta-embedding

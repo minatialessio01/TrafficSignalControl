@@ -112,10 +112,26 @@ class MetaGCNLayer(nn.Module):
         # trasforma la query del nodo destinazione, non del vicino).
         V_src = value[src]                                              # (E, d1)
         V_transformed = torch.bmm(V_src.unsqueeze(1), W[dst]).squeeze(1)  # (E, d1)
-        weighted = norm.unsqueeze(-1) * V_transformed + b[dst]           # (E, d1)
+        weighted = norm.unsqueeze(-1) * V_transformed                    # (E, d1)
 
         out = torch.zeros(N, self.hidden_dim, device=value.device, dtype=value.dtype)
         out.scatter_add_(0, dst.unsqueeze(-1).expand_as(weighted), weighted)
+        # FIX 15/9/2026: il bias va sommato UNA VOLTA per nodo dopo
+        # l'aggregazione, non una volta per arco prima dello scatter_add.
+        # Prima di questo fix, "+ b[dst]" stava dentro "weighted" (sommato
+        # per ogni arco in ingresso), quindi il contributo del bias veniva
+        # moltiplicato per il grado del nodo (dopo l'aggiunta dei self-loop,
+        # 3-5 a seconda della posizione nella griglia) invece di comparire
+        # una sola volta -- un'analogia sbagliata con come MetaGATLayer usa
+        # invece b[dst] DENTRO il punteggio di attenzione (prima del softmax,
+        # dove moltiplicarlo per il grado non ha senso). Effetto pratico:
+        # nodi con grado diverso (angolo vs interno della griglia) ricevevano
+        # una distorsione di bias sistematicamente diversa, indipendente dal
+        # contenuto dello stato -- un disturbo che il resto della rete doveva
+        # imparare a compensare, verosimilmente una causa concreta della
+        # convergenza molto piu' lenta osservata rispetto a MetaSTGAT (loss
+        # ~0.017 contro ~0.001 a episodio comparabile).
+        out = out + b
 
         out = F.relu(out)  # la GCN classica ha una non-linearita' in uscita
         out = self.dropout_layer(out)

@@ -1,3 +1,4 @@
+%!TEX root = ../main.tex
 \chapter{Confronto}
 \label{cap:confronto}
 
@@ -62,10 +63,56 @@ o applicata da un controllore. Un controllore che collassa sistematicamente
 su un piccolo sottoinsieme di fasi, ad esempio, sta probabilmente reagendo a
 uno squilibrio strutturale del traffico (una direzione più trafficata delle
 altre) piuttosto che alternare in modo bilanciato; MaxPressure, per la sua
-logica greedy sulla pressione istantanea, tende in pratica a preferire
+logica greedy sulla pressione istantanea, tende di fatto a preferire
 marcatamente le fasi che servono i movimenti "diritto" rispetto a quelle
 che servono le sole svolte a sinistra, dato che i primi accumulano pressione
 più rapidamente su una rete con volumi tipici.
+
+\paragraph{Equità (\emph{fairness}) come obiettivo distinto dall'efficienza
+media.} In letteratura sul controllo semaforico, l'equità indica che tutti
+gli utenti della strada ricevano un accesso equo alle risorse
+dell'intersezione, evitando che alcuni veicoli o alcune direzioni
+sperimentino attese eccessive rispetto ad altri \citep{xiao2025tscreview}.
+È un obiettivo concettualmente distinto dall'efficienza aggregata di rete
+(travel time medio, throughput): un controllore può massimizzare il flusso
+complessivo e allo stesso tempo lasciare una minoranza di veicoli
+sistematicamente penalizzata, se la sua regola di decisione non include
+alcun meccanismo che penalizzi esplicitamente le attese prolungate. È
+esattamente il caso di Max-Pressure (§\ref{sec:baseline}): massimamente
+stabilizzante per la rete nel suo complesso \citep{varaiya2013maxpressure},
+ma privo di qualunque garanzia sulla distribuzione del servizio tra le
+direzioni, dato che sceglie sempre la fase a pressione istantanea più alta
+senza mai considerare da quanto tempo attende la direzione esclusa.
+
+Alcuni metodi recenti in letteratura affrontano il problema penalizzando
+esplicitamente le fasi responsabili di attese eccessive, tipicamente solo
+oltre una soglia, per non sacrificare le prestazioni medie quando non è
+necessario: FELight, ad esempio, introduce una metrica di equità basata sui
+tempi di attesa dei veicoli e penalizza selettivamente le fasi con ritardi
+eccessivi, riportando una riduzione delle attese prolungate su direzioni
+specifiche senza compromettere l'efficienza complessiva della rete
+\citep{xiao2025tscreview}. Questo lavoro persegue lo stesso obiettivo con un
+meccanismo diverso: il termine anti-starvation della ricompensa
+\texttt{custom} (Equazione~\ref{eq:reward-custom}) penalizza
+$\mathrm{MaxRedWait}_i^t$, l'attesa massima osservata su una corsia non
+servita dalla fase corrente, pesata dall'iperparametro $\alpha$ —
+concettualmente lo stesso principio (penalizzare la coda peggiore, non solo
+ottimizzare il throughput aggregato), applicato però a ogni passo di
+decisione per ogni intersezione, non a un sottoinsieme di fasi identificate
+a priori. È il motivo per cui questo lavoro accetta, entro certi limiti, un
+travel time medio peggiore pur di ottenere un'attesa massima più contenuta
+(§\ref{sec:risultati-alpha}): a parità di rete, un controllore che fa
+aspettare pochi veicoli molto a lungo non è preferibile a uno leggermente
+più lento in media ma che non lascia mai nessuno bloccato a tempo
+indefinito.
+
+Per misurare quanto questo meccanismo funzioni nella pratica, questo lavoro
+non si affida al solo reward (che dipende dalla parametrizzazione di
+$\alpha$ e non è confrontabile tra \texttt{reward\_mode} diversi, si veda
+l'apertura di questa sezione) ma a una metrica puramente osservazionale,
+calcolata identicamente per ogni controllore indipendentemente da come è
+stato addestrato o se non è stato addestrato affatto (Fixed-Time,
+Max-Pressure):
 
 \paragraph{Equità direzionale.} Per ogni intersezione, la massima attesa
 storica \emph{consecutiva} osservata su una corsia del gruppo N/S o del
@@ -152,16 +199,53 @@ configurazione, ogni valutazione produce esattamente la stessa traiettoria.
 La valutazione standard usa quindi un solo episodio per configurazione
 (\texttt{n\_eval=1}): ripeterlo non ridurrebbe alcuna varianza reale. Questo
 ha una conseguenza sull'interpretazione dei risultati di questo capitolo che
-va dichiarata esplicitamente: ogni numero riportato è l'esito esatto di
-un'unica realizzazione deterministica per coppia (modello, configurazione),
-non una media campionaria con un proprio errore standard. Le differenze tra
-modelli sullo stesso file di configurazione sono quindi confronti esatti, non
-stime soggette a rumore di campionamento; non è invece possibile, con i dati
-di questo lavoro, quantificare quanto un singolo risultato varierebbe se la
-stessa configurazione fosse ricampionata con un seed diverso. Le tre varianti
-di training (seed distinti sulla stessa distribuzione di traffico) sono lo
-strumento con cui questo lavoro approssima quella domanda, non la
-risolvono in senso statistico stretto.
+va dichiarata esplicitamente: un singolo numero riportato per coppia
+(modello, configurazione) è l'esito esatto di un'unica realizzazione
+deterministica, non una media campionaria con un proprio errore standard. Le
+differenze tra modelli sullo stesso file di configurazione sono quindi
+confronti esatti, non stime soggette a rumore di campionamento; resta però
+aperta la domanda di quanto un singolo risultato varierebbe se la stessa
+configurazione fosse ricampionata con un seed diverso, cioè con un'altra
+realizzazione plausibile della stessa distribuzione di traffico.
+
+\paragraph{Seed multipli sulle configurazioni di test.} Per rispondere a
+questa domanda, ciascuna delle 7 configurazioni di test (non le 3 di
+training, già esse stesse varianti seed della stessa distribuzione,
+§\ref{subsec:dataset}) è stata affiancata da fino a 4 varianti aggiuntive,
+generate con lo stesso metodo "sostanza-preservante" già usato per le
+configurazioni di validazione (§\ref{subsec:dataset}): stesso profilo di
+densità, topologia e arteria, seed diverso per il rumore su pesi delle rotte
+e istanti di spawn. Per ogni modello e ogni configurazione di test, il
+travel time medio riportato in questo capitolo è quindi, dove disponibile, la
+media su un massimo di 5 realizzazioni indipendenti (il seed originale più
+fino a 4 varianti), con la deviazione standard corrispondente riportata come
+barra d'errore nei confronti grafici. Il calcolo, condotto sull'intero parco
+di modelli ufficiali di questo lavoro (19 modelli $\times$ 7 configurazioni,
+133 coppie), permette due osservazioni:
+\begin{itemize}
+  \item Il seed singolo usato inizialmente per ogni configurazione di test
+    era leggermente pessimista rispetto alla media delle realizzazioni
+    plausibili: passando a 5 seed, il travel time medio scende in 102 coppie
+    su 133 (77\%), con uno scostamento medio di $-1.2\%$. Lo spostamento è
+    piccolo e va nella stessa direzione per la maggior parte dei modelli, per
+    cui il ranking relativo tra modelli non ne risulta capovolto nei
+    confronti di questo capitolo, ma i confronti già stretti (pochi secondi
+    di differenza) vanno letti con questo margine in mente.
+  \item La variabilità tra seed non è uniforme tra le configurazioni: la
+    deviazione standard relativa dello scostamento varia da un minimo dello
+    $0.7\%$ (\texttt{config\_4x4\_200m\_6k\_peak}) a un massimo del $2.4\%$
+    (\texttt{config\_5x5\_100m\_9.4k\_flat}), quest'ultima la configurazione
+    dove un singolo seed rischia maggiormente di non essere rappresentativo.
+    Il confronto tra la stima a 3 e a 5 seed mostra inoltre un segnale di
+    convergenza: lo scostamento medio tra le due medie è solo $-0.27\%$
+    (contro l'$-1.2\%$ tra 1 e 5 seed), indicando che gran parte del
+    guadagno informativo si ottiene già passando da 1 a 3 seed, con
+    rendimento marginale decrescente oltre quella soglia.
+\end{itemize}
+Le tre varianti di training (seed distinti sulla stessa distribuzione di
+traffico) restano lo strumento con cui questo lavoro approssima la stessa
+domanda sul lato training, per le config di training stesse, non ricampionate
+allo stesso modo delle 7 di test.
 
 \paragraph{Sistema di ablation a preset.} Ogni preset (\texttt{--ablation})
 imposta un gruppo coerente di flag, isolando un sottosistema alla volta
@@ -284,25 +368,35 @@ riflette la maggiore difficoltà intrinseca delle configurazioni di
 generalizzazione (topologie più grandi, densità di picco), non solo un
 limite di generalizzazione specifico del controllo appreso.
 
-\begin{figure}[htbp]
-\centering
-\includegraphics[width=0.95\textwidth]{compare_config_4x4_100m_train1.png}
-\caption{Confronto su \texttt{config\_4x4\_100m\_train1} (in-distribuzione):
-Fixed-Time, MaxPressure, MetaSTGAT Pro ($\alpha=0.5$/$0.2$) e
-\texttt{ablation\_temporal}. Manca solo $\alpha=0.1$ (in training): figura da
-rigenerare includendolo, insieme ai preset di ablation restanti, a valle di
-questo capitolo.}
-\label{fig:compare-train}
-\end{figure}
+% NOTA: figura temporaneamente commentata -- puntava a
+% compare_per_config/compare_config_4x4_100m_train1.png, una cartella
+% eliminata durante la riorganizzazione dei plot (rinominata nelle cartelle
+% per-esperimento compare_pro_alpha_v3/compare_ablation_study/ecc., che pero'
+% mostrano lo sweep alpha ufficiale {0.08,0.04,0.02,0.00}, non lo sweep
+% {0.5,0.2,0.0} di questa sezione, ormai superseduto). Va rigenerata insieme
+% al resto di questa sezione con i modelli ufficiali attuali, non ripristinata
+% cosi' com'era.
+% \begin{figure}[htbp]
+% \centering
+% \includegraphics[width=0.95\textwidth]{compare_config_4x4_100m_train1.png}
+% \caption{Confronto su \texttt{config\_4x4\_100m\_train1} (in-distribuzione):
+% Fixed-Time, MaxPressure, MetaSTGAT Pro ($\alpha=0.5$/$0.2$) e
+% \texttt{ablation\_temporal}. Manca solo $\alpha=0.1$ (in training): figura da
+% rigenerare includendolo, insieme ai preset di ablation restanti, a valle di
+% questo capitolo.}
+% \label{fig:compare-train}
+% \end{figure}
 
-\begin{figure}[htbp]
-\centering
-\includegraphics[width=0.95\textwidth]{compare_config_6x6_100m_11.5k_peak.png}
-\caption{Confronto sulla configurazione di generalizzazione più difficile
-($6\times6$, densità di picco), stessi sei controllori di
-Figura~\ref{fig:compare-train}.}
-\label{fig:compare-6x6-peak}
-\end{figure}
+% NOTA: figura commentata per lo stesso motivo della precedente (riferiva
+% \label{fig:compare-train}, anch'essa temporaneamente rimossa).
+% \begin{figure}[htbp]
+% \centering
+% \includegraphics[width=0.95\textwidth]{compare_config_6x6_100m_11.5k_peak.png}
+% \caption{Confronto sulla configurazione di generalizzazione più difficile
+% ($6\times6$, densità di picco), stessi sei controllori di
+% Figura~\ref{fig:compare-train}.}
+% \label{fig:compare-6x6-peak}
+% \end{figure}
 
 \section{Equità direzionale: il ruolo di \texorpdfstring{$\alpha$}{alpha}}
 \label{sec:risultati-alpha}
@@ -344,11 +438,16 @@ realizzazione deterministica per configurazione, mediata su un piccolo
 numero di configurazioni (3 o 7). L'effetto di $\alpha$ sull'equità
 direzionale è ampio e consistente in direzione su tutte le configurazioni
 osservate (non un singolo caso isolato), il che lo rende un risultato
-qualitativamente solido; non è tuttavia accompagnato da un test di
-significatività statistica in senso classico, che richiederebbe più
-istanze indipendenti della stessa configurazione, non disponibili in un
-simulatore deterministico senza generare varianti a seed multiplo aggiuntive
-(§\ref{sec:protocollo}, nota sul determinismo).
+qualitativamente solido; non è tuttavia accompagnato, per questo specifico
+sweep ($\alpha \in \{0.5, 0.2, 0.0\}$), da un test di significatività
+statistica in senso classico, che richiederebbe più istanze indipendenti
+della stessa configurazione. Il protocollo a seed multipli descritto in
+§\ref{sec:protocollo} (paragrafo "Seed multipli sulle configurazioni di
+test"), che colma esattamente questa lacuna, è stato introdotto dopo questo
+sweep e applicato allo sweep ufficiale successivo ($\alpha \in \{0.08, 0.04,
+0.02, 0.00\}$, non ancora riportato in questo capitolo alla data di stesura):
+i numeri di questa sezione restano quindi, alla data di stesura, basati su
+singola realizzazione.
 
 Il fatto che $\alpha=0.0$ sia anche il peggiore, non il migliore, su travel
 time medio e massimo (Tabelle~\ref{tab:risultati-train}-\ref{tab:risultati-test})
@@ -399,8 +498,8 @@ corretto da BPTT+burn-in (§\ref{sec:background-rl},
 \emph{hidden state staleness}) non sia solo un problema di adattamento alla
 distribuzione di training, ma pesi anche sulla capacità del modello di
 generalizzare a topologie mai viste: un'ipotesi coerente con la motivazione
-originale del meccanismo \citep{kapturowski2019r2d2}, che richiederebbe però
-il confronto con gli altri preset (in particolare \texttt{rl\_core} e
+originale del meccanismo \citep{kapturowski2019r2d2}, che richiederebbe
+tuttavia il confronto con gli altri preset (in particolare \texttt{rl\_core} e
 \texttt{replay\_stability}) per essere isolata con maggiore sicurezza dal
 contributo di Double DQN, PER e delle altre differenze architetturali che
 \texttt{temporal} lascia invece attive.
