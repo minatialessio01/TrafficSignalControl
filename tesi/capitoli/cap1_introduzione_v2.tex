@@ -1,0 +1,277 @@
+%!TEX root = ../main.tex
+\chapter{Introduzione}
+\label{cap:introduzione}
+
+\section{Motivazioni}
+\label{sec:intro-motivazioni}
+
+Un incrocio semaforizzato stabilisce periodicamente quali flussi veicolari
+autorizzare e quali arrestare. Su una singola intersezione il problema è
+garantire che i veicoli in attesa continuino a scorrere in modo regolare.
+Le soluzioni classiche affrontano questo compito in due modi. Un piano a
+tempi fissi ripete una sequenza di fasi di durata prestabilita, calcolata
+una tantum su stime di traffico medie e mai più rivista in tempo reale. Un
+controllo attuato dai sensori concede invece il verde a una direzione solo
+quando un sensore rileva la presenza di un veicolo in coda, adattandosi
+così, entro certi limiti, alle variazioni del traffico osservato.
+
+Se si considera una rete composta da più incroci, il problema cambia
+natura. La fase scelta a un'intersezione influenza, con un ritardo
+proporzionale alla distanza, il volume di veicoli in arrivo alle
+intersezioni adiacenti, per cui le decisioni prese nei singoli punti della
+rete non possono più essere indipendenti tra loro. Sistemi come SCOOT e
+SCATS rispondono a questa esigenza da diversi decenni, aggiustando
+periodicamente i piani semaforici di un'intera area urbana sulla base del
+traffico rilevato in tempo reale \citep{wei2020tscsurvey}. Il controllo
+semaforico su rete si configura quindi come un problema di coordinamento
+distribuito, non di sola ottimizzazione isolata.
+
+La diffusione di questi sistemi più adattivi nelle città resta comunque
+parziale, più per ostacoli economici e infrastrutturali che per assenza
+di alternative valide. Il problema del coordinamento semaforico resta
+però un banco di prova interessante a prescindere dalla sua adozione
+immediata sul campo, perché la stessa struttura, una rete di decisori
+locali le cui azioni si propagano ai nodi vicini con un ritardo temporale,
+ricorre in domini molto diversi dal traffico stradale. Lo stesso tipo di
+coordinamento serve, per esempio, a instradare i pacchi nei punti di
+smistamento di un centro logistico, a far muovere senza collisioni una
+flotta di veicoli automatizzati in un magazzino, o a gestire un gruppo di
+ascensori in un edificio in modo che nessun piano resti scoperto troppo a
+lungo.
+
+Valutare un controllore semaforico richiede di tenere conto di due
+proprietà distinte. La prima è l'efficienza, la capacità di ridurre il
+tempo che i veicoli impiegano ad attraversare la rete. La seconda è
+l'equità, la garanzia che nessuna direzione di traffico venga penalizzata
+sistematicamente a vantaggio delle altre. Le due proprietà non sono la
+stessa cosa e non migliorano necessariamente insieme. Un controllore può
+massimizzare il flusso complessivo e allo stesso tempo lasciare una
+minoranza di veicoli bloccata a lungo, se la sua logica di decisione non
+include alcuna attenzione esplicita al caso peggiore.
+
+Tra i controllori reattivi allo stato dell'arte, \textsc{Max-Pressure}
+\citep{varaiya2013maxpressure} è tra i più studiati. È una regola locale
+che seleziona a ogni istante la fase capace di liberare più veicoli di
+quanti ne farebbe accumulare, calcolata dalla sola differenza tra i
+veicoli in coda sulle corsie in ingresso e in uscita che quella fase
+servirebbe. Il risultato teorico che lo rende celebre riguarda proprio
+l'orizzonte lungo, non solo la decisione istantanea. Se esiste una
+qualunque strategia capace di impedire che le code di una rete crescano
+senza limite nel tempo, \textsc{Max-Pressure} la trova, pur usando solo
+informazione locale e senza conoscere in anticipo il volume di traffico
+in arrivo. Si tratta però di un risultato dimostrato sotto ipotesi
+teoriche idealizzate e verificato quasi soltanto in simulazione. Solo di
+recente alcuni progetti pilota hanno iniziato a testarne il funzionamento
+su hardware semaforico reale, e la sua diffusione resta comunque lontana
+da quella di sistemi commerciali consolidati come SCOOT e SCATS. La sua
+natura puramente greedy ha inoltre un costo sul fronte dell'equità.
+Un'intersezione posta su un'arteria ad alto scorrimento tende a favorire
+sistematicamente la direzione dominante, poiché la regola sceglie sempre
+la fase con il valore istantaneo più alto, senza mai considerare da
+quanto tempo attende la direzione esclusa. È una criticità che questo
+lavoro osserva empiricamente nel Capitolo~\ref{cap:confronto}.
+
+Alcuni metodi recenti in letteratura affrontano il problema penalizzando
+esplicitamente le fasi responsabili di attese eccessive. FELight, per
+esempio, introduce una metrica di equità basata sui tempi di attesa dei
+veicoli e penalizza le fasi già identificate come responsabili di un
+ritardo superiore a una soglia prestabilita \citep{xiao2025tscreview}.
+Questa tesi persegue lo stesso obiettivo con un meccanismo strutturalmente
+diverso, formalizzato nel Capitolo~\ref{cap:tsc-modelli}. Un termine
+dedicato della ricompensa penalizza l'attesa massima osservata su una
+corsia non servita dalla fase corrente, applicato a ogni singolo passo di
+decisione e per ogni intersezione, non soltanto quando un ritardo supera
+una soglia o riguarda una fase individuata in anticipo. È il motivo per
+cui questo lavoro accetta, entro certi limiti, un tempo di percorrenza
+medio peggiore pur di ottenere un'attesa massima più contenuta. A parità
+di rete, un controllore che fa aspettare pochi veicoli molto a lungo non
+è preferibile a uno leggermente più lento in media ma che non lascia mai
+nessuno bloccato per un tempo indefinito.
+
+Per verificare se questo meccanismo funzioni davvero, questo lavoro non
+si affida al solo segnale di ricompensa, che dipende dai propri stessi
+parametri e non è quindi un metro di giudizio imparziale, ma a una
+metrica puramente osservazionale calcolata identicamente per ogni
+controllore, indipendentemente da come è stato addestrato o se non è
+stato addestrato affatto. La metrica è il tempo massimo che un veicolo
+qualunque trascorre sulla stessa corsia senza superare l'incrocio, in una
+qualunque intersezione della rete, definita formalmente nel
+Capitolo~\ref{cap:confronto}.
+
+L'obiettivo di questo lavoro è dunque duplice, e i suoi due termini non
+sono sempre allineati. Da un lato ridurre il tempo di percorrenza medio e
+massimo dei veicoli, l'\textbf{efficienza}. Dall'altro impedire che una
+direzione di traffico venga sistematicamente sacrificata a vantaggio
+delle altre, l'\textbf{equità}. Il Capitolo~\ref{cap:confronto} mostra
+come questo compromesso si comporti concretamente al variare del peso
+assegnato alla componente di equità nella ricompensa.
+
+A questi due obiettivi se ne affianca un terzo, di natura diversa dai
+primi due e altrettanto centrale in questo lavoro. Verificare che le
+prestazioni misurate non dipendano dalla specifica rete stradale su cui
+il modello è stato addestrato, ma si mantengano, almeno in parte, su
+topologie, spaziature e condizioni di traffico mai incontrate durante il
+training. Efficienza ed equità sono gli obiettivi della politica di
+controllo. La \textbf{generalizzazione} è la condizione sotto cui questo
+lavoro pretende che entrambi restino validi.
+
+Gran parte della letteratura recente sul controllo semaforico appreso non
+affronta sistematicamente questa domanda. La prassi più diffusa è
+addestrare e valutare un modello sulla stessa rete stradale, al più
+ripetendo l'intero esperimento, addestramento incluso, su una rete
+diversa, non trasferendo un singolo modello già addestrato a una rete che
+non ha mai visto \citep{wei2020tscsurvey}. CoLight \citep{wei2019colight}
+conduce cinque esperimenti indipendenti, due su reti sintetiche e tre su
+reti reali, Manhattan, Hangzhou e Jinan, ciascuno con il proprio
+addestramento. MetaSTGAT \citep{wang2022metastgat}, il modello di
+riferimento di questo lavoro, segue lo stesso schema su una griglia
+sintetica e due dataset reali. Quando in questi lavori compare il termine
+\emph{generalization}, indica quasi sempre la tenuta a diverse intensità
+di traffico sulla stessa rete, non a una topologia strutturalmente
+diversa \citep{wang2026astgcndrl, sun2026tgmaddpg}. Zhang et al. lo
+rendono esplicito nella motivazione di GeneraLight
+\citep{zhang2020generalight}. La maggior parte dei modelli di
+reinforcement learning per il controllo semaforico è addestrata e
+valutata nello stesso ambiente di traffico, il che porta a overfitting e
+a una scarsa capacità di generalizzazione quando le condizioni reali
+cambiano.
+
+Le eccezioni che esistono restano circoscritte a un'unica dimensione di
+variazione. AttendLight \citep{oroojlooy2020attendlight} addestra su un
+insieme eterogeneo di intersezioni singole e ne verifica le prestazioni
+su intersezioni mai viste, ma dichiara che l'estensione a una rete di più
+intersezioni coordinate resta lavoro futuro. Advanced-XLight
+\citep{zhang2022advancedxlight} misura un rapporto di trasferimento tra
+un modello addestrato su un dataset reale e valutato direttamente su un
+altro, senza ulteriore addestramento, ma sempre tra reti di scala
+paragonabile. Lo stesso GeneraLight generalizza al variare del flusso di
+traffico, non della topologia della rete.
+
+Questo lavoro adotta invece la generalizzazione come requisito
+sistematico su assi che la letteratura esaminata non copre
+congiuntamente. Ogni modello, sia di reinforcement learning sia di
+riferimento classico, è addestrato una sola volta su una griglia
+$4\times4$ e valutato, senza alcun riaddestramento, su topologie di
+dimensione maggiore mai incontrate, $5\times5$ e $6\times6$, su una
+spaziatura stradale diversa, e su profili di traffico differenti da
+quello di addestramento. Il Capitolo~\ref{cap:confronto} descrive nel
+dettaglio il protocollo sperimentale adottato.
+
+Il controllo appreso tramite reinforcement learning propone un paradigma
+diverso da quello di \textsc{Max-Pressure}. Invece di una regola scritta
+a mano, una politica $\pi$ viene addestrata a massimizzare una ricompensa
+che codifica l'obiettivo di rete, osservando ripetutamente le conseguenze
+delle proprie azioni in simulazione. Applicato a una singola
+intersezione, il problema è modellabile come un processo decisionale di
+Markov standard. Su scala di rete assume invece la forma di un sistema
+multi-agente a osservabilità parziale, dove ogni nodo rileva
+esclusivamente il proprio intorno locale, ed emerge quindi la necessità
+di un meccanismo per la condivisione delle informazioni tra agenti
+adiacenti. Le reti neurali a grafo assolvono a questa funzione.
+Rappresentando la rete stradale come un grafo, con le intersezioni come
+nodi e le strade come archi, l'informazione si propaga tra nodi vicini,
+permettendo a ogni intersezione di condizionare la propria decisione
+sullo stato dei suoi vicini senza richiedere una politica centralizzata.
+
+\textbf{MetaSTGAT} \citep{wang2022metastgat} combina questi aspetti con
+uno ulteriore. Invece di condividere gli stessi pesi tra tutte le
+intersezioni della rete, un modulo di \emph{meta-learning} genera
+dinamicamente i pesi di uno strato di attenzione e di uno strato
+ricorrente a partire da caratteristiche locali dell'intersezione, così
+che nodi diversi possano essere serviti da trasformazioni diverse pur
+restando un unico modello addestrato end-to-end. Gli autori originali
+riportano una riduzione del travel time medio rispetto a CoLight
+\citep{wei2019colight}, un metodo di riferimento basato su \emph{graph
+attention} ma con pesi condivisi. La combinazione di \emph{attention} su
+grafo, ricorrenza e reinforcement learning non è isolata. Varianti di
+questo framework dominano la letteratura recente
+\citep{wang2026astgcndrl, sun2026tgmaddpg, hu2026mpnnlight}.
+
+Fin qui si è discusso come il controllo semaforico su rete sia un
+problema di coordinamento distribuito, in cui l'efficienza aggregata non
+implica alcuna garanzia di equità tra le direzioni di traffico servite,
+come dimostra il caso di \textsc{Max-Pressure}. I meccanismi di equità
+già proposti in letteratura intervengono in modo selettivo, solo oltre
+soglie o su fasi identificate in anticipo, mentre le architetture di
+controllo appreso capaci di coordinare intere reti di intersezioni, come
+MetaSTGAT, offrono il meccanismo di coordinamento ma non trattano
+l'equità come obiettivo esplicito di progettazione. La generalizzazione a
+topologie di rete, spaziature stradali o profili di traffico mai
+osservati in addestramento resta infine raramente verificata in modo
+sistematico, anche quando il termine compare esplicitamente nei lavori
+citati. Questa tesi affronta congiuntamente questi tre aspetti,
+replicando da zero l'architettura e la procedura di addestramento di
+MetaSTGAT come base sperimentale.
+
+\section{Obiettivi e Contributi di questo lavoro}
+
+L'obiettivo principale di questo lavoro è verificare se un controllore
+appreso e coordinato tramite reti neurali a grafo possa garantire equità
+tra direzioni di traffico senza rinunciare all'efficienza raggiunta da un
+controllore puramente reattivo come \textsc{Max-Pressure}, e se tale
+garanzia si mantenga su topologie, spaziature e profili di traffico mai
+incontrati in addestramento. Un obiettivo secondario, strumentale al
+primo, è isolare quale parte dell'architettura e della procedura di
+addestramento sia effettivamente responsabile del comportamento
+osservato, invece di attribuirlo indistintamente all'insieme del modello.
+Nello specifico, i contributi di questa tesi sono i seguenti.
+
+\paragraph{Un ambiente di simulazione multi-intersezione riproducibile.}
+Questa tesi costruisce da zero un ambiente su \textsc{CityFlow}
+\citep{zhang2019cityflow}, con reti stradali a griglia di dimensione
+$4\times4$, $5\times5$ e $6\times6$, due spaziature stradali distinte,
+otto fasi semaforiche per intersezione e una formalizzazione del
+problema dettagliata nel Capitolo~\ref{cap:tsc-modelli}, insieme a una
+generazione parametrica dei dati di traffico con profili a intensità
+costante, a gradino e a giornata lavorativa. In ogni configurazione il
+traffico su una riga della griglia è potenziato artificialmente per
+simulare un'arteria stradale, condizione necessaria per poter osservare
+uno squilibrio direzionale quando il traffico non è simmetrico.
+
+\paragraph{Uno studio sistematico del compromesso tra efficienza ed
+equità.} Variando il peso assegnato alla componente di equità nella
+ricompensa, questa tesi quantifica direttamente il compromesso che il
+meccanismo introduce, mostrando in particolare che rimuoverlo del tutto
+non produce un semplice guadagno di efficienza, ma un collasso della
+garanzia di equità verso il comportamento di \textsc{Max-Pressure}, come
+mostra il Capitolo~\ref{cap:confronto}.
+
+\paragraph{Uno studio di ablation sull'origine del comportamento
+osservato.} Invece di presentare le differenze rispetto alla procedura
+originale come un insieme indistinto di miglioramenti, questa tesi isola
+singolarmente ognuna di esse, dal meccanismo di stato e ricompensa fino ai
+dettagli dell'algoritmo di apprendimento, per stabilire quale parte sia
+effettivamente necessaria alla garanzia di equità osservata e quale
+sia invece indipendente da essa.
+
+\paragraph{Un confronto tra meccanismi di comunicazione spaziale a parità
+di resto dell'architettura.} Questa tesi confronta tre meccanismi di
+comunicazione tra intersezioni, \emph{graph attention}, convoluzione
+grafica e propagazione a onda ispirata a SONAR, mantenendo identico il
+resto dell'architettura, per verificare se il comportamento osservato
+dipenda specificamente dal meccanismo di attenzione appreso o sia una
+proprietà più generale della coordinazione locale via rete neurale a
+grafo.
+
+\paragraph{Un protocollo di valutazione a generalizzazione sistematica.}
+Ogni modello di questa tesi, appreso o classico, è valutato senza
+riaddestramento su topologie, spaziature e profili di traffico mai
+incontrati in addestramento, riportando media e caso peggiore del tempo
+di viaggio, la percentuale di veicoli che completano il proprio percorso
+e la massima attesa registrata da un veicolo allo stesso incrocio.
+
+\section{Struttura della tesi}
+
+Il Capitolo~\ref{cap:background} introduce il background necessario a
+leggere i capitoli successivi senza assumere familiarità pregressa con
+nessuno dei campi coinvolti, dal reinforcement learning alle reti neurali
+ricorrenti, dalle reti neurali a grafo al controllo semaforico. Il
+Capitolo~\ref{cap:tsc-modelli} formalizza il problema affrontato,
+descrive l'ambiente di simulazione e le baseline classiche, e presenta
+l'architettura di MetaSTGAT e le sue varianti insieme a ogni differenza
+introdotta rispetto all'articolo originale, motivata caso per caso. Il
+Capitolo~\ref{cap:confronto} descrive il protocollo sperimentale e
+riporta i risultati ottenuti sui tre studi, peso dell'equità, ablation,
+meccanismi spaziali. Il Capitolo~\ref{cap:conclusioni} discute i
+risultati alla luce dei tre obiettivi dichiarati in questa introduzione,
+indica le direzioni lasciate aperte e dichiara i limiti dello studio.

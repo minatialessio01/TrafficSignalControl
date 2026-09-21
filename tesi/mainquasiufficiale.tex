@@ -62,15 +62,18 @@
 
 \graphicspath{{img/}{../results/plots/compare_3stat/}{../results/plots/differenza_percentuale/}{../results/plots/}}
 
-% NOTA: stile bibliografico (natbib+plainnat) e classe (report) sono una
-% scelta di default, non un requisito d'ateneo verificato — vedi piano_tesi.md
-% §6. Da adattare se il template della sede impone altro (es. biblatex/biber,
-% classe "book" con frontespizio dedicato).
+% ── NOTA SU QUESTO FILE ──────────────────────────────────────────────────
+% "mainquasiufficiale.tex" e' il file ufficiale della tesi (main.tex resta
+% come backup della versione precedente). Compila per intero i capitoli 1
+% (Introduzione), 2 (Background) -- riscritti -- e 5 (Conclusioni) -- nuovo
+% -- insieme ai capitoli 3 e 4 (identici a quelli di main.tex), cosi' che
+% numerazione, citazioni e riferimenti incrociati risultino corretti.
+% Le pagine dei capitoli 3 e 4 vengono poi rimosse meccanicamente dal PDF
+% finale (script scratchpad, pypdf): e' l'unico modo per avere "si puo'
+% citare il capitolo 3 anche se il capitolo 3 non c'e' nel pdf" con
+% riferimenti numerici garantiti corretti.
 
 % ── Dati del frontespizio ──────────────────────────────────────────────
-% NOTA PER CHI COMPILA: i campi tra [ ] sono segnaposto, non dati reali —
-% questo file non conosce il nome dell'ateneo, del corso di laurea, del
-% relatore o del candidato. Sostituire prima della consegna.
 \newcommand{\nomeUniversita}{Università di Firenze}
 \newcommand{\nomeDipartimento}{Scuola di Scienze Matematiche Fisiche e Naturali}
 \newcommand{\nomeCorso}{Laurea Magistrale in Data Science, Calcolo Scientifico \& Intelligenza Artificiale}
@@ -98,12 +101,14 @@
   \rule{\textwidth}{0.6pt}\par
   \vspace{0.5cm}
   {\Huge \bfseries Apprendimento per Rinforzo Multi-Agente basato su Reti Neurali a Grafo per il Controllo Semaforico \par}
-  %\vspace{0.4cm}
-  %{\Large per il Controllo Semaforico Adattivo \par}
   \vspace{0.5cm}
   \rule{\textwidth}{0.6pt}\par
 
-  \vspace{2.5cm}
+  \vspace{1cm}
+  {\Large \bfseries [DOCUMENTO DI LAVORO -- QUASI-UFFICIALE] \par}
+  {\normalsize Capitoli 1, 2 e 5 in versione rivista; capitoli 3 e 4 identici a main.pdf \par}
+
+  \vspace{1.5cm}
   \begin{minipage}[t]{0.47\textwidth}
     \raggedright
     \large\textbf{Relatore}\par
@@ -121,7 +126,6 @@
   \vspace{0.5cm}
 \end{titlepage}
 
-% ── Pagina bianca (recto/verso del frontespizio) ─────────────────────────
 \newpage
 \thispagestyle{empty}
 \null
@@ -130,7 +134,7 @@
 % ── Front matter: numerazione romana ─────────────────────────────────────
 \pagenumbering{roman}
 
-\input{capitoli/sommario}
+\input{capitoli/sommario_v2}
 
 \tableofcontents
 \listoffigures
@@ -142,11 +146,11 @@
 \cleardoublepage
 \pagenumbering{arabic}
 
-\input{capitoli/cap1_introduzione}
-\input{capitoli/cap2_background}
+\input{capitoli/cap1_introduzione_v2}
+\input{capitoli/cap2_background_v2}
 \input{capitoli/cap3_tsc_e_modelli}
 \input{capitoli/cap4_confronto}
-% \input{capitoli/cap5_conclusioni}     % non ancora scritto, va per ultimo
+\input{capitoli/cap5_conclusioni_v2}
 
 \bibliographystyle{plainnat}
 \bibliography{bibliografia}

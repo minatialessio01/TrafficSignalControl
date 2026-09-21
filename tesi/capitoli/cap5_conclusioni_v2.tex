@@ -1,0 +1,154 @@
+%!TEX root = ../main.tex
+\chapter{Conclusioni}
+\label{cap:conclusioni}
+
+Il Capitolo~\ref{cap:introduzione} ha dichiarato tre obiettivi per questo
+lavoro: efficienza, equità e generalizzazione. Questo capitolo li riprende
+uno a uno alla luce dei risultati del Capitolo~\ref{cap:confronto}, indica
+le direzioni lasciate aperte e discute infine i limiti dello studio.
+
+Il confronto di base (§\ref{sec:risultati-base}) conferma che sia
+MaxPressure sia MetaSTGAT Pro battono nettamente Fixed-Time su ogni
+metrica, con l'unica eccezione del max wait in training, dove la
+rotazione fissa delle fasi di Fixed-Time impone per costruzione un
+limite all'attesa che le configurazioni di training, meno dense, non
+arrivano a violare: un limite che sparisce non appena il traffico si
+fa più intenso in test. Tra MaxPressure e Pro il compromesso al centro di
+questo lavoro emerge già a questo livello: MaxPressure resta la scelta più
+efficiente in media, Pro riduce il max wait del 34-41\% pur restando entro
+pochi punti percentuali su travel time medio.
+
+Lo studio sul peso $\alpha$ quantifica questo compromesso direttamente:
+max wait e $tt_{\max}$ peggiorano in modo pressoché monotono al diminuire
+di $\alpha$, mentre il travel time medio non peggiora in modo altrettanto
+sistematico: $\alpha=0.04$ lo riduce persino sotto quello di MaxPressure
+in test, il primo caso in questo lavoro in cui una variante RL supera
+MaxPressure su questa metrica in generalizzazione. Il caso più netto a
+sostegno della necessità del termine anti-starvation resta però
+$\alpha=0$: rimuovere la sola penalità, lasciando intatti stato, maschera
+e vincolo di visibilità, è sufficiente da solo a produrre un blocco quasi
+totale di un veicolo per l'intera durata dell'episodio su quattro dei
+cinque seed della griglia $5\times5$ più densa mai vista in training. È una
+prova diretta, non solo correlazionale, che il termine di ricompensa (non
+lo stato, non la maschera) è il meccanismo causale dietro la garanzia di
+equità osservata. Per questo motivo, nonostante $\alpha=0.04$ sia
+leggermente più efficiente in media, questo lavoro adotta $\alpha=0.08$
+come riferimento per gli studi successivi: coerentemente con la priorità
+dichiarata tra le metriche, è la configurazione più incisiva proprio sulle
+due metriche di caso peggiore che questo lavoro tiene in primo piano.
+
+Lo studio di ablation isola un effetto complementare: dei cinque preset
+confrontati, solo i due che rimuovono interamente il segnale di attesa
+dallo stato o dalla ricompensa (\texttt{paper} ed \texttt{environment})
+degradano marcatamente verso il comportamento di MaxPressure, mentre le
+tre varianti che disattivano singolarmente meccanismi dell'algoritmo di
+apprendimento (\texttt{temporal}, \texttt{single\_dqn},
+\texttt{vanilla\_buffer}) restano vicine al riferimento o lo superano su
+alcune metriche. Su 35 istanze di test, \texttt{paper} ed
+\texttt{environment} sono gli unici, insieme a MaxPressure, a bloccare un
+veicolo per quasi l'intera durata dell'episodio; nessuna delle varianti
+che conserva stato e ricompensa lo fa mai. La garanzia di equità di questo
+lavoro dipende quindi dalla combinazione di segnale di attesa nello stato
+e termine di ricompensa dedicato, non da un singolo dettaglio
+implementativo dell'algoritmo di apprendimento sottostante.
+
+Il confronto tra meccanismi spaziali aggiunge una terza componente
+necessaria: a parità di stato, ricompensa e maschera, MetaSTGCN (l'unico
+meccanismo a peso di aggregazione fissato dalla sola topologia, non
+appreso per coppia di nodi) resta sistematicamente indietro su ogni
+metrica, in un caso peggiore persino di MaxPressure nel proprio stesso
+regime di addestramento. Equità ed efficienza non sono quindi solo una
+funzione della ricompensa: richiedono anche un meccanismo di
+comunicazione capace di instradare il segnale del vicino in difficoltà
+fino a chi può agire su di esso.
+
+Ogni modello di questo lavoro è addestrato una sola volta su una griglia
+$4\times4$ e valutato, senza riaddestramento, su topologie più grandi
+($5\times5$, $6\times6$), su una spaziatura stradale diversa e su profili
+di traffico differenti. Il risultato principale è positivo ma non
+uniforme. Sulle configurazioni mai viste in training, MetaSTGAT Pro
+conserva il proprio vantaggio su MaxPressure e Fixed-Time su tutte le
+metriche principali, e le varianti che disattivano meccanismi
+dell'algoritmo di apprendimento (\texttt{single\_dqn},
+\texttt{vanilla\_buffer}) mostrano un vantaggio sul riferimento
+concentrato quasi esclusivamente su queste topologie più grandi: alla
+scala di training, lo stesso vantaggio si riduce o si inverte a seconda
+della metrica, segno che quei meccanismi aiutano soprattutto la
+generalizzazione di scala, non le prestazioni in senso assoluto.
+
+Un secondo asse di generalizzazione, la spaziatura stradale, rivela un
+meccanismo distinto: il preset \texttt{environment}, che tra le altre cose
+disattiva il vincolo sul campo visivo, degrada in modo sproporzionato
+proprio sulle due configurazioni con spaziatura di 200 metri, mai viste in
+training a nessuna spaziatura diversa da 100 metri. La causa più diretta è
+che quel vincolo limita per costruzione lo scarto tra la distribuzione di
+training e quella di test; senza di esso, il modello osserva conteggi di
+veicoli mai incontrati durante l'addestramento. Lo stesso pattern,
+attenuato, si osserva nel margine di vantaggio di \texttt{single\_dqn} e
+\texttt{vanilla\_buffer} sul max wait, che si restringe quasi a scomparire
+sulle configurazioni a 200 metri pur restando ampio sulle griglie più
+grandi: generalizzare a una scala di rete diversa e generalizzare a una
+spaziatura fisica diversa non sono la stessa cosa, e i meccanismi che
+aiutano l'una non aiutano necessariamente l'altra.
+
+Il caso di MetaSTSONAR chiude il quadro con un risultato meno atteso: a
+parità di ogni altro fattore, $L=2$ ricorrenze di propagazione superano
+$L=4$ su $tt_{\max}$ sia in training sia in test, quando il vantaggio
+teorico di un campo recettivo più ampio suggerirebbe l'opposto. Poiché lo
+svantaggio di $L=4$ è già presente alla scala di training, dove non c'è
+alcun cambio di topologia da spiegare, la causa non può essere una
+generalizzazione peggiore: è più plausibile un limite legato
+all'ottimizzazione (il gradiente deve retropropagare attraverso il doppio
+dei passi dell'equazione di propagazione, a parità di procedura di
+training) o un effetto di \emph{over-smoothing} già alla scala di
+training. Questo lavoro non arriva a isolare quale delle due spiegazioni,
+se non entrambe, sia corretta.
+
+I risultati discussi finora aprono la strada a diverse direzioni di
+ricerca. Una prima direzione, di natura metodologica, è la ripetizione
+indipendente dell'addestramento per ciascuna configurazione: distinguere
+un effetto architetturale reale dalla varianza tra run indipendenti,
+specialmente per i risultati più sottili di questo lavoro (il vantaggio
+di \texttt{single\_dqn} e \texttt{vanilla\_buffer} sulla generalizzazione
+di scala, il comportamento di MetaSTSONAR a $L=4$), richiederebbe
+ripetizioni non disponibili in questo studio. Una seconda direzione,
+sul confronto tra meccanismi spaziali, è un confronto a parametri
+pareggiati tra MetaSTGAT, MetaSTGCN e MetaSTSONAR, per isolare la
+capacità espressiva del meccanismo di aggregazione dal semplice numero di
+parametri disponibili. Una terza direzione, applicativa, è l'estensione
+della valutazione di generalizzazione a topologie stradali reali oltre
+alle griglie sintetiche di questo lavoro. Infine, i risultati sulla
+spaziatura stradale lasciano aperta una domanda diretta: se il divario di
+generalizzazione osservato dipenda specificamente dal vincolo sul campo
+visivo, come i risultati di \texttt{environment} suggeriscono, o più in
+generale da come lo stato rappresenta grandezze fisiche assolute invece
+che relative alla scala della rete; una domanda che uno studio dedicato,
+con configurazioni intermedie tra le spaziature qui testate, potrebbe
+risolvere in modo conclusivo dove questo lavoro si limita a
+un'osservazione.
+
+Nonostante i risultati ottenuti, alcuni limiti vanno considerati
+nell'applicazione pratica di questo lavoro. Ogni modello, RL o ablation,
+deriva da un singolo run di addestramento: la batteria a più seed
+introdotta nel protocollo sperimentale ripete la sola valutazione, non
+l'addestramento, per cui buona parte dei risultati più sottili discussi
+in questo capitolo resta compatibile, oltre che con le spiegazioni
+proposte, con la varianza tra run di addestramento indipendenti diversi
+dall'unico osservato. Il confronto tra meccanismi spaziali, come già
+notato, non pareggia il numero di parametri tra le tre famiglie
+confrontate: una parte del divario osservato, specialmente a sfavore di
+MetaSTGCN, potrebbe in principio riflettere anche questa differenza, non
+solo la capacità espressiva del meccanismo di aggregazione in sé. La
+valutazione di generalizzazione resta inoltre confinata a reti sintetiche
+a griglia regolare, generate parametricamente, mai a una rete stradale
+reale: un limite che questo lavoro condivide con la maggior parte della
+letteratura citata nell'introduzione, e che la sola estensione a griglie
+più grandi non risolve. Allo stesso modo, \textsc{CityFlow} privilegia la
+velocità di simulazione sul realismo microscopico del singolo veicolo
+(§\ref{sec:background-tsc}): risultati assoluti su un simulatore più
+dettagliato, o su dati reali, potrebbero differire pur lasciando invariate
+le conclusioni relative tra i controllori confrontati. Infine, il
+confronto tra modelli in questo lavoro non include un test di
+significatività statistica in senso classico: la consistenza osservata su
+più configurazioni di test e più seed di valutazione rende i risultati
+qualitativamente solidi, non un sostituto formale di un test di ipotesi.

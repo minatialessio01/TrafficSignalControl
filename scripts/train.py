@@ -19,7 +19,7 @@ per episodio — episodio % N, vedi --config), warmup ed esplorazione:
   10 episodi, 1 episodio casuale non loggato (esplorazione ciclica).
   Warmup ed esplorazione ciclica sono disattivati da --no-warmup e
   --no-cyclic-exploration (attivi di default nei preset "paper" e
-  "replay_stability", che replicano la procedura originale del paper senza
+  "vanilla_buffer", che replicano la procedura originale del paper senza
   queste aggiunte).
 
 Uso:
@@ -46,8 +46,8 @@ Uso:
   # Training con preset ablation (Proposta 1 – Sottosistemi Funzionali)
   python scripts/train.py --config configs/config_4x4_100m_train1.json --ablation environment
   python scripts/train.py --config configs/config_4x4_100m_train1.json --ablation temporal
-  python scripts/train.py --config configs/config_4x4_100m_train1.json --ablation rl_core
-  python scripts/train.py --config configs/config_4x4_100m_train1.json --ablation replay_stability
+  python scripts/train.py --config configs/config_4x4_100m_train1.json --ablation single_dqn
+  python scripts/train.py --config configs/config_4x4_100m_train1.json --ablation vanilla_buffer
   python scripts/train.py --config configs/config_4x4_100m_train1.json --ablation paper
 
   # Output in cartella specifica
@@ -184,7 +184,7 @@ def parse_args():
                              "None, che lascia la logica automatica esistente (10k se --no-per, "
                              "altrimenti DEFAULTS['buffer_size']=4800) -- usare questo flag per "
                              "isolare l'effetto della sola dimensione del buffer da quello di "
-                             "--no-per/altri flag di replay_stability, es. 'pro' + buffer 10k "
+                             "--no-per/altri flag di vanilla_buffer, es. 'pro' + buffer 10k "
                              "con PER ancora attivo.")
     parser.add_argument("--batch-size",    type=int,   default=DEFAULTS["batch_size"])
     parser.add_argument("--lr",            type=float, default=DEFAULTS["lr"])
@@ -222,11 +222,11 @@ def parse_args():
     parser.add_argument(
         "--ablation",
         default="pro",
-        choices=["pro", "paper", "environment", "temporal", "rl_core", "replay_stability"],
+        choices=["pro", "paper", "environment", "temporal", "single_dqn", "vanilla_buffer"],
         help="Preset ablation (imposta automaticamente i flag --no-*). "
              "pro=modello avanzato completo, paper=replica originale, "
              "environment=senza reward+visibilità+wait+mask, temporal=senza BPTT, "
-             "rl_core=senza Double DQN, replay_stability=senza PER/Huber/grad-clip/warmup"
+             "single_dqn=senza Double DQN, vanilla_buffer=senza PER/Huber/grad-clip/warmup"
     )
 
     # ── Ablation – Flag Atomici (possono sovrascrivere il preset) ───────────
@@ -288,6 +288,12 @@ def parse_args():
                              "mai esattamente (vedi commento su WAIT_SCALE_TAU_S in cityflow_env.py "
                              "per la scelta della costante sui dati osservati). La dimensione dello "
                              "stato non cambia (32 o 20), cambia solo la scala della feature.")
+    parser.add_argument("--lane-starvation-mask", action="store_true",
+                        help="Maschera per-corsia aggiuntiva rispetto a --no-action-mask: se una "
+                             "corsia in ingresso non riceve il verde da LANE_STARVATION_THRESHOLD "
+                             "(8) step decisionali consecutivi, lo step successivo e' limitato alle "
+                             "sole fasi che le danno il verde. Indipendente dalla maschera esistente "
+                             "sulla ripetizione della fase corrente (vedi CityFlowEnv.get_invalid_actions).")
 
     # ── Output directory esplicita ───────────────────────────────────────────
     parser.add_argument("--output-dir", default=None,
@@ -324,8 +330,8 @@ def apply_ablation_preset(args):
       paper            → tutti i --no-* + reward-mode paper
       environment      → --reward-mode paper + --no-vision-cutoff + --no-wait-vec + --no-action-mask
       temporal         → --no-bptt
-      rl_core          → --no-double-dqn
-      replay_stability → --no-per + --no-huber + --no-soft-update + --no-grad-clip
+      single_dqn       → --no-double-dqn
+      vanilla_buffer   → --no-per + --no-huber + --no-soft-update + --no-grad-clip
                          + --no-warmup + --no-cyclic-exploration + --no-tanh-meta
     """
     preset = args.ablation
@@ -376,13 +382,13 @@ def apply_ablation_preset(args):
         if args.reward_mode is None:
             args.reward_mode = "custom"
 
-    elif preset == "rl_core":
+    elif preset == "single_dqn":
         # Ablation 3: spegne M6 (Double DQN)
         _set_if_not_explicit("no_double_dqn", True)
         if args.reward_mode is None:
             args.reward_mode = "custom"
 
-    elif preset == "replay_stability":
+    elif preset == "vanilla_buffer":
         # Ablation 4: spegne M7 (PER+IS), M8 (Huber+grad+soft), M9 (warmup+cyclic), M10 (Tanh)
         _set_if_not_explicit("no_per",                True)
         _set_if_not_explicit("no_huber",              True)
@@ -543,6 +549,7 @@ def _prepare_cityflow_env(config_path: str, args, tmp_name: str = "cityflow_conf
         use_pressure_reward_term=args.pressure_reward_term,
         use_phase_pressure_state=args.phase_pressure_state,
         use_soft_wait_scale=args.soft_wait_scale,
+        use_lane_starvation_mask=args.lane_starvation_mask,
     )
     return env
 
@@ -743,7 +750,7 @@ def run_training(args):
     # Bug fissato il 16/9/2026: qui veniva sempre salvato DEFAULTS["buffer_size"]
     # (4800), anche quando la dimensione REALE del buffer (calcolata piu' sotto,
     # subito prima di istanziare DQNAgent) e' 10_000 per --no-per (quindi per
-    # ogni ablation "replay_stability"/"paper" gia' allenato) o un valore
+    # ogni ablation "vanilla_buffer"/"paper" gia' allenato) o un valore
     # esplicito passato con --buffer-size. Replicata qui la stessa logica cosi'
     # il config salvato riflette il buffer davvero usato in training.
     save_data["buffer_size"] = args.buffer_size if args.buffer_size is not None else (

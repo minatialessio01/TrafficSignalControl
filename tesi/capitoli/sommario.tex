@@ -23,21 +23,35 @@ ricompensa alla struttura del replay buffer, è isolata da un sistema di
 preset di ablation e motivata singolarmente invece di essere presentata come
 un insieme indistinto di miglioramenti.
 
-I risultati sperimentali raccolti finora confrontano le baseline classiche
-(Fixed-Time, MaxPressure) con diverse varianti del modello proposto. Un
-risultato non atteso emerge dallo sweep sul peso $\alpha$ della penalità
-anti-starvation della ricompensa: rimuoverla del tutto ($\alpha=0$) non solo
-fa collassare l'equità direzionale verso i valori di MaxPressure, ma peggiora
-anche il travel time medio e massimo rispetto alle varianti con $\alpha>0$,
-escludendo un semplice compromesso tra equità e throughput. Il confronto tra
-il modello completo e la variante senza BPTT e burn-in sulla componente
-ricorrente conferma inoltre il contributo di questo meccanismo, con un
-effetto proporzionalmente maggiore sulla generalizzazione a topologie mai
-viste che sulle configurazioni di training.
+I risultati sperimentali confrontano le baseline classiche (Fixed-Time,
+MaxPressure) con tre varianti del modello Pro che differiscono per il peso
+$\alpha$ della penalità anti-starvation ($\alpha \in \{0.08, 0.04, 0.00\}$),
+con lo studio di ablation completo sui sei preset previsti e con un
+confronto tra tre meccanismi di comunicazione spaziale a parità di resto
+dell'architettura: il \emph{graph attention} meta-condizionato del modello di
+riferimento (Meta-GAT), una convoluzione grafica meta-condizionata
+(Meta-GCN) e una propagazione ondulatoria meta-condizionata ispirata a SONAR
+(Meta-SONAR). Rimuovere del tutto la penalità anti-starvation ($\alpha=0$)
+fa collassare il max wait verso i valori di MaxPressure e allo
+stesso tempo peggiora il tempo di viaggio massimo rispetto alle varianti con
+$\alpha>0$, escludendo un semplice compromesso tra equità e throughput. Lo
+studio di ablation isola un effetto analogo su scala più ampia: disattivare
+singolarmente i meccanismi dell'algoritmo di apprendimento (Double DQN, il
+replay prioritizzato, la componente ricorrente della Meta-LSTM) lascia il
+modello vicino al riferimento su ogni metrica, mentre rimuovere insieme il
+vincolo di visibilità, il segnale di attesa nello stato e la ricompensa
+riscritta riporta il comportamento vicino a quello di un controllore
+reattivo privo di garanzie di equità.
 
-Al momento della stesura, lo studio di ablation copre due dei sei preset
-prospettati e l'estensione dell'architettura a meccanismi spaziali
-alternativi alla \emph{graph attention} (una convoluzione grafica e un
-meccanismo di propagazione a lungo raggio ispirato a SONAR) è in fase di
-progettazione: questo sommario e le conclusioni saranno aggiornati man mano
-che quel lavoro sarà completato.
+Il confronto tra meccanismi spaziali mostra un divario netto tra la
+convoluzione grafica, priva di un meccanismo di compatibilità appreso tra
+nodi, e gli altri due: Meta-GCN resta indietro su ogni metrica, mentre
+Meta-GAT e Meta-SONAR restano sostanzialmente alla pari, con il modello di
+riferimento a un solo layer che si conferma il più equo dell'intero
+confronto. La rappresentazione del tempo di attesa nello stato è infine
+un'ultima scelta di design verificata sperimentalmente: sostituire la
+normalizzazione lineare, che rende indistinguibili tutte le attese oltre i
+100 secondi, con una funzione $\tanh$ che continua a crescere ben oltre
+quella soglia migliora ogni metrica riportata, motivo per cui questa
+rappresentazione è adottata per l'intero parco di modelli di questo lavoro,
+non solo per la configurazione su cui è stata isolata.

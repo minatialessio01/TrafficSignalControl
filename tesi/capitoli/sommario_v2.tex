@@ -1,0 +1,48 @@
+%!TEX root = ../main.tex
+\chapter*{Sommario}
+\addcontentsline{toc}{chapter}{Sommario}
+
+Un incrocio semaforico deve garantire un flusso regolare dei veicoli che
+vi transitano. Le soluzioni classiche affrontano il problema attraverso
+un piano a tempi fissi, con fasi di durata prestabilita calcolata su
+stime di traffico medie, oppure attraverso un controllo attuato dai sensori, che
+concede il verde a una direzione solo quando un sensore rileva la
+presenza di un veicolo in coda.
+
+Quando gli incroci da controllare sono più di uno, emerge un problema
+ulteriore: le decisioni prese a un incrocio devono essere coordinate con
+quelle degli incroci vicini, perché il traffico smaltito da un'intersezione si riversa in
+parte in quello in entrata ad un'altra intersezione. Sistemi come SCOOT e SCATS rispondono a
+questa esigenza coordinando i piani semaforici di un'intera area urbana
+sulla base del traffico osservato in tempo reale.
+
+Entrambe le famiglie di soluzioni si basano però su euristiche definite
+manualmente e restano per questo poco flessibili di fronte a condizioni di
+traffico diverse da quelle previste in fase di progettazione. Il
+reinforcement learning offre un'alternativa, apprendendo una
+politica di controllo dall'esperienza simulata invece di codificarla
+esplicitamente. MetaSTGAT (Wang et al., 2022) ne è un esempio, con un agente RL per
+intersezione coordinato da una \emph{graph attention network} i cui pesi
+sono generati dinamicamente da un modulo di meta-learning condizionato su
+caratteristiche locali della rete stradale. Il lavoro originale si
+concentra però sull'efficienza aggregata della rete, senza verificare se
+il controllore generalizzi a topologie mai osservate in addestramento né
+se il vantaggio ottenuto sia distribuito equamente tra le direzioni di
+traffico servite.
+
+Questo lavoro replica da zero l'architettura e la procedura di training
+di MetaSTGAT, estendendola esplicitamente su questi due assi, equità e
+generalizzazione, su un ambiente costruito su \textsc{CityFlow} con reti
+a griglia di tre dimensioni ($4\times4$, $5\times5$, $6\times6$) e
+traffico generato parametricamente.
+Ogni differenza introdotta rispetto alla procedura originale è isolata da un
+sistema di preset di ablazione e motivata singolarmente.
+
+I risultati sperimentali confrontano le baseline classiche (Fixed-Time,
+MaxPressure) con tre varianti del modello proposto che pesano
+diversamente nella ricompensa la componente di equità, con uno studio di
+ablazione completo e con un confronto tra tre meccanismi di comunicazione
+spaziale alternativi. Il termine di ricompensa dedicato all'equità
+risulta essere utile per il raggiungimento della stessa e
+il meccanismo di comunicazione spaziale scelto si conferma efficace
+per l'ottenimento di un buon coordinamento tra gli incroci della rete.

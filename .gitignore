@@ -23,3 +23,21 @@ CityFlow/frontend/node_modules/
 CityFlow/frontend/replay.txt
 confronto/
 analisi_configurazioni*/
+
+# Materiale di terzi non redistribuibile su un repo pubblico (tesi altrui,
+# figure estratte da paper pubblicati, snapshot di pagine web di terzi)
+Materiale per la scrittura della tesi/phd_thesis_FINAL.pdf
+Materiale per la scrittura della tesi/Figure MetaSTGAT/
+Materiale per la scrittura della tesi/background library/
+
+# Artefatti di build LaTeX (rigenerati a ogni compilazione)
+tesi/*.aux
+tesi/*.log
+tesi/*.lof
+tesi/*.lot
+tesi/*.out
+tesi/*.toc
+tesi/*.fls
+tesi/*.fdb_latexmk
+tesi/*.blg
+tesi/indent.log

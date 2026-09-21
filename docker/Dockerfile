@@ -39,7 +39,7 @@ RUN pip3 install cityflow || (git clone https://github.com/cityflow-project/City
 WORKDIR /workspace
 
 # Copia i requirements
-COPY requirements.txt .
+COPY docker/requirements.txt .
 RUN pip3 install -r requirements.txt
 
 # Copia il progetto

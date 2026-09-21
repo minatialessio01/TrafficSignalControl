@@ -30,8 +30,8 @@ MODEL_COLORS = {
     "metastgat_paper":           "#eb6834",  # orange
     "ablation_environment":      "#1baf7a",  # aqua
     "ablation_temporal":         "#eda100",  # yellow
-    "ablation_rl_core":          "#e87ba4",  # magenta
-    "ablation_replay_stability": "#008300",  # green
+    "ablation_single_dqn":       "#e87ba4",  # magenta
+    "ablation_vanilla_buffer":   "#008300",  # green
     "fixedtime":                 "#4a3aa7",  # violet
     "maxpressure":               "#e34948",  # red
 }

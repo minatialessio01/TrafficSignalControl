@@ -1,9 +1,32 @@
-\begin{thebibliography}{22}
+\begin{thebibliography}{32}
 \providecommand{\natexlab}[1]{#1}
 \providecommand{\url}[1]{\texttt{#1}}
 \expandafter\ifx\csname urlstyle\endcsname\relax
   \providecommand{\doi}[1]{doi: #1}\else
   \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Bacciu et~al.(2020)Bacciu, Errica, Micheli, and
+  Podda]{bacciu2020gentlegnn}
+Davide Bacciu, Federico Errica, Alessio Micheli, and Marco Podda.
+\newblock A gentle introduction to deep learning for graphs.
+\newblock \emph{Neural Networks}, 129:\penalty0 203--221, 2020.
+\newblock \doi{10.1016/j.neunet.2020.06.006}.
+
+\bibitem[Bronstein et~al.(2021)Bronstein, Bruna, Cohen, and
+  Veli{\v{c}}kovi{\'c}]{bronstein2021geometric}
+Michael~M. Bronstein, Joan Bruna, Taco Cohen, and Petar Veli{\v{c}}kovi{\'c}.
+\newblock Geometric deep learning: Grids, groups, graphs, geodesics, and
+  gauges.
+\newblock \emph{arXiv preprint arXiv:2104.13478}, 2021.
+
+\bibitem[Cho et~al.(2014)Cho, van Merri{\"e}nboer, Gulcehre, Bahdanau,
+  Bougares, Schwenk, and Bengio]{cho2014gru}
+Kyunghyun Cho, Bart van Merri{\"e}nboer, Caglar Gulcehre, Dzmitry Bahdanau,
+  Fethi Bougares, Holger Schwenk, and Yoshua Bengio.
+\newblock Learning phrase representations using {RNN} encoder-decoder for
+  statistical machine translation.
+\newblock In \emph{Conference on Empirical Methods in Natural Language
+  Processing (EMNLP)}, pages 1724--1734, 2014.
 
 \bibitem[Cini et~al.(2025)Cini, Marisca, Zambon, and Alippi]{cini2025graphdl}
 Andrea Cini, Ivan Marisca, Daniele Zambon, and Cesare Alippi.
@@ -25,11 +48,27 @@ Steven Kapturowski, Georg Ostrovski, John Quan, Remi Munos, and Will Dabney.
 \newblock In \emph{International Conference on Learning Representations
   (ICLR)}, 2019.
 
+\bibitem[Kingma and Ba(2015)]{kingma2015adam}
+Diederik~P. Kingma and Jimmy Ba.
+\newblock Adam: A method for stochastic optimization.
+\newblock In \emph{International Conference on Learning Representations
+  (ICLR)}, 2015.
+
 \bibitem[Kipf and Welling(2017)]{kipf2017gcn}
 Thomas~N. Kipf and Max Welling.
 \newblock Semi-supervised classification with graph convolutional networks.
 \newblock In \emph{International Conference on Learning Representations
   (ICLR)}, 2017.
+
+\bibitem[Li(2018)]{li2018drlsurvey}
+Yuxi Li.
+\newblock Deep reinforcement learning.
+\newblock \emph{arXiv preprint arXiv:1810.06339}, 2018.
+
+\bibitem[Lipton et~al.(2015)Lipton, Berkowitz, and Elkan]{lipton2015rnnreview}
+Zachary~C. Lipton, John Berkowitz, and Charles Elkan.
+\newblock A critical review of recurrent neural networks for sequence learning.
+\newblock \emph{arXiv preprint arXiv:1506.00019}, 2015.
 
 \bibitem[Lopez et~al.(2018)Lopez, Behrisch, Bieker-Walz, Erdmann, Flötteröd,
   Hilbrich, Lücken, Rummel, Wagner, and Wießner]{lopez2018sumo}
@@ -64,6 +103,11 @@ Tom Schaul, John Quan, Ioannis Antonoglou, and David Silver.
 \newblock In \emph{International Conference on Learning Representations
   (ICLR)}, 2016.
 
+\bibitem[Shams et~al.(2018)Shams, Emtenan, and Day]{shams2018atsctaxonomy}
+Andalib Shams, A.~M.~Tahsin Emtenan, and Christopher~M. Day.
+\newblock A taxonomy of adaptive traffic signal control.
+\newblock \emph{IEEE Access}, 2018.
+
 \bibitem[Sun et~al.(2026)Sun, Yang, Li, Fang, and Zhang]{sun2026tgmaddpg}
 Chao Sun, Yuhao Yang, Jiacheng Li, Weiyi Fang, and Peng Zhang.
 \newblock A multi-agent regional traffic signal control system integrating
@@ -75,6 +119,12 @@ Chao Sun, Yuhao Yang, Jiacheng Li, Weiyi Fang, and Peng Zhang.
 Richard~S. Sutton and Andrew~G. Barto.
 \newblock \emph{Reinforcement Learning: An Introduction}.
 \newblock MIT Press, 2 edition, 2018.
+
+\bibitem[Tieleman and Hinton(2012)]{tieleman2012rmsprop}
+Tijmen Tieleman and Geoffrey Hinton.
+\newblock {Lecture 6.5-rmsprop: Divide the Gradient by a Running Average of Its
+  Recent Magnitude}, 2012.
+\newblock COURSERA: Neural Networks for Machine Learning, lecture notes.
 
 \bibitem[Trenta et~al.(2025)Trenta, Gravina, and Bacciu]{trenta2025sonar}
 Alessandro Trenta, Alessio Gravina, and Davide Bacciu.
@@ -137,6 +187,19 @@ Hua Wei, Nan Xu, Huichu Zhang, Guanjie Zheng, Xinshi Zang, Chacha Chen, Weinan
 \newblock In \emph{Proceedings of the 28th ACM International Conference on
   Information and Knowledge Management (CIKM)}, 2019.
 \newblock \doi{10.1145/3357384.3357902}.
+
+\bibitem[Wei et~al.(2020)Wei, Zheng, Gayah, and Li]{wei2020tscsurvey}
+Hua Wei, Guanjie Zheng, Vikash Gayah, and Zhenhui Li.
+\newblock A survey on traffic signal control methods.
+\newblock \emph{arXiv preprint arXiv:1904.08117}, 2020.
+
+\bibitem[Wu et~al.(2021)Wu, Pan, Chen, Long, Zhang, and Yu]{wu2021gnnsurvey}
+Zonghan Wu, Shirui Pan, Fengwen Chen, Guodong Long, Chengqi Zhang, and
+  Philip~S. Yu.
+\newblock A comprehensive survey on graph neural networks.
+\newblock \emph{IEEE Transactions on Neural Networks and Learning Systems},
+  32\penalty0 (1):\penalty0 4--24, 2021.
+\newblock \doi{10.1109/TNNLS.2020.2978386}.
 
 \bibitem[Xiao et~al.(2025)Xiao, Lu, Li, Tu, and Li]{xiao2025tscreview}
 Feng Xiao, Jiaming Lu, Lu~Li, Wenwen Tu, and Chaojing Li.

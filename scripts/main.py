@@ -71,14 +71,14 @@ MODEL_REGISTRY = {
         "ablation": "temporal",
         "trainable": True
     },
-    "ablation_rl_core": {
+    "ablation_single_dqn": {
         "model": "MetaSTGAT",
-        "ablation": "rl_core",
+        "ablation": "single_dqn",
         "trainable": True
     },
-    "ablation_replay_stability": {
+    "ablation_vanilla_buffer": {
         "model": "MetaSTGAT",
-        "ablation": "replay_stability",
+        "ablation": "vanilla_buffer",
         "trainable": True
     },
     "fixedtime": {

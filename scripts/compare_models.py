@@ -82,7 +82,7 @@ MODEL_COLORS = {
     #     presenti sopra ogni barra e dalla legenda testuale ("relief rule").
     #   - Grafico "pro/gcn/sonar 1-2 layer + maxpressure + fixedtime" (5
     #     ancore): PASS su tutti i check.
-    #   - Grafico "150 episodi" (4 tinte): PASS tranne pro/replay_stability
+    #   - Grafico "150 episodi" (4 tinte): PASS tranne pro/vanilla_buffer
     #     (blu/ciano), ΔE normale 9.9 (appena sotto la soglia 15) -- stessa
     #     mitigazione.
     # Le sfumature chiare/scure DENTRO una stessa famiglia non sono validate
@@ -91,46 +91,33 @@ MODEL_COLORS = {
     # indipendenti -- la skill stessa distingue i due usi (§color-formula.md).
 
     # --- Famiglia Pro (MetaSTGAT 1 layer, sweep su alpha): blu ---
-    "metastgat_pro_0.08_official": "#2a78d6",  # blu di riferimento (ancora di famiglia)
-    "metastgat_pro_0.04_official": "#4a8ddf",  # blu piu' chiaro
-    # alpha=0.02 tolto dallo sweep e dalla tesi il 16/9/2026 (troppi modelli):
-    # voce colore rimossa, mai riaddestrato con soft-wait-scale.
-    "pro_0.00_softwait": "#94b9ed",  # blu piu' chiaro di tutti (nessuna penalita' anti-starvation; rinominato
-                                       # da metastgat_pro_0.00_official il 16/9/2026, non riaddestrato: alpha=0
-                                       # rende inerte il termine su cui agisce soft-wait-scale)
+    # 17/9/2026: "official" non ha piu' senso ora che soft-wait-scale e' lo
+    # standard per ogni modello di questo lavoro (non piu' un asse separato
+    # da un'alternativa "official" non riaddestrata): tolta la distinzione,
+    # ogni cartella risultati e ogni chiave colore usa solo il nome pulito.
+    "pro_0.08": "#2a78d6",  # blu di riferimento (ancora di famiglia)
+    "pro_0.04": "#4a8ddf",  # blu piu' chiaro
+    "pro_0.00": "#94b9ed",  # blu piu' chiaro di tutti (alpha=0, nessuna penalita' anti-starvation)
     # Variante 2 layer (stessa famiglia Pro, stesso alpha=0.08): tinta piu'
     # scura di 0.08, per segnalare "piu' profondo/complesso" con la stessa
     # convenzione usata per GCN e SONAR sotto.
-    "metastgat_2l_pro_0.08_official": "#163f72",  # blu scuro
-    # Esperimento wait_vec morbido (tanh invece di clip duro, 16/9/2026): NON
-    # fa parte dello sweep alpha (asse diverso: rappresentazione dello stato,
-    # non peso della ricompensa), tinta deliberatamente fuori dalla famiglia
-    # blu di Pro per non suggerire un ordinamento di "intensita'" che qui non
-    # esiste. Un primo tentativo in verde falliva la separazione CVD contro
-    # il rosso di maxpressure (confusione deutan tipica rosso/verde);
-    # dark goldenrod validato con --pairs all contro fixedtime/pro_0.08_official/
-    # maxpressure (gli unici tre con cui compare in questo confronto): PASS.
-    "pro_0.08_softwait": "#b8860b",  # dark goldenrod
+    "pro_2l": "#163f72",  # blu scuro
 
     # --- Famiglia MetaSTGCN (GCN, sweep sui layer): oro ---
-    "metastgcn_2l_pro_0.08_official": "#c9a227",  # oro scuro (2 layer, "piu' forte")
-    "metastgcn_1l_pro_0.08_official": "#ddc066",  # oro chiaro (1 layer)
+    "metastgcn_2l_pro_0.08": "#c9a227",  # oro scuro (2 layer, "piu' forte")
+    "metastgcn_1l_pro_0.08": "#ddc066",  # oro chiaro (1 layer)
 
     # --- Famiglia MetaSTSONAR (sweep su L, ricorrenze): verde-teal ---
-    "metastsonar_l4_pro_0.08_official": "#0f9e8a",  # teal scuro (L=4, piu' ricorrenze)
-    "metastsonar_l2_pro_0.08_official": "#4dbfae",  # teal chiaro (L=2)
+    "metastsonar_l4_pro_0.08": "#0f9e8a",  # teal scuro (L=4, piu' ricorrenze)
+    "metastsonar_l2_pro_0.08": "#4dbfae",  # teal chiaro (L=2)
 
     # --- Ablation (sottosistemi distinti, non un continuum): tinte indipendenti ---
-    "ablation_environment_softwait":      "#1a9e77",  # verde (rinominato da ablation_environment_official
-                                                        # il 16/9/2026, non riaddestrato: preset "environment"
-                                                        # ha no_wait_vec=True, soft-wait-scale e' un no-op)
-    "ablation_temporal_official":         "#c9a227",  # oro -- stessa tinta di metastgcn_2l:
-                                                        # non compaiono mai nello stesso grafico
-    "ablation_rl_core_official":          "#c94f9e",  # magenta
-    "ablation_replay_stability_official": "#0891b2",  # ciano-blu
-    "metastgat_paper_softwait":           "#e08214",  # arancio (rinominato da metastgat_paper_official il
-                                                        # 16/9/2026, non riaddestrato: preset "paper" ha
-                                                        # no_wait_vec=True, soft-wait-scale e' un no-op)
+    "ablation_environment":      "#1a9e77",  # verde
+    "ablation_temporal":         "#c9a227",  # oro -- stessa tinta di metastgcn_2l:
+                                               # non compaiono mai nello stesso grafico
+    "ablation_single_dqn":       "#c94f9e",  # magenta
+    "ablation_vanilla_buffer":   "#0891b2",  # ciano-blu
+    "ablation_paper":            "#e08214",  # arancio
 
     # --- Baseline classiche, universali in tutti i grafici ---
     "maxpressure": "#c0392b",  # rosso
@@ -140,7 +127,7 @@ MODEL_COLORS = {
     #     (stesso modello, solo allenato piu' a lungo -- non compaiono mai
     #     insieme alla versione a 100 episodi nello stesso grafico) ---
     "metastgat_pro_0.08_official_150ep":          "#2a78d6",  # = pro_0.08 (blu)
-    "ablation_replay_stability_official_150ep":   "#0891b2",  # = replay_stability (ciano-blu)
+    "ablation_vanilla_buffer_official_150ep":     "#0891b2",  # = vanilla_buffer (ciano-blu)
     "metastsonar_l2_pro_0.08_official_150ep":     "#4dbfae",  # = sonar L=2 (teal chiaro)
 
     # ── Legacy (pre-15/9/2026, sweep {0.5,0.2,0.1,0.0} e esperimenti vari) ──
@@ -152,10 +139,11 @@ MODEL_COLORS = {
     "metastgat_pro_0.1":            "#c2185b",
     "metastgat_pro_0.0":            "#1b9e77",
     "metastgat_paper":              "#eb6834",
-    "ablation_environment":         "#1baf7a",
-    "ablation_temporal":            "#c7ad1a",
-    "ablation_rl_core":             "#b8508f",
-    "ablation_replay_stability":    "#0f7a5c",
+    # ablation_environment/temporal/single_dqn/vanilla_buffer rimosse da qui:
+    # collidevano con le chiavi correnti (stesso nome esatto, senza suffisso)
+    # ridefinite sopra dopo la rimozione di "_official"/"_softwait" -- in un
+    # dict literal Python l'ultima assegnazione vince, quindi tenerle
+    # entrambe avrebbe silenziosamente sovrascritto i colori correnti.
     "metastgat_pro_0.2_self_loop":  "#1f6b40",
     "metastgat_pro_0.0_self_loop":  "#1f6b40",
     "metastgat_pro_0.2_meta_v2":    "#b8860b",

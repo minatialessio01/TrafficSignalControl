@@ -31,12 +31,122 @@ Uno degli algoritmi che hanno ottenuto maggiore popolarità in questo ambito è
 fase con la pressione istantanea più alta (differenza tra veicoli in
 ingresso e in uscita sulle corsie servite da quella fase). \textsc{Max-Pressure}
 garantisce proprietà di stabilità della rete nel suo insieme, ma la sua
-natura puramente greedy non offre alcuna garanzia di equità. Un'intersezione
-posta su un'arteria ad alto scorrimento tende a favorire sistematicamente la 
-direzione dominante, costringendo i flussi minoritari ad attese indefinitamente lunghe: una criticità che questo lavoro osserva
-empiricamente e discute nel Capitolo~\ref{cap:tsc-modelli} (la nozione di
-equità è definita e discussa formalmente nel Capitolo~\ref{cap:confronto},
-§\ref{sec:metriche}).
+natura puramente greedy non offre alcuna garanzia di equità (\emph{fairness}):
+in letteratura sul controllo semaforico, l'equità indica che tutti gli
+utenti della strada ricevano un accesso equo alle risorse dell'intersezione,
+evitando che alcuni veicoli o alcune direzioni sperimentino attese
+eccessive rispetto ad altri \citep{xiao2025tscreview} — un obiettivo
+concettualmente distinto dall'efficienza aggregata di rete (tempo di
+percorrenza medio, throughput): un controllore può massimizzare il flusso
+complessivo e allo stesso tempo lasciare una minoranza di veicoli
+sistematicamente penalizzata, se la sua regola di decisione non include
+alcun meccanismo che penalizzi esplicitamente le attese prolungate. È
+esattamente il caso di \textsc{Max-Pressure}: un'intersezione posta su
+un'arteria ad alto scorrimento tende a favorire sistematicamente la
+direzione dominante, costringendo i flussi minoritari ad attese anche
+indefinitamente lunghe, poiché la regola sceglie sempre la fase a pressione
+istantanea più alta senza mai considerare da quanto tempo attende la
+direzione esclusa — una criticità che questo lavoro osserva empiricamente
+(Capitolo~\ref{cap:tsc-modelli}).
+
+Alcuni metodi recenti in letteratura affrontano il problema penalizzando
+esplicitamente le fasi responsabili di attese eccessive, tipicamente solo
+oltre una soglia, per non sacrificare le prestazioni medie quando non è
+necessario: FELight, ad esempio, introduce una metrica di equità basata sui
+tempi di attesa dei veicoli e penalizza selettivamente le fasi con ritardi
+eccessivi, riportando una riduzione delle attese prolungate su direzioni
+specifiche senza compromettere l'efficienza complessiva della rete
+\citep{xiao2025tscreview}. Questa tesi persegue lo stesso obiettivo con un
+meccanismo diverso, formalizzato nel Capitolo~\ref{cap:tsc-modelli}: un
+termine dedicato della ricompensa penalizza l'attesa massima osservata su
+una corsia non servita dalla fase corrente, pesato da un iperparametro che
+ne modula l'intensità — concettualmente lo stesso principio (penalizzare la
+coda peggiore, non solo ottimizzare il throughput aggregato), applicato però
+a ogni passo di decisione per ogni intersezione, non a un sottoinsieme di
+fasi identificate a priori. È il motivo per cui questo lavoro accetta, entro
+certi limiti, un tempo di percorrenza medio peggiore pur di ottenere
+un'attesa massima più contenuta: a parità di rete, un controllore che fa
+aspettare pochi veicoli molto a lungo non è preferibile a uno leggermente
+più lento in media ma che non lascia mai nessuno bloccato a tempo
+indefinito.
+
+Per misurare quanto questo meccanismo funzioni nella pratica, questo lavoro
+non si affida al solo segnale di ricompensa — che dipende dai propri stessi
+parametri e non è quindi un metro di giudizio imparziale — ma a una metrica
+puramente osservazionale, calcolata identicamente per ogni controllore
+indipendentemente da come è stato addestrato o se non è stato addestrato
+affatto: la massima attesa storica \emph{consecutiva} osservata su una
+corsia, in una qualunque intersezione della rete, $\text{wait}_{\max}$ —
+cioè la durata del più lungo singolo stallo mai osservato, non un'attesa
+cumulativa sull'intero viaggio del veicolo. La metrica include
+deliberatamente gli stalli ancora in corso al termine dell'episodio, per lo
+stesso principio di non-esclusione del caso peggiore che vale anche per il
+tempo di percorrenza (definito formalmente nel Capitolo~\ref{cap:confronto},
+§\ref{sec:metriche}): un veicolo fermo nello stesso punto dall'inizio del
+blocco fino all'ultimo istante simulato non farebbe mai scattare un nuovo
+record dopo la fine dell'episodio, e ignorare questi casi premierebbe
+indirettamente chi lascia un veicolo bloccato per sempre invece di
+penalizzarlo come merita. Il caso non è ipotetico: un'attesa di 1125
+secondi registrata da \textsc{Max-Pressure} in uno degli esperimenti di
+questo lavoro è stata verificata ricostruendo la traiettoria del veicolo
+responsabile direttamente dal replay grezzo della simulazione — il veicolo
+risultava fermo nello stesso identico punto per oltre mille secondi, quasi
+l'intera durata dell'episodio simulato.
+
+L'obiettivo di questo lavoro è dunque duplice, e i suoi due termini non
+sono sempre allineati: da un lato ridurre il tempo di percorrenza medio e
+massimo dei veicoli (efficienza), dall'altro impedire che una direzione di
+traffico venga sistematicamente sacrificata a vantaggio delle altre
+(equità). Il Capitolo~\ref{cap:confronto} mostra come questo compromesso si
+comporti concretamente al variare del peso assegnato alla componente di
+equità nella ricompensa.
+
+A questi due obiettivi se ne affianca un terzo, di natura diversa dai
+primi due: verificare che le prestazioni misurate non dipendano dalla
+specifica rete stradale su cui il modello è stato addestrato, ma si
+mantengano, almeno in parte, su topologie e condizioni di traffico mai
+incontrate durante il training.
+
+Gran parte della letteratura recente sul controllo semaforico appreso non
+affronta sistematicamente questa domanda: la prassi più diffusa è
+addestrare e valutare un modello sulla stessa rete stradale, al più
+ripetendo l'intero esperimento, addestramento incluso, su una rete
+diversa — non trasferendo un singolo modello già addestrato a una rete che
+non ha mai visto. CoLight \citep{wei2019colight} conduce cinque esperimenti
+indipendenti, due su reti sintetiche e tre su reti reali (Manhattan,
+Hangzhou, Jinan), ciascuno con il proprio addestramento; MetaSTGAT
+\citep{wang2022metastgat}, il modello di riferimento di questo lavoro,
+segue lo stesso schema su una griglia sintetica e due dataset reali. Quando
+in questi lavori compare il termine \emph{generalization}, indica quasi
+sempre la tenuta a diverse intensità di traffico sulla stessa rete, non a
+una topologia strutturalmente diversa \citep{wang2026astgcndrl,
+  sun2026tgmaddpg}. Zhang et al. lo rendono esplicito nella motivazione di
+GeneraLight \citep{zhang2020generalight}: la maggior parte dei modelli RL
+per il controllo semaforico è addestrata e valutata nello stesso ambiente
+di traffico, il che porta a overfitting e a una scarsa capacità di
+generalizzazione quando le condizioni reali cambiano — un problema
+riconosciuto abbastanza da giustificare un lavoro dedicato a risolverlo,
+il che è di per sé indicativo di quanto la generalizzazione resti
+l'eccezione, non la norma.
+
+Le eccezioni che esistono restano circoscritte a un'unica dimensione di
+variazione. AttendLight \citep{oroojlooy2020attendlight} addestra su un
+insieme eterogeneo di intersezioni singole e ne verifica le prestazioni su
+intersezioni mai viste, ma dichiara che l'estensione a una rete di più
+intersezioni coordinate resta lavoro futuro. Advanced-XLight
+\citep{zhang2022advancedxlight} misura un rapporto di trasferimento tra un
+modello addestrato su un dataset reale e valutato direttamente su un
+altro, senza ulteriore addestramento, ma sempre tra reti di scala
+paragonabile. Lo stesso GeneraLight generalizza al variare del flusso di
+traffico, non della topologia della rete.
+
+Questo lavoro adotta invece la generalizzazione come requisito sistematico
+su un asse che la letteratura esaminata non copre: ogni modello, RL o
+baseline, è addestrato una sola volta su una griglia $4\times4$ e valutato,
+senza alcun riaddestramento, anche su topologie di dimensione maggiore mai
+incontrate (griglie $5\times5$ e $6\times6$) e su una spaziatura stradale
+diversa, oltre che su profili di traffico differenti da quello di
+addestramento (Capitolo~\ref{cap:confronto}, §\ref{sec:protocollo}).
 
 Il controllo appreso tramite \emph{reinforcement learning} (RL) propone
 un paradigma differente a quello di \textsc{Max-Pressure}: invece di una regola scritta a mano, una politica

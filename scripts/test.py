@@ -112,7 +112,7 @@ def parse_args():
     # ── Ablation flags (per env) ────────────────────────────────────────
     parser.add_argument("--ablation", default="pro",
                         choices=["pro", "paper", "environment", "temporal",
-                                 "rl_core", "replay_stability"],
+                                 "single_dqn", "vanilla_buffer"],
                         help="Preset ablation: configura CityFlowEnv con i parametri "
                              "corretti durante il test (stessi usati in training)")
     parser.add_argument("--reward-mode", default=None, choices=["custom", "paper"])
@@ -144,6 +144,9 @@ def parse_args():
                         help="wait_vec = tanh(wait/300) invece del clip duro -- deve "
                              "corrispondere a come e' stato allenato il checkpoint (vedi "
                              "train.py). Non cambia la dimensione dello stato.")
+    parser.add_argument("--lane-starvation-mask", action="store_true",
+                        help="Maschera per-corsia aggiuntiva -- deve corrispondere a come e' "
+                             "stato allenato il checkpoint (vedi train.py).")
 
     # ── Valutazione ─────────────────────────────────────────────────────────
     parser.add_argument("--n-eval", type=int, default=1,
@@ -190,7 +193,7 @@ def _resolve_env_flags(args):
             args.no_wait_vec = True
         if not args.no_action_mask:
             args.no_action_mask = True
-    if preset in ("paper", "replay_stability"):
+    if preset in ("paper", "vanilla_buffer"):
         if not getattr(args, "no_tanh_meta", False):
             args.no_tanh_meta = True
     if not hasattr(args, "no_tanh_meta"):
@@ -203,6 +206,8 @@ def _resolve_env_flags(args):
         args.phase_pressure_state = False
     if not hasattr(args, "soft_wait_scale"):
         args.soft_wait_scale = False
+    if not hasattr(args, "lane_starvation_mask"):
+        args.lane_starvation_mask = False
 
 
 def _find_checkpoint(output_dir):
@@ -302,6 +307,7 @@ def evaluate(args):
         use_pressure_reward_term=args.pressure_reward_term,
         use_phase_pressure_state=args.phase_pressure_state,
         use_soft_wait_scale=args.soft_wait_scale,
+        use_lane_starvation_mask=args.lane_starvation_mask,
     )
     edge_index = env.get_edge_index().to(device)
 
@@ -466,6 +472,9 @@ def evaluate(args):
                "wait_avg_ew": round(fairness["avg_wait_ew"], 4), "wait_max_ew": round(fairness["max_wait_ew"], 4),
                "wait_max_ew_resolved": round(fairness["max_wait_ew_resolved"], 4),
                "wait_worst": round(fairness["worst_wait"], 4),
+               "wait_max_ns_full": round(fairness["max_wait_ns_full"], 4),
+               "wait_max_ew_full": round(fairness["max_wait_ew_full"], 4),
+               "wait_worst_full": round(fairness["worst_wait_full"], 4),
                **phase_pcts}
         episode_results.append(row)
 
@@ -486,7 +495,8 @@ def evaluate(args):
     fieldnames = (["episode", "travel_time", "travel_time_completed_only", "throughput", "total_vehicles",
                    "tt_max", "tt_std", "tt_p50", "tt_p90", "tt_p95", "tt_p99",
                    "wait_avg_ns", "wait_max_ns", "wait_max_ns_resolved",
-                   "wait_avg_ew", "wait_max_ew", "wait_max_ew_resolved", "wait_worst"]
+                   "wait_avg_ew", "wait_max_ew", "wait_max_ew_resolved", "wait_worst",
+                   "wait_max_ns_full", "wait_max_ew_full", "wait_worst_full"]
                   + [f"phase_pct_{p}" for p in range(8)])
     with open(csv_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -526,6 +536,9 @@ def evaluate(args):
     avg_wait_max_ew = float(np.mean([r["wait_max_ew"] for r in episode_results]))
     avg_wait_max_ew_resolved = float(np.mean([r["wait_max_ew_resolved"] for r in episode_results]))
     avg_wait_worst = float(np.mean([r["wait_worst"] for r in episode_results]))
+    avg_wait_max_ns_full = float(np.mean([r["wait_max_ns_full"] for r in episode_results]))
+    avg_wait_max_ew_full = float(np.mean([r["wait_max_ew_full"] for r in episode_results]))
+    avg_wait_worst_full = float(np.mean([r["wait_worst_full"] for r in episode_results]))
 
     print("\n" + "─"*60)
     print(f"  RISULTATI FINALI — {model_id} su {config_basename}")
@@ -537,6 +550,8 @@ def evaluate(args):
           f"(risolta={avg_wait_max_ns_resolved:.1f}s)  |  "
           f"W/E - media={avg_wait_avg_ew:.1f}s max={avg_wait_max_ew:.1f}s "
           f"(risolta={avg_wait_max_ew_resolved:.1f}s)  |  peggiore={avg_wait_worst:.1f}s")
+    print(f"  Max wait (piena corsia, ignora vision cutoff): N/S={avg_wait_max_ns_full:.1f}s  "
+          f"W/E={avg_wait_max_ew_full:.1f}s  peggiore={avg_wait_worst_full:.1f}s")
     print(f"  CSV:                {csv_path}")
     print("\u2500"*60 + "\n")
 
@@ -561,6 +576,9 @@ def evaluate(args):
         "wait_avg_ew": round(avg_wait_avg_ew, 4), "wait_max_ew": round(avg_wait_max_ew, 4),
         "wait_max_ew_resolved": round(avg_wait_max_ew_resolved, 4),
         "wait_worst": round(avg_wait_worst, 4),
+        "wait_max_ns_full": round(avg_wait_max_ns_full, 4),
+        "wait_max_ew_full": round(avg_wait_max_ew_full, 4),
+        "wait_worst_full": round(avg_wait_worst_full, 4),
     }
     summary_path = os.path.join(test_summaries_dir, f"test_summary_{config_basename}.json")
     with open(summary_path, "w") as f:

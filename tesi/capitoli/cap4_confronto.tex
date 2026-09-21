@@ -2,504 +2,856 @@
 \chapter{Confronto}
 \label{cap:confronto}
 
+Questo capitolo descrive il protocollo sperimentale di questa tesi e ne
+riporta i risultati. Definisce anzitutto le metriche di valutazione
+(§\ref{sec:metriche}) e il protocollo sperimentale
+(§\ref{sec:protocollo}); presenta poi il confronto di base tra le
+baseline classiche e MetaSTGAT Pro insieme ai tre studi sperimentali di
+questa tesi, sul peso $\alpha$ della componente di equità, sull'ablation
+della procedura di addestramento e sui meccanismi di comunicazione
+spaziale alternativi (§\ref{sec:confronti}), e ne riporta i risultati
+(§\ref{sec:risultati-baseline}).
+
 \section{Metriche di valutazione}
 \label{sec:metriche}
 
-Il reward di training (Equazioni~\ref{eq:reward-custom}-\ref{eq:reward-paper})
-non è comparabile tra modalità \texttt{custom} e \texttt{paper}, per cui ogni
-confronto in questo capitolo usa esclusivamente metriche oggettive, calcolate
-allo stesso modo indipendentemente da come un modello è stato addestrato.
+Nella letteratura sul Traffic Signal Control le metriche di valutazione
+proposte sono numerose.
+Questo capitolo introduce le 3 metrice principali utilizzate, coerentemente con il duplice obiettivo di
+questo lavoro, ovvero efficienza ed equità (come motivato nel Capitolo~\ref{cap:introduzione}):
+il \emph{travel time} (tempo di viaggio) e il \emph{trip completion} (veicoli che
+completano il percorso) per l'efficienza, il \emph{max wait} (l'attesa
+massima registrata da un veicolo ad un incrocio) per l'equità.
+C'è da sottolineare che né \emph{travel time} né
+\emph{trip completion} sono metriche che appaiono esplicitamente nella
+ricompensa dei modelli. Pertanto qualunque risultato su di esse sarà
+l'indiretta conseguenza di come la reward ha indirizzato l'apprendimento
+della policy.
 
 \paragraph{Travel time.} Per ogni veicolo $v$, il tempo di viaggio è
 \begin{equation}
   tt_v =
   \begin{cases}
-    t_{\text{arrivo}}(v) - t_{\text{spawn}}(v) & \text{se } v \text{ è arrivato entro la fine dell'episodio} \\
-    t_{\text{now}} - t_{\text{spawn}}(v) & \text{altrimenti (un lower bound del suo vero valore)}
+    t_{\text{arrivo}}(v) - t_{\text{spawn}}(v)     & \text{se } v \text{ è arrivato entro la fine dell'episodio} \\
+    t_{\text{fine episodio}} - t_{\text{spawn}}(v) & \text{altrimenti (un lower bound del vero valore)}
   \end{cases}
 \end{equation}
-La metrica ufficiale di questo lavoro, $\overline{tt}$, è la media di
-$tt_v$ calcolata sull'\emph{intera} popolazione di veicoli generati
-nell'episodio, non solo su quelli arrivati: include cioè deliberatamente i
-veicoli che non hanno completato il percorso entro la fine della
-simulazione. La ragione è evitare un bias di sopravvivenza concreto: un
+Una delle due metriche cardini in questo studio è il travel time medio $\overline{tt}$,
+ovvero la media di $ tt_v $ calcolata sull'intera popolazione di veicoli generati nell'episodio.
+Tale metrica non considera soltanto i veicoli arrivati, ma include anche i
+veicoli che non hanno completato il percorso entro la fine della simulazione.
+La ragione è evitare un bias di sopravvivenza: un
 modello che congestiona la rete e lascia arrivare solo una minoranza di
-veicoli su percorsi rimasti liberi otterrebbe, calcolando la media solo sui
-veicoli arrivati, un risultato buono calcolato su un campione piccolo e non
-rappresentativo del comportamento reale della rete; nel caso limite in cui
-nessun veicolo arrivasse affatto, quella stessa metrica restituirebbe un
-travel time di 0 secondi, il punteggio migliore possibile per il
-comportamento peggiore immaginabile. Il travel time dei soli veicoli
-arrivati ($\overline{tt}_{\text{arr}}$) è riportato in ogni tabella di
-questo capitolo come dato informativo aggiuntivo, mai come criterio con cui
-scegliere tra modelli. Una terza variante, il travel time nativo calcolato
-direttamente dal motore \textsc{CityFlow} (che adotta anch'esso la
-convenzione "solo veicoli arrivati"), non è riportata in questo capitolo:
-serve solo per un confronto diretto con un numero pubblicato in letteratura
-(il paper originale riporta un travel time di 430-470 secondi su una rete
-sintetica $4\times4$, non direttamente comparabile con i valori di questo
-lavoro data la ricompensa e la procedura di training diverse, §\ref{subsec:framing-pro}),
-non per confrontare i modelli di questo lavoro tra loro.
+veicoli su percorsi ottimizzati otterrebbe, calcolando la media solo sui
+veicoli arrivati, un risultato positivo ma non rappresentativo del comportamento reale della rete.
 
-\paragraph{Coda del travel time.} Oltre alla media, si riportano il massimo
-($tt_{\max}$), la deviazione standard e i percentili $p_{90}$/$p_{95}$/$p_{99}$
-del travel time dei veicoli arrivati: una media bassa può coesistere con una
-coda lunga di veicoli fortemente penalizzati, e nessuna delle due statistiche
-da sola distinguerebbe questo caso da una distribuzione uniformemente buona.
+La seconda vera metrica cardine in questo lavoro di tesi è il travel time massimo $\overline{tt}_{\max}$,
+ovvero il massimo tra tutti i travel time dei veicoli generati, anche in questo caso indipendentemente
+dal completamento del percorso, per motivi analoghi a quelli descritti per il travel time medio.
 
-\paragraph{Throughput.} Veicoli che hanno completato il percorso entro la
-fine dell'episodio, riportato sia in valore assoluto sia come percentuale sul
-totale dei veicoli generati (indicata $\%_{\text{compl}}$ nelle tabelle di
-questo capitolo). A differenza del travel time, il throughput non richiede
-alcuna convenzione sui veicoli non arrivati: un veicolo o ha completato il
-percorso o non lo ha fatto, senza casi intermedi da trattare.
+\paragraph{Trip completion.} Questa metrica misura la percentuale di veicoli che hanno completato il percorso entro la
+fine dell'episodio, escludendo dal totale i veicoli che in assenza di semafori e in condizioni di flusso libero non riuscirebbero comunque
+a completare il proprio percorso.
+In questo studio questa metrica viene indicata con $tc$. Il dettaglio di
+$tc$ per ogni singolo modello e ogni singola configurazione è in
+Tabella~\ref{tab:tc-adjusted}, a fine capitolo.
 
-\paragraph{Percentuali di scelta delle fasi.} Per ciascuna delle 8 fasi
-(Tabella~\ref{tab:fasi}), la frazione di passi di decisione, su tutte le
-intersezioni e l'intero episodio, in cui quella fase è stata scelta. Non è
-di per sé una metrica di prestazione, nel senso che nessun valore è
-"migliore" in assoluto: è piuttosto un diagnostico della strategia appresa
-o applicata da un controllore. Un controllore che collassa sistematicamente
-su un piccolo sottoinsieme di fasi, ad esempio, sta probabilmente reagendo a
-uno squilibrio strutturale del traffico (una direzione più trafficata delle
-altre) piuttosto che alternare in modo bilanciato; MaxPressure, per la sua
-logica greedy sulla pressione istantanea, tende di fatto a preferire
-marcatamente le fasi che servono i movimenti "diritto" rispetto a quelle
-che servono le sole svolte a sinistra, dato che i primi accumulano pressione
-più rapidamente su una rete con volumi tipici.
+\paragraph{Max wait.} Questa metrica riguarda invece il massimo periodo di tempo
+per cui un veicolo è rimasto bloccato allo stesso incrocio.
+Dunque questo valore non si azzera nel momento in cui un veicolo avanza nella corsia, ma si annulla
+soltanto se la vettura supera l'incrocio; ciò significa che max wait non considera solamente
+il lasso di tempo in cui il veicolo è rimasto fermo, ma tiene conto anche del tempo in cui lo stesso si trova in movimento all'interno della corsia senza però oltrepassare l'intersezione.
+Essa viene calcolata prendendo il massimo valore tra tutti i veicoli e
+tutte le intersezioni.
 
-\paragraph{Equità (\emph{fairness}) come obiettivo distinto dall'efficienza
-media.} In letteratura sul controllo semaforico, l'equità indica che tutti
-gli utenti della strada ricevano un accesso equo alle risorse
-dell'intersezione, evitando che alcuni veicoli o alcune direzioni
-sperimentino attese eccessive rispetto ad altri \citep{xiao2025tscreview}.
-È un obiettivo concettualmente distinto dall'efficienza aggregata di rete
-(travel time medio, throughput): un controllore può massimizzare il flusso
-complessivo e allo stesso tempo lasciare una minoranza di veicoli
-sistematicamente penalizzata, se la sua regola di decisione non include
-alcun meccanismo che penalizzi esplicitamente le attese prolungate. È
-esattamente il caso di Max-Pressure (§\ref{sec:baseline}): massimamente
-stabilizzante per la rete nel suo complesso \citep{varaiya2013maxpressure},
-ma privo di qualunque garanzia sulla distribuzione del servizio tra le
-direzioni, dato che sceglie sempre la fase a pressione istantanea più alta
-senza mai considerare da quanto tempo attende la direzione esclusa.
+Come per il travel time, include anche gli stalli ancora in corso al
+termine dell'episodio.
+In questo studio max wait viene indicato con $\text{wait}_{\max}$.
 
-Alcuni metodi recenti in letteratura affrontano il problema penalizzando
-esplicitamente le fasi responsabili di attese eccessive, tipicamente solo
-oltre una soglia, per non sacrificare le prestazioni medie quando non è
-necessario: FELight, ad esempio, introduce una metrica di equità basata sui
-tempi di attesa dei veicoli e penalizza selettivamente le fasi con ritardi
-eccessivi, riportando una riduzione delle attese prolungate su direzioni
-specifiche senza compromettere l'efficienza complessiva della rete
-\citep{xiao2025tscreview}. Questo lavoro persegue lo stesso obiettivo con un
-meccanismo diverso: il termine anti-starvation della ricompensa
-\texttt{custom} (Equazione~\ref{eq:reward-custom}) penalizza
-$\mathrm{MaxRedWait}_i^t$, l'attesa massima osservata su una corsia non
-servita dalla fase corrente, pesata dall'iperparametro $\alpha$ —
-concettualmente lo stesso principio (penalizzare la coda peggiore, non solo
-ottimizzare il throughput aggregato), applicato però a ogni passo di
-decisione per ogni intersezione, non a un sottoinsieme di fasi identificate
-a priori. È il motivo per cui questo lavoro accetta, entro certi limiti, un
-travel time medio peggiore pur di ottenere un'attesa massima più contenuta
-(§\ref{sec:risultati-alpha}): a parità di rete, un controllore che fa
-aspettare pochi veicoli molto a lungo non è preferibile a uno leggermente
-più lento in media ma che non lascia mai nessuno bloccato a tempo
-indefinito.
-
-Per misurare quanto questo meccanismo funzioni nella pratica, questo lavoro
-non si affida al solo reward (che dipende dalla parametrizzazione di
-$\alpha$ e non è confrontabile tra \texttt{reward\_mode} diversi, si veda
-l'apertura di questa sezione) ma a una metrica puramente osservazionale,
-calcolata identicamente per ogni controllore indipendentemente da come è
-stato addestrato o se non è stato addestrato affatto (Fixed-Time,
-Max-Pressure):
-
-\paragraph{Equità direzionale.} Per ogni intersezione, la massima attesa
-storica \emph{consecutiva} osservata su una corsia del gruppo N/S o del
-gruppo W/E (§\ref{sec:formalizzazione}): consecutiva nel senso che il
-contatore si azzera non appena il veicolo interessato si muove, non è quindi
-un'attesa cumulativa sull'intero viaggio del veicolo, ma la durata del più
-lungo singolo stallo mai osservato su una corsia di quel gruppo, in
-qualunque punto della rete. Il gruppo N/S raccoglie le corsie percorse da
-chi attraversa l'incrocio in direzione verticale (arrivando da Nord o da
-Sud), il gruppo W/E quelle percorse da chi lo attraversa in direzione
-orizzontale: è una classificazione per corsia fisica di approccio
-all'incrocio in un dato istante, non un'origine o una destinazione del
-viaggio del veicolo. Il valore ufficiale, $\text{wait\_max}_{\text{NS}}$
-e $\text{wait\_max}_{\text{EW}}$, è il massimo di questa quantità su tutte
-le intersezioni della rete, e include gli stalli ancora in corso al
-termine dell'episodio (censura a destra), per lo stesso principio di
-non-esclusione del caso peggiore applicato al travel time: un veicolo
-fermo nello stesso punto dal momento in cui si è bloccato fino all'ultimo
-istante simulato non fa mai scattare, per definizione, un nuovo record
-\emph{dopo} la fine dell'episodio, e una metrica che considerasse solo gli
-stalli conclusi lo farebbe sparire, premiando indirettamente chi lascia un
-veicolo bloccato per sempre invece di penalizzarlo come merita. Il caso non
-è ipotetico: durante lo sviluppo di questa metrica, un valore di
-$\text{wait\_max}_{\text{NS}}=1125$ secondi riportato da MaxPressure è stato
-verificato ricostruendo la traiettoria del veicolo responsabile direttamente
-dal replay grezzo della simulazione (posizione per veicolo, secondo per
-secondo, un canale indipendente da qualunque contabilità interna del
-codice): il veicolo risultava fermo nello stesso identico punto dal secondo
-679 fino al secondo 1799, l'ultimo istante simulato dell'intero episodio,
-uno stallo la cui vera durata resta sconosciuta perché la simulazione si è
-fermata, non perché il veicolo sia stato servito. Questa metrica non compare
-nella ricompensa di alcun modello: è puramente osservazionale, pensata
-per verificare se il termine anti-starvation della ricompensa \texttt{custom}
-(Equazione~\ref{eq:reward-custom}) produce un vantaggio reale rispetto a
-MaxPressure, che non ha alcuna nozione di equità, né di un vincolo simile
-alla maschera sulle azioni consecutive che regola invece l'agente RL
-(§\ref{sec:formalizzazione}): i due meccanismi restano concettualmente
-indipendenti, e il rispetto dell'uno non implica il rispetto dell'altro. Una
-variante di questa metrica, che considera solo gli stalli conclusi entro la
-fine dell'episodio (esclude cioè la censura a destra discussa sopra), è
-calcolata e riportata come colonna secondaria in ogni tabella di riepilogo,
-ma non è mai usata come criterio ufficiale di confronto in questo capitolo,
-per lo stesso principio di non-esclusione del caso peggiore.
+La presente metrica non va confusa con $\mathrm{MaxRedWait}_i^t$, il termine
+usato nella ricompensa (Capitolo~\ref{cap:tsc-modelli}) per
+penalizzare l'attesa durante il training. $\mathrm{MaxRedWait}_i^t$ è
+calcolato a ogni singolo passo di decisione, su una sola intersezione alla
+volta, ma soprattutto è limitata al campo visivo dell'incrocio.
+$\text{wait}_{\max}$ è invece calcolato una sola volta a fine
+episodio, come massimo su tutta la rete, e fa riferimento all'intera corsia.
 
 \section{Protocollo sperimentale}
 \label{sec:protocollo}
 
-\paragraph{Training, validazione, test.} Ogni modello RL è addestrato in
-ciclo su tre varianti a seed diverso della stessa configurazione base
-(\texttt{config\_4x4\_100m\_train}, \texttt{\_s2}, \texttt{\_s3}), con
-l'arteria Est-Ovest su una riga diversa in ciascuna (righe 1, 2, 0
-rispettivamente, §\ref{sec:ambiente}): un episodio di training appartiene
-sempre a una sola variante, alternata deterministicamente per numero di
-episodio. A fine training, due checkpoint candidati, l'ultimo episodio
-(\texttt{final\_model.pth}) e l'episodio con il miglior travel time mai
-osservato durante il training (\texttt{best\_model.pt}, non necessariamente
-l'ultimo), sono valutati per un episodio ciascuno su una configurazione di
-validazione indipendente, \texttt{config\_4x4\_100m\_6k\_flat}, mai usata né
-in training né nel confronto finale tra modelli; il vincitore diventa
-\texttt{selected\_model.pth}, il checkpoint cercato con priorità massima da
-ogni valutazione successiva (in sua assenza, la ricerca ripiega su
-\texttt{final\_model.pth}, poi su \texttt{best\_model.pt}, poi sul
-checkpoint periodico più recente disponibile). Ogni valutazione, sia in
-questa fase di selezione sia nella batteria di test descritta sotto, avviene
-a $\varepsilon=0$: nessuna esplorazione residua, solo la politica appresa
-allo stato puro, dato che introdurre azioni casuali in fase di valutazione
-misurerebbe la qualità di una politica che non è quella che si intende
-effettivamente confrontare.
+Ogni modello RL è addestrato sulle tre configurazioni di training presentate nella Tabella~\ref{tab:split}, riportata
+per comodità di lettura qui sotto.
 
-\paragraph{Batteria di test.} Ogni modello, RL o baseline, è valutato sulle
+\begin{table}[htbp]
+  \centering
+  \footnotesize
+  \begin{tabular}{@{}lllll@{}}
+    \toprule
+    Griglia    & Spaziatura & Profilo di traffico       & Utilizzo    & Configurazione                          \\
+    \midrule
+    $4\times4$ & 100m       & Complete (arteria riga 0) & Train, Test & \texttt{config\_4x4\_100m\_train1}      \\
+    $4\times4$ & 100m       & Complete (arteria riga 1) & Train, Test & \texttt{config\_4x4\_100m\_train2}      \\
+    $4\times4$ & 100m       & Complete (arteria riga 2) & Train, Test & \texttt{config\_4x4\_100m\_train3}      \\
+    $4\times4$ & 100m       & Flat                      & Validation  & \texttt{config\_4x4\_100m\_6k\_flat}    \\
+    $4\times4$ & 100m       & Peak                      & Test        & \texttt{config\_4x4\_100m\_6k\_peak}    \\
+    $4\times4$ & 200m       & Flat                      & Test        & \texttt{config\_4x4\_200m\_6k\_flat}    \\
+    $4\times4$ & 200m       & Peak                      & Test        & \texttt{config\_4x4\_200m\_6k\_peak}    \\
+    $5\times5$ & 100m       & Flat                      & Test        & \texttt{config\_5x5\_100m\_9.4k\_flat}  \\
+    $5\times5$ & 100m       & Peak                      & Test        & \texttt{config\_5x5\_100m\_9.4k\_peak}  \\
+    $6\times6$ & 100m       & Flat                      & Test        & \texttt{config\_6x6\_100m\_11.5k\_flat} \\
+    $6\times6$ & 100m       & Peak                      & Test        & \texttt{config\_6x6\_100m\_11.5k\_peak} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Seguendo un ciclo fisso, le tre configurazioni si alternano episodio per
+episodio. A fine training, l'ultimo checkpoint e quello che ha ottenuto il
+valore di loss più basso durante l'intero addestramento sono confrontati
+sulla configurazione di validazione \texttt{config\_4x4\_100m\_6k\_flat},
+mediando $\overline{tt}$ su 5 seed diversi.
+Questa fase serve a evitare due problemi che si concatenano tra loro.
+Il primo è che in un ciclo di
+apprendimento online la politica non converge necessariamente in modo
+monotono, dunque gli ultimi episodi addestrati potrebbero allontanare la policy da un
+punto di minimo quantomeno locale.
+Il secondo è che la scelta del modello che ha registrato la loss minima non garantisce
+le capacità di generalizzazione del modello, in quanto una loss bassa potrebbe
+anche essere sintomo di una policy che ha soltanto memorizzato delle condizioni particolari delle
+configurazioni di training, senza però aver realmente appreso una politica in grado di generalizzare.
+
+Il modello che risulta essere migliore in questa fase di selezione, viene poi utilizzato nella fase di test.
+Ogni valutazione, sia in validation sia nella batteria di test che descriveremo ora, avviene con $\varepsilon=0$:
+nessuna esplorazione residua, solo la politica appresa allo stato puro. Inoltre i risultati ottenuti in ciascuna
+configurazione testata, sono mediati su 5 seed diversi, analogamente a quanto fatto per $\overline{tt}$ nella fase di validazione.
+
+Misurare la capacità di generalizzazione dei modelli è uno degli obiettivi
+dichiarati di questo lavoro (Capitolo~\ref{cap:introduzione}), un asse che
+gran parte della letteratura sul controllo semaforico appreso non copre
+sistematicamente, in quanto la prassi più diffusa, seguita anche dall'articolo
+originale di MetaSTGAT \citep{wang2022metastgat}, è addestrare e valutare un modello sulla stessa
+rete stradale, senza mai trasferirlo a una topologia diversa.
+
+Per questo motivo la batteria di test di questo lavoro include sia le 3
+configurazioni di training sia 7 configurazioni aggiuntive mai viste
+durante l'addestramento. Le prime permettono un confronto diretto con la
+prassi di letteratura appena descritta, riportando un risultato ottenuto
+nelle stesse condizioni con cui la maggior parte degli altri lavori
+riporta il proprio; le seconde, assenti nella maggior parte degli studi
+citati, misurano invece se le prestazioni osservate si confermano anche con il cambio
+di topologia e di condizioni di traffico.
+
+Ogni modello, RL o baseline, è dunque valutato sistematicamente sulle
 stesse 10 configurazioni: le 3 varianti di training stesse (per misurare la
 prestazione in-distribuzione) più 7 configurazioni mai viste in training
 (4x4 a 200m invece di 100m, $5\times5$ e $6\times6$ a densità sia
 \emph{flat} sia \emph{peak}), usate per misurare la generalizzazione a
-topologie e densità di traffico diverse. Testare ogni modello su entrambi i
-gruppi, non solo sulle configurazioni di generalizzazione, è la prassi
-adottata in questo lavoro dopo averla resa parte dell'orchestrazione
-standard (\texttt{main.py}).
+topologie e densità di traffico diverse.
 
-\paragraph{Determinismo della simulazione.} Con flusso di traffico e seed
-fissati nel file di configurazione e \texttt{laneChange=False},
-\textsc{CityFlow} è deterministico bit-per-bit: a parità di modello e
-configurazione, ogni valutazione produce esattamente la stessa traiettoria.
-La valutazione standard usa quindi un solo episodio per configurazione
-(\texttt{n\_eval=1}): ripeterlo non ridurrebbe alcuna varianza reale. Questo
-ha una conseguenza sull'interpretazione dei risultati di questo capitolo che
-va dichiarata esplicitamente: un singolo numero riportato per coppia
-(modello, configurazione) è l'esito esatto di un'unica realizzazione
-deterministica, non una media campionaria con un proprio errore standard. Le
-differenze tra modelli sullo stesso file di configurazione sono quindi
-confronti esatti, non stime soggette a rumore di campionamento; resta però
-aperta la domanda di quanto un singolo risultato varierebbe se la stessa
-configurazione fosse ricampionata con un seed diverso, cioè con un'altra
-realizzazione plausibile della stessa distribuzione di traffico.
+\section{Confronti proposti}
+\label{sec:confronti}
 
-\paragraph{Seed multipli sulle configurazioni di test.} Per rispondere a
-questa domanda, ciascuna delle 7 configurazioni di test (non le 3 di
-training, già esse stesse varianti seed della stessa distribuzione,
-§\ref{subsec:dataset}) è stata affiancata da fino a 4 varianti aggiuntive,
-generate con lo stesso metodo "sostanza-preservante" già usato per le
-configurazioni di validazione (§\ref{subsec:dataset}): stesso profilo di
-densità, topologia e arteria, seed diverso per il rumore su pesi delle rotte
-e istanti di spawn. Per ogni modello e ogni configurazione di test, il
-travel time medio riportato in questo capitolo è quindi, dove disponibile, la
-media su un massimo di 5 realizzazioni indipendenti (il seed originale più
-fino a 4 varianti), con la deviazione standard corrispondente riportata come
-barra d'errore nei confronti grafici. Il calcolo, condotto sull'intero parco
-di modelli ufficiali di questo lavoro (19 modelli $\times$ 7 configurazioni,
-133 coppie), permette due osservazioni:
-\begin{itemize}
-  \item Il seed singolo usato inizialmente per ogni configurazione di test
-    era leggermente pessimista rispetto alla media delle realizzazioni
-    plausibili: passando a 5 seed, il travel time medio scende in 102 coppie
-    su 133 (77\%), con uno scostamento medio di $-1.2\%$. Lo spostamento è
-    piccolo e va nella stessa direzione per la maggior parte dei modelli, per
-    cui il ranking relativo tra modelli non ne risulta capovolto nei
-    confronti di questo capitolo, ma i confronti già stretti (pochi secondi
-    di differenza) vanno letti con questo margine in mente.
-  \item La variabilità tra seed non è uniforme tra le configurazioni: la
-    deviazione standard relativa dello scostamento varia da un minimo dello
-    $0.7\%$ (\texttt{config\_4x4\_200m\_6k\_peak}) a un massimo del $2.4\%$
-    (\texttt{config\_5x5\_100m\_9.4k\_flat}), quest'ultima la configurazione
-    dove un singolo seed rischia maggiormente di non essere rappresentativo.
-    Il confronto tra la stima a 3 e a 5 seed mostra inoltre un segnale di
-    convergenza: lo scostamento medio tra le due medie è solo $-0.27\%$
-    (contro l'$-1.2\%$ tra 1 e 5 seed), indicando che gran parte del
-    guadagno informativo si ottiene già passando da 1 a 3 seed, con
-    rendimento marginale decrescente oltre quella soglia.
-\end{itemize}
-Le tre varianti di training (seed distinti sulla stessa distribuzione di
-traffico) restano lo strumento con cui questo lavoro approssima la stessa
-domanda sul lato training, per le config di training stesse, non ricampionate
-allo stesso modo delle 7 di test.
+Il confronto sperimentale di questo capitolo è organizzato in tre studi indipendenti.
+Ognuno di essi isola un solo asse di variazione rispetto al
+modello di riferimento ($\alpha=0.08$, MetaSTGAT a un layer) a cui ci riferiremo con il termine \emph{MetaSTGAT Pro},
+lasciando invariato tutto il resto. Verranno analizzati nel seguito i tre studi proposti.
+Ciascun confronto conterrà al suo interno, come riferimento, le due baseline classiche, Fixed-Time e MaxPressure, e il modello \emph{MetaSTGAT Pro}.
 
-\paragraph{Sistema di ablation a preset.} Ogni preset (\texttt{--ablation})
-imposta un gruppo coerente di flag, isolando un sottosistema alla volta
-rispetto al modello Pro:
+\subsection{Studio del peso \texorpdfstring{$\alpha$}{alpha}}
+
+Il primo studio (§\ref{sec:risultati-baseline}) pone a confronto tre varianti del
+modello MetaSTGAT Pro che differiscono solo per il valore del peso $\alpha$ riguardante la penalità anti-starvation
+nella ricompensa (Eq.~\ref{eq:reward-custom}).
+In particolare vengono valutati i valori di $\alpha \in \{0.08, 0.04, 0.00\}$.
+È il confronto più diretto per quantificare il compromesso tra efficienza ed
+equità dichiarato come obiettivo di questo lavoro.
+Variando solo questo iperparametro della ricompensa, senza toccare stato o architettura,
+osserveremo quanto costa in termini di travel time medio ottenere una data riduzione del travel time massimo e del max wait.
+
+\subsection{Studio di ablazione}
+
+Il secondo confronto (§\ref{sec:ablation-risultati}) isola sistematicamente ogni blocco di differenze
+tra l'implementazione di questo lavoro e la procedura
+descritta nell'articolo originale di MetaSTGAT, tramite 6 preset che
+vanno dalla replica fedele del paper al modello MetaSTGAT Pro.
+È un confronto necessario perché né l'uno né l'altro estremo, da soli,
+spiegano il divario di prestazioni osservato tra i due: isolare un
+sottosistema alla volta permette di attribuire quel divario a cause specifiche.
+
+Ogni preset applica un gruppo coerente di scelte configurative,
+isolando un sottosistema alla volta rispetto al modello MetaSTGAT Pro (§\ref{subsec:framing-pro}):
 
 \begin{table}[htbp]
-\centering
-\small
-\caption{Preset di ablation e sottosistema isolato da ciascuno.}
-\label{tab:ablation-preset}
-\begin{tabular}{@{}llp{8.5cm}@{}}
-\toprule
-Preset & Reward & Cosa isola rispetto a Pro \\
-\midrule
-\texttt{pro} & \texttt{custom} & (nessuno: modello di riferimento) \\
-\texttt{paper} & \texttt{paper} & Replica fedele di Wang et al. (2022) \\
-\texttt{environment} & \texttt{paper} & Ingegnerizzazione dell'MDP (visibilità, $w_i^t$, maschera) \\
-\texttt{temporal} & \texttt{custom} & BPTT + burn-in sulla Meta-LSTM \\
-\texttt{rl\_core} & \texttt{custom} & Double DQN \\
-\texttt{replay\_stability} & \texttt{custom} & PER, Huber, soft update, grad clipping, warm-up, esplorazione ciclica \\
-\bottomrule
-\end{tabular}
+  \centering
+  \small
+  \begin{tabular}{@{}llp{8.5cm}@{}}
+    \toprule
+    Preset                   & Reward          & Cosa isola rispetto a Pro                                             \\
+    \midrule
+    \texttt{pro}             & \texttt{custom} & --                                                                    \\
+    \texttt{temporal}        & \texttt{custom} & burn-in + BPTT sulla Meta-LSTM                                        \\
+    \texttt{single\_dqn}     & \texttt{custom} & Double DQN                                                            \\
+    \texttt{vanilla\_buffer} & \texttt{custom} & PER, Huber, soft update, grad clipping, warm-up, esplorazione ciclica \\
+    \texttt{environment}     & \texttt{paper}  & campo visivo, feature dello stato $w_i^t$, maschera fasi consecutive  \\
+    \texttt{paper}           & \texttt{paper}  & Replica fedele di Wang et al. (2022)                                  \\
+    \bottomrule
+  \end{tabular}
+  \caption{Preset di ablazione e sottosistema isolato da ciascuno. La reward \texttt{custom} è definita da Eq. (\ref{eq:reward-custom}), mentre la reward \texttt{paper} è definita da Eq. (\ref{eq:reward-paper}).}
+  \label{tab:ablation-preset}
 \end{table}
 
-Per la riproducibilità: ogni modello di questo capitolo è ottenuto con lo
-stesso comando, a parità di configurazioni di training e di seed, cambiando
-solo il preset (e, per lo sweep descritto in
-§\ref{sec:risultati-baseline}, il peso $\alpha$ della ricompensa):
+\subsection{Studio sui meccanismi spaziali}
 
-\begin{lstlisting}[caption={Comando di training, modello Pro con $\alpha=0.2$.}, label={lst:train-cmd}]
-python scripts/train.py \
-    --config configs/config_4x4_100m_train1.json \
-             configs/config_4x4_100m_train2.json \
-             configs/config_4x4_100m_train3.json \
-    --model MetaSTGAT --episodes 100 --seed 42 \
-    --ablation pro --alpha 0.2 \
-    --output results/metastgat_pro_0.2
-\end{lstlisting}
+Il terzo studio (§\ref{sec:confronto-spaziale}) sostituisce il solo
+meccanismo di comunicazione spaziale tra intersezioni di MetaSTGAT Pro.
+Vengono testate le seguenti varianti già introdotte nel Capitolo \ref{sec:spatial-alt}:
+\begin{itemize}
+  \item Meta-GAT (il riferimento, a un layer come nella formulazione standard e a due layer)
+  \item Meta-GCN (a uno e due layer)
+  \item Meta-SONAR (a uno e due layer)
+\end{itemize}
 
-\section[Risultati: baseline e peso anti-starvation]{Risultati: baseline classiche e peso anti-starvation}
+È il confronto che verifica se il beneficio osservato dipenda
+specificamente dal meccanismo di attenzione appreso, o se una qualunque
+forma di condivisione spaziale dell'informazione tra nodi vicini produca
+risultati equivalenti.
+
+\section{Risultati}
 \label{sec:risultati-baseline}
 
-Questa sezione confronta sei controllori: le due baseline classiche
-(\S\ref{sec:baseline}), tre varianti del modello Pro che differiscono solo
-per il peso $\alpha$ della penalità anti-starvation nella ricompensa
-\texttt{custom} (Equazione~\ref{eq:reward-custom}), e \texttt{ablation\_temporal}
-(discusso separatamente in §\ref{sec:ablation-risultati}, dove il confronto
-rilevante è con Pro a parità di $\alpha$). $\alpha=0.1$ e i quattro preset di
-ablation restanti (\texttt{paper}, \texttt{environment}, \texttt{rl\_core},
-\texttt{replay\_stability}) sono in fase di addestramento al momento della
-stesura di questo capitolo: i risultati che seguono si limitano ai modelli
-già valutati sulla batteria di test completa. Per Fixed-Time non sono
-disponibili $tt_{\max}$ e le statistiche di equità direzionale (calcolate
-solo a partire dall'11/9/2026, dopo che questo modello era già stato
-valutato): le colonne corrispondenti sono segnate "n.d.".
+I tre studi del precedente capitolo (§\ref{sec:confronti}) sono presentati
+secondo uno schema comune: una tabella mediata sulle 3 configurazioni di
+training, una corrispondente sulle 7 di test, un plot overlay che le
+riassume visivamente, un plot della variazione percentuale delle metriche principali rispetto a
+MaxPressure, gli eventuali casi particolari osservabili solo scendendo
+alla singola configurazione, chiusi da una discussione che include, dove il risultato non
+era quello atteso, una possibile spiegazione.
+In queste tabelle, dallo studio sul peso $\alpha$ in poi, sono evidenziati
+in grassetto i due risultati migliori di ogni colonna, Fixed-Time incluso;
+nelle due tabelle del confronto di base (§\ref{sec:risultati-base}), che
+hanno solo tre righe, resta invece in grassetto il solo valore migliore.
+
+Fixed-Time, MaxPressure e MetaSTGAT Pro ($\alpha=0.08$, il modello di
+riferimento di questo lavoro) compaiono in ciascuno dei tre studi.
+Dunque, per non ripetere la stessa discussione su questi tre riferimenti di base,
+la sottosezione seguente li confronta da soli,
+mentre le sottosezioni successive approfondiranno i rispettivi confronti
+(peso $\alpha$, ablazione, meccanismi spaziali).
+
+\subsection{Fixed-Time, MaxPressure e Pro: il confronto di base}
+\label{sec:risultati-base}
 
 \begin{table}[htbp]
-\centering
-\caption{Travel time medio, massimo e percentuale di completamento, mediati
-sulle 3 configurazioni di training (in-distribuzione).}
-\label{tab:risultati-train}
-\begin{tabular}{@{}lrrr@{}}
-\toprule
-Modello & $\overline{tt}$ (s) & $tt_{\max}$ (s) & $\%_{\text{compl}}$ \\
-\midrule
-Fixed-Time            & 339.3 & n.d.   & 84.9 \\
-MaxPressure          & \textbf{161.9} & 1070.0 & \textbf{96.6} \\
-MetaSTGAT Pro ($\alpha=0.5$) & 205.5 & 800.0 & 93.9 \\
-MetaSTGAT Pro ($\alpha=0.2$) & 194.0 & \textbf{745.0} & 94.9 \\
-MetaSTGAT Pro ($\alpha=0.0$) & 211.2 & 1350.0 & 91.5 \\
-\bottomrule
-\end{tabular}
+  \centering
+  \begin{tabular}{@{}lrrrr@{}}
+    \toprule
+    Modello                       & $\overline{tt}$ (s) & $tt_{\max}$ (s) & wait$_{\max}$ (s) & $tc$ $(\%)$   \\
+    \midrule
+    Fixed-Time                    & 339.3               & 1030.0          & \textbf{470.0}    & 84.9          \\
+    MaxPressure                   & \textbf{161.9}      & 1070.0          & 955.0             & \textbf{96.6} \\
+    MetaSTGAT Pro ($\alpha=0.08$) & 176.7               & \textbf{675.0}  & 630.0             & 95.7          \\
+    \bottomrule
+  \end{tabular}
+  \caption{Travel time medio, massimo, max wait e trip completion dei tre
+    controllori presenti in ogni studio di questo capitolo, mediati sulle 3
+    configurazioni di training.}
+  \label{tab:base-train}
 \end{table}
 
 \begin{table}[htbp]
-\centering
-\caption{Come Tabella~\ref{tab:risultati-train}, mediata sulle 7
-configurazioni di test (generalizzazione a topologia e densità mai viste in
-training).}
-\label{tab:risultati-test}
-\begin{tabular}{@{}lrrr@{}}
-\toprule
-Modello & $\overline{tt}$ (s) & $tt_{\max}$ (s) & $\%_{\text{compl}}$ \\
-\midrule
-Fixed-Time            & 463.9 & n.d.    & 79.8 \\
-MaxPressure          & \textbf{239.2} & 1635.0 & \textbf{88.5} \\
-MetaSTGAT Pro ($\alpha=0.5$) & 295.2 & 1142.1 & 86.8 \\
-MetaSTGAT Pro ($\alpha=0.2$) & 280.8 & \textbf{1103.6} & 87.6 \\
-MetaSTGAT Pro ($\alpha=0.0$) & 311.75 & 1607.1 & 84.6 \\
-\bottomrule
-\end{tabular}
+  \centering
+  \begin{tabular}{@{}lrrrr@{}}
+    \toprule
+    Modello                       & $\overline{tt}$ (s) & $tt_{\max}$ (s) & wait$_{\max}$ (s) & $tc$ $(\%)$   \\
+    \midrule
+    Fixed-Time                    & 460.7               & 1496.1          & 1289.1            & 79.9          \\
+    MaxPressure                   & \textbf{238.3}      & 1647.4          & 1626.0            & 88.5          \\
+    MetaSTGAT Pro ($\alpha=0.08$) & 242.2               & \textbf{1049.6} & \textbf{954.0}    & \textbf{90.1} \\
+    \bottomrule
+  \end{tabular}
+  \caption{Come Tabella~\ref{tab:base-train}, mediata sulle 7 configurazioni
+    di test.}
+  \label{tab:base-test}
 \end{table}
 
-Fixed-Time è, come atteso, il controllore peggiore su ogni colonna in
-entrambi i regimi: non osservando mai lo stato della rete, stabilisce il
-limite superiore di travel time che qualunque strategia informata (reattiva
-o appresa) dovrebbe poter migliorare. Tutti gli altri controllori lo battono
-nettamente (161.9-311.75s contro 339.3-463.9s), confermando che anche la
-regola più semplice tra quelle reattive (MaxPressure) coglie un segnale reale
-nello stato della rete.
+Fixed-Time è il controllore peggiore su quasi ogni metrica di riferimento,
+con l'unica eccezione del max wait in training (470.0s, il più basso dei tre):
+la rotazione fissa delle fasi impone per costruzione un
+limite alla durata di ogni attesa, un vincolo che le configurazioni di
+training, meno dense, non arrivano a violare.
+Questo approccio però non coordina il flusso tra le intersezioni, motivo per cui
+questo risultato non si ripropone nella batteria di test dove il traffico è più intenso,
+con il max wait che peggiora notevolmente.
+Non osservando mai lo stato della rete, resta comunque il limite superiore di
+travel time che qualunque strategia appresa dovrebbe poter migliorare.
+MaxPressure e MetaSTGAT Pro lo battono nettamente sulle restanti metriche,
+confermando che la regola reattiva alla base di MaxPressure coglie un segnale reale nello stato della rete.
 
-MaxPressure resta il modello con il travel time medio più basso in entrambi i
-regimi, coerente con la sua ottimalità di throughput a livello di rete
-\citep{varaiya2013maxpressure}: nessuna delle varianti RL di questo lavoro la
-supera su questa singola metrica. All'interno dello sweep su $\alpha$,
-$\alpha=0.2$ ottiene il travel time medio più basso e, in entrambi i regimi,
-anche il $tt_{\max}$ più basso tra tutti i cinque modelli confrontati,
-MaxPressure incluso: una penalità anti-starvation moderata non solo non
-peggiora il caso medio rispetto a $\alpha=0.5$, ma produce la coda più corta
-osservata in questo esperimento. $\alpha=0.0$ (nessuna penalità) è invece la
-configurazione peggiore tra le tre varianti Pro su ogni colonna delle due
-tabelle: rimuovere il termine anti-starvation non libera il modello per
-ottimizzare meglio il throughput medio, lo peggiora anche su quello. Questo
-risultato è discusso più a fondo, insieme all'equità direzionale che lo
-motiva, in §\ref{sec:risultati-alpha}.
+Tra MaxPressure e MetaSTGAT Pro il confronto è più sfumato. In training e in tesing MaxPressure
+resta il modello con il travel time medio più basso in assoluto (rispettivamente 161.9s e 238.3s),
+coerente con la sua ottimalità di portata a livello di rete;
+MetaSTGAT Pro paga per questo un travel time leggermente peggiore sia in training (176.7s, +9.1\%) sia in test (242.2s, +1.7\%).
+Per quanto riguarda il max wait però il rapporto si inverte nettamente:
+MetaSTGAT Pro registra un valore il 34\% più basso di MaxPressure in training e il 41\% più basso in test
+(Tabelle~\ref{tab:base-train}-\ref{tab:base-test}).
+Questi risultati introducono il compromesso al centro di questo lavoro, discusso nella sua forma
+completa al variare di $\alpha$ nella prossima sottosezione.
+Da notare è il fatto che rispetto alle prestazioni di MaxPressure, il modello MetaSTGAT Pro
+ottiene risultati migliori nel training piuttosto che nel test: quanto ottenuto conferma sia
+l'importanza di un controllo coordinato tra semafori quando la densità veicolare aumenta, sia
+le capacità di generalizzazione acquisita dal modello MetaSTGAT Pro.
 
-Tutti i modelli degradano passando dalle configurazioni di training a quelle
-di test, MaxPressure incluso (161.9$\to$239.2s): una parte di questo divario
-riflette la maggiore difficoltà intrinseca delle configurazioni di
-generalizzazione (topologie più grandi, densità di picco), non solo un
-limite di generalizzazione specifico del controllo appreso.
+Il basso max wait di Fixed-Time in training merita un chiarimento: il suo
+$tt_{\max}$ (1030.0s) resta più del doppio del suo stesso max wait
+(470.0s), mentre per MaxPressure e per MetaSTGAT Pro i due valori restano
+vicini (rispettivamente 1070.0s contro 955.0s, e 675.0s contro 630.0s). La
+causa è strutturale: la rotazione fissa delle fasi non produce mai un
+blocco estremo isolato, ma un'attesa moderata che si ripete, quasi
+identica, a ogni incrocio della rete; il $tt_{\max}$ osservato è dunque la
+somma di molti contributi distribuiti lungo l'intero percorso del
+veicolo, non il riflesso di un singolo episodio. Negli altri due
+controllori vale il caso opposto: un max wait elevato è quasi sempre un
+episodio isolato su un solo incrocio, che da solo spiega quasi per intero
+il $tt_{\max}$ corrispondente, con il resto del tragitto gestito in modo
+efficiente.
 
-% NOTA: figura temporaneamente commentata -- puntava a
-% compare_per_config/compare_config_4x4_100m_train1.png, una cartella
-% eliminata durante la riorganizzazione dei plot (rinominata nelle cartelle
-% per-esperimento compare_pro_alpha_v3/compare_ablation_study/ecc., che pero'
-% mostrano lo sweep alpha ufficiale {0.08,0.04,0.02,0.00}, non lo sweep
-% {0.5,0.2,0.0} di questa sezione, ormai superseduto). Va rigenerata insieme
-% al resto di questa sezione con i modelli ufficiali attuali, non ripristinata
-% cosi' com'era.
-% \begin{figure}[htbp]
-% \centering
-% \includegraphics[width=0.95\textwidth]{compare_config_4x4_100m_train1.png}
-% \caption{Confronto su \texttt{config\_4x4\_100m\_train1} (in-distribuzione):
-% Fixed-Time, MaxPressure, MetaSTGAT Pro ($\alpha=0.5$/$0.2$) e
-% \texttt{ablation\_temporal}. Manca solo $\alpha=0.1$ (in training): figura da
-% rigenerare includendolo, insieme ai preset di ablation restanti, a valle di
-% questo capitolo.}
-% \label{fig:compare-train}
-% \end{figure}
+Sul completamento ($tc$) la separazione più netta è quella tra Fixed-Time
+e tutti gli altri modelli di questo capitolo: 84.9\%/79.9\%
+(training/test) contro un intervallo compreso tra il 95.0\% e il 98.3\% in
+training e tra l'88.9\% e il 95.8\% in test per ogni altra variante
+(Tabella~\ref{tab:tc-adjusted}, a fine capitolo); l'unica
+eccezione parziale è MetaSTGCN, il cui completamento più basso è discusso
+a parte in §\ref{sec:confronto-spaziale}. Con questo unico scarto
+rilevante già osservato qui, le sottosezioni seguenti non ripetono la
+discussione di $tc$ configurazione per configurazione: si limitano a
+segnalarne la tendenza generale, rimandando alla stessa tabella per il
+dettaglio completo.
 
-% NOTA: figura commentata per lo stesso motivo della precedente (riferiva
-% \label{fig:compare-train}, anch'essa temporaneamente rimossa).
-% \begin{figure}[htbp]
-% \centering
-% \includegraphics[width=0.95\textwidth]{compare_config_6x6_100m_11.5k_peak.png}
-% \caption{Confronto sulla configurazione di generalizzazione più difficile
-% ($6\times6$, densità di picco), stessi sei controllori di
-% Figura~\ref{fig:compare-train}.}
-% \label{fig:compare-6x6-peak}
-% \end{figure}
-
-\section{Equità direzionale: il ruolo di \texorpdfstring{$\alpha$}{alpha}}
+\subsection{Studio del peso \texorpdfstring{$\alpha$}{alpha}: risultati}
 \label{sec:risultati-alpha}
 \label{sec:equita-alpha}
 
+Questa sottosezione confronta i due controllori di riferimento
+(§\ref{sec:risultati-base}) con le tre varianti del modello Pro che
+differiscono solo per il peso $\alpha$ della penalità anti-starvation,
+con $\alpha \in \{0.08, 0.04, 0.00\}$.
+
 \begin{table}[htbp]
-\centering
-\caption{Attesa massima direzionale (N/S e W/E), mediata sulle configurazioni
-di training e di test rispettivamente.}
-\label{tab:equita}
-\begin{tabular}{@{}lrrrr@{}}
-\toprule
-& \multicolumn{2}{c}{Training (s)} & \multicolumn{2}{c}{Test (s)} \\
-\cmidrule(lr){2-3} \cmidrule(lr){4-5}
-Modello & N/S & W/E & N/S & W/E \\
-\midrule
-MaxPressure          & 755.0 & 825.0 & 1407.9 & 1493.6 \\
-MetaSTGAT Pro ($\alpha=0.5$) & \textbf{300.0} & \textbf{345.0} & \textbf{591.4} & \textbf{546.4} \\
-MetaSTGAT Pro ($\alpha=0.2$) & 455.0 & 450.0 & 516.4 & 565.7 \\
-MetaSTGAT Pro ($\alpha=0.0$) & 1275.0 & 1130.0 & 1530.0 & 1133.6 \\
-\bottomrule
-\end{tabular}
+  \centering
+  \begin{tabular}{@{}lrrr@{}}
+    \toprule
+    Modello                       & $\overline{tt}$ (s) & $tt_{\max}$ (s) & wait$_{\max}$ (s) \\
+    \midrule
+    Fixed-Time                    & 339.3               & 1030.0          & \textbf{470.0}    \\
+    MaxPressure                   & \textbf{161.9}      & 1070.0          & 955.0             \\
+    MetaSTGAT Pro ($\alpha=0.08$) & 176.7               & \textbf{675.0}  & \textbf{630.0}    \\
+    MetaSTGAT Pro ($\alpha=0.04$) & \textbf{170.1}      & \textbf{750.0}  & 690.0             \\
+    MetaSTGAT Pro ($\alpha=0.00$) & 178.6               & 925.0           & 885.0             \\
+    \bottomrule
+  \end{tabular}
+  \caption{Travel time medio, massimo e max wait, mediati
+    sulle 3 configurazioni di training.}
+  \label{tab:risultati-train}
 \end{table}
 
-Il divario è netto. Con la penalità anti-starvation al suo valore di
-riferimento ($\alpha=0.5$), l'attesa massima direzionale è 2-3 volte più
-bassa di MaxPressure in entrambi i regimi; a $\alpha=0.2$ resta comunque
-molto più bassa (516-566s contro 1408-1494s in test), pur essendo
-leggermente peggiore di $\alpha=0.5$ su tre delle quattro colonne. A
-$\alpha=0.0$, l'equità direzionale collassa verso valori vicini a quelli di
-MaxPressure (1275-1530s in training e nella direzione N/S del test,
-paragonabile o peggiore su W/E in training): esattamente il comportamento
-atteso rimuovendo dalla ricompensa l'unico termine che penalizza le attese
-prolungate sulle corsie rosse.
+\begin{table}[htbp]
+  \centering
+  \begin{tabular}{@{}lrrr@{}}
+    \toprule
+    Modello                       & $\overline{tt}$ (s) & $tt_{\max}$ (s) & wait$_{\max}$ (s) \\
+    \midrule
+    Fixed-Time                    & 460.7               & 1496.1          & 1289.1            \\
+    MaxPressure                   & \textbf{238.3}      & 1647.4          & 1626.0            \\
+    MetaSTGAT Pro ($\alpha=0.08$) & 242.2               & \textbf{1049.6} & \textbf{954.0}    \\
+    MetaSTGAT Pro ($\alpha=0.04$) & \textbf{236.4}      & \textbf{1181.6} & \textbf{1125.9}   \\
+    MetaSTGAT Pro ($\alpha=0.00$) & 248.7               & 1569.9          & 1539.4            \\
+    \bottomrule
+  \end{tabular}
+  \caption{Come Tabella~\ref{tab:risultati-train}, mediata sulle 7
+    configurazioni di test.}
+  \label{tab:risultati-test}
+\end{table}
 
-Il punto di correttezza sperimentale già anticipato in §\ref{sec:protocollo}
-si applica direttamente qui: ciascuno di questi numeri è l'esito di un'unica
-realizzazione deterministica per configurazione, mediata su un piccolo
-numero di configurazioni (3 o 7). L'effetto di $\alpha$ sull'equità
-direzionale è ampio e consistente in direzione su tutte le configurazioni
-osservate (non un singolo caso isolato), il che lo rende un risultato
-qualitativamente solido; non è tuttavia accompagnato, per questo specifico
-sweep ($\alpha \in \{0.5, 0.2, 0.0\}$), da un test di significatività
-statistica in senso classico, che richiederebbe più istanze indipendenti
-della stessa configurazione. Il protocollo a seed multipli descritto in
-§\ref{sec:protocollo} (paragrafo "Seed multipli sulle configurazioni di
-test"), che colma esattamente questa lacuna, è stato introdotto dopo questo
-sweep e applicato allo sweep ufficiale successivo ($\alpha \in \{0.08, 0.04,
-0.02, 0.00\}$, non ancora riportato in questo capitolo alla data di stesura):
-i numeri di questa sezione restano quindi, alla data di stesura, basati su
-singola realizzazione.
+Sul travel time medio ciò che verrebbe naturale attendersi è che
+al crescese del valore di $\alpha$ la metrica in questione peggiori, con
+le due configurazioni prive di penalità anti-starvation, MaxPressure e $\alpha=0.00$, che risulterebbero essere le
+migliori, in quanto nessuna delle due paga un compromesso con l'equità, quindi
+nessuna dovrebbe peggiorare travel time medio in cambio di un vantaggio che non
+persegue.
+Mentre questa analisi preliminare su $\alpha$ si conferma per i modelli con $\alpha=0.08$ e $\alpha=0.04$,
+$\alpha=0.00$ risulta essere la peggiore delle tre varianti Pro su
+questa metrica in entrambi i regimi (178.6s in training contro 176.7s di
+$\alpha=0.08$, 248.7s in test contro 242.2s). Una causa plausibile è che
+con $\alpha=0$ il termine di ricompensa legato all'attesa scompare, ma il
+vettore $w_i^t$ resta nello stato osservato dalla rete
+(§\ref{sec:formalizzazione}); la rete continua quindi a vedere un segnale
+che la ricompensa non penalizza più causando un disallineamento tra stato e
+obiettivo che può disturbare l'addestramento.
 
-Il fatto che $\alpha=0.0$ sia anche il peggiore, non il migliore, su travel
-time medio e massimo (Tabelle~\ref{tab:risultati-train}-\ref{tab:risultati-test})
-esclude la spiegazione più semplice di un compromesso equità-contro-throughput:
-in questi dati, il termine anti-starvation non compra equità al prezzo del
-throughput, sembra piuttosto aiutare entrambi contemporaneamente, quantomeno
-nell'intervallo $\alpha \in [0.2, 0.5]$ esplorato qui. Una possibile lettura
-è che una rete dove nessuna corsia resta bloccata a tempo indefinito fluisce
-meglio nel suo complesso, non solo per i veicoli sulla corsia sfavorita: la
-verifica di questa ipotesi richiederebbe un'analisi per-corsia o per-fase che
-esula dallo scopo di questo capitolo.
+Un ulteriore risultato da sottolineare è quello ottenuto con $\alpha=0.04$ sul travel time medio in test, che non solo risulta essere il migliore tra le varianti del modello Pro,
+ma supera anche MaxPressure (236.4s contro 238.3s), confermando che una quantità di penalità anti-starvation non nulla ma sufficientemente contenuta non ostacola necessariamente la performance su travel time medio.
+Il risultato regge sia sulla media assoluta sia sulla media delle variazioni
+percentuali per singola configurazione (Figura~\ref{fig:diffpct-alpha}),
+quindi non è l'effetto di poche configurazioni favorevoli: è un segnale
+che la struttura coordina bene il traffico, con un margine che cresce
+proprio sulle topologie più complesse e dense.
 
-\section{Studio di ablation: risultati preliminari}
+\begin{figure}[htbp]
+  \centering
+  \begin{subfigure}[t]{0.48\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{pro_alpha_train.png}
+    \caption{Configurazioni di training}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[t]{0.48\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{pro_alpha_test.png}
+    \caption{Configurazioni di test}
+  \end{subfigure}
+  \caption{Travel time medio (fascia scura), max wait (fascia intermedia) e
+    travel time massimo (fascia chiara) per lo sweep su $\alpha$, stessi dati
+    delle Tabelle~\ref{tab:risultati-train}-\ref{tab:risultati-test}.}
+  \label{fig:overlay-pro-alpha}
+\end{figure}
+
+\begin{figure}[htbp]
+  \centering
+  \begin{subfigure}[t]{0.48\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{diff_pct_alpha_train.png}
+    \caption{Configurazioni di training}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[t]{0.48\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{diff_pct_alpha_test.png}
+    \caption{Configurazioni di test}
+  \end{subfigure}
+  \caption{Variazione percentuale di travel time medio e massimo rispetto a
+    MaxPressure (riferimento a 0\%) per lo studio su $\alpha$, calcolata per
+    singola configurazione e poi mediata.}
+  \label{fig:diffpct-alpha}
+\end{figure}
+
+Su max wait e $tt_{\max}$ invece il quadro è quello atteso: entrambe le
+metriche peggiorano in modo pressoché monotono al diminuire di $\alpha$,
+cioè al ridursi del peso dato al caso di starvation più estremo. Il
+riferimento $\alpha=0.08$ ottiene sia il $tt_{\max}$ più basso in entrambi
+i regimi, sia il max wait più basso, il 34\% in meno
+di MaxPressure in training e il 41\% in meno in test. In test $\alpha=0.04$
+resta comunque nettamente sotto Fixed-Time su entrambe le metriche (max
+wait 1125.9s e $tt_{\max}$ 1181.6s, contro 1289.1s e 1496.1s);
+$\alpha=0.00$ invece pareggia o peggiora leggermente i risultati di Fixed-Time
+(max wait 1539.4s contro 1289.1s, $tt_{\max}$ 1569.9s contro 1496.1s).
+
+Nonostante il vantaggio di $\alpha=0.04$ sul travel time medio, il resto
+di questo lavoro adotta $\alpha=0.08$ come riferimento standard per gli
+studi di ablazione e dei meccanismi spaziali
+(§\ref{sec:ablation-risultati}, §\ref{sec:confronto-spaziale}). La ragione
+è la priorità dichiarata tra le metriche di questo lavoro:
+$\alpha=0.04$ è sistematicamente meno incisivo di
+$\alpha=0.08$ su max wait e $tt_{\max}$, le due metriche di caso peggiore
+che questa tesi tiene in primo piano, a fronte di un guadagno sul solo
+travel time medio, la meno critica delle tre. $\alpha=0.08$ resta quindi
+la scelta più coerente con l'obiettivo del lavoro, anche al costo di
+qualche secondo in più di travel time medio.
+
+\subsection{Studio di ablazione: risultati}
 \label{sec:ablation-risultati}
 
-Al momento della stesura di questo capitolo è disponibile un solo confronto
-completo del sistema di ablation a preset (Tabella~\ref{tab:ablation-preset}):
-\texttt{temporal} (BPTT e burn-in sulla Meta-LSTM disattivati) contro Pro
-allo stesso $\alpha=0.5$, l'unica variabile che li distingue. I quattro preset
-restanti (\texttt{paper}, \texttt{environment}, \texttt{rl\_core},
-\texttt{replay\_stability}) sono in addestramento; questa sezione va
-integrata con i loro risultati non appena disponibili, senza modificarne
-l'impostazione.
+Questa sottosezione confronta il modello Pro ($\alpha=0.08$, riferimento)
+con i cinque preset di ablation presenti nella Tabella~\ref{tab:ablation-preset}:
+\texttt{paper} (replica fedele del riferimento originale), \texttt{environment}
+(campo di visibilità, $w_i^t$ e maschera azioni rimossi),
+\texttt{temporal} (burn-in e BPTT disattivati), \texttt{single\_dqn}
+(Double DQN sostituita da DQN) e \texttt{vanilla\_buffer} (PER, Huber, soft
+update, gradient clipping, warm-up ed esplorazione ciclica disattivati),
+tutti allo stesso $\alpha=0.08$ del riferimento.
 
 \begin{table}[htbp]
-\centering
-\caption{MetaSTGAT Pro ($\alpha=0.5$) contro \texttt{ablation\_temporal}
-(BPTT e burn-in disattivati), stesso $\alpha$.}
-\label{tab:ablation-temporal}
-\begin{tabular}{@{}lrrrr@{}}
-\toprule
-& \multicolumn{2}{c}{Training} & \multicolumn{2}{c}{Test} \\
-\cmidrule(lr){2-3} \cmidrule(lr){4-5}
-Modello & $\overline{tt}$ (s) & $tt_{\max}$ (s) & $\overline{tt}$ (s) & $tt_{\max}$ (s) \\
-\midrule
-Pro ($\alpha=0.5$)      & \textbf{205.5} & \textbf{800.0} & \textbf{295.2} & \textbf{1142.1} \\
-\texttt{ablation\_temporal} & 220.1 & 865.0 & 350.2 & 1375.7 \\
-\bottomrule
-\end{tabular}
+  \centering
+  \begin{tabular}{@{}lrrr@{}}
+    \toprule
+    Modello                          & $\overline{tt}$ (s) & $tt_{\max}$ (s) & wait$_{\max}$ (s) \\
+    \midrule
+    Fixed-Time                       & 339.3               & 1030.0          & \textbf{470.0}    \\
+    MaxPressure                      & \textbf{161.9}      & 1070.0          & 955.0             \\
+    Pro ($\alpha=0.08$, riferimento) & 176.7               & 675.0           & 630.0             \\
+    \texttt{paper}                   & 187.8               & 950.0           & 915.0             \\
+    \texttt{environment}             & 179.1               & 1065.0          & 1020.0            \\
+    \texttt{temporal}                & 184.8               & \textbf{645.0}  & 605.0             \\
+    \texttt{single\_dqn}             & 174.6               & \textbf{595.0}  & \textbf{485.0}    \\
+    \texttt{vanilla\_buffer}         & \textbf{171.5}      & 695.0           & 560.0             \\
+    \bottomrule
+  \end{tabular}
+  \caption{Travel time medio, massimo e max wait sui preset
+    di ablazione, mediati sulle 3 configurazioni di training.}
+  \label{tab:ablation-train}
 \end{table}
 
-Disattivare BPTT e burn-in peggiora il travel time medio su entrambi i
-regimi (+7.1\% in training, +18.6\% in test) e allarga anche la coda
-($tt_{\max}$ +8.1\% e +20.5\% rispettivamente). Il fatto che il peggioramento
-relativo sia maggiore in test che in training è un indizio, non una prova
-data la numerosità limitata, che il disallineamento dello stato ricorrente
-corretto da BPTT+burn-in (§\ref{sec:background-rl},
-\emph{hidden state staleness}) non sia solo un problema di adattamento alla
-distribuzione di training, ma pesi anche sulla capacità del modello di
-generalizzare a topologie mai viste: un'ipotesi coerente con la motivazione
-originale del meccanismo \citep{kapturowski2019r2d2}, che richiederebbe
-tuttavia il confronto con gli altri preset (in particolare \texttt{rl\_core} e
-\texttt{replay\_stability}) per essere isolata con maggiore sicurezza dal
-contributo di Double DQN, PER e delle altre differenze architetturali che
-\texttt{temporal} lascia invece attive.
+\begin{table}[htbp]
+  \centering
+  \begin{tabular}{@{}lrrr@{}}
+    \toprule
+    Modello                          & $\overline{tt}$ (s) & $tt_{\max}$ (s) & wait$_{\max}$ (s) \\
+    \midrule
+    Fixed-Time                       & 460.7               & 1496.1          & 1289.1            \\
+    MaxPressure                      & \textbf{238.3}      & 1647.4          & 1626.0            \\
+    Pro ($\alpha=0.08$, riferimento) & 242.2               & 1049.6          & 954.0             \\
+    \texttt{paper}                   & 271.1               & 1527.4          & 1513.3            \\
+    \texttt{environment}             & 252.0               & 1595.6          & 1564.7            \\
+    \texttt{temporal}                & 256.6               & 1169.1          & 1029.9            \\
+    \texttt{single\_dqn}             & \textbf{240.6}      & \textbf{986.1}  & \textbf{838.7}    \\
+    \texttt{vanilla\_buffer}         & 240.9               & \textbf{1048.3} & \textbf{804.0}    \\
+    \bottomrule
+  \end{tabular}
+  \caption{Come Tabella~\ref{tab:ablation-train}, mediata sulle 7
+    configurazioni di test.}
+  \label{tab:ablation-test}
+\end{table}
+
+Sul travel time medio in training \texttt{vanilla\_buffer},
+\texttt{single\_dqn}, il modello Pro ed \texttt{environment} restano in
+una fascia stretta (171.5-179.1s). La stessa quasi coincidenza tra
+\texttt{vanilla\_buffer}, \texttt{single\_dqn} e Pro si ripete
+in test (240.6-242.2s), ma \texttt{environment} se ne stacca visibilmente (252.0s).
+Il distacco non è uniforme sulle
+sette configurazioni di test: sulle due a 200m è più del doppio rispetto
+alla media delle cinque a 100m (+7.5\% contro +2.9\%, calcolato per
+singola configurazione). La causa più diretta e più probabile è la disattivazione del
+cutoff di visibilità propria di questo preset. Infatti, in seguito a
+un addestramento comune su sole griglie a 100m, il passaggio a griglie a 200m
+produce con il preset in questione degli stati di valori mai osservati prima, in quanto
+\texttt{environment} osserva l'intera corsia e dunque registra un conteggio veicoli mai incontrato in training.
+Gli altri preset invece limitano questo scarto numerico grazie al ridotto campo visivo,
+aiutando di fatto il modello a generalizzare su reti con spaziatura maggiore rispetto a quella del training.
+
+\begin{figure}[htbp]
+  \centering
+  \begin{subfigure}[t]{0.48\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{ablation_train.png}
+    \caption{Configurazioni di training}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[t]{0.48\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{ablation_test.png}
+    \caption{Configurazioni di test}
+  \end{subfigure}
+  \caption{Travel time medio, max wait e travel time massimo sui preset di
+    ablation, stessi dati delle
+    Tabelle~\ref{tab:ablation-train}-\ref{tab:ablation-test}.}
+  \label{fig:overlay-ablation}
+\end{figure}
+
+\begin{figure}[htbp]
+  \centering
+  \begin{subfigure}[t]{0.48\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{diff_pct_ablation_train.png}
+    \caption{Configurazioni di training}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[t]{0.48\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{diff_pct_ablation_test.png}
+    \caption{Configurazioni di test}
+  \end{subfigure}
+  \caption{Variazione percentuale di travel time medio e massimo rispetto a
+    MaxPressure (riferimento a 0\%) sui preset di ablation, calcolata per
+    singola configurazione/seed e poi mediata.}
+  \label{fig:diffpct-ablation}
+\end{figure}
+
+Su $tt_{\max}$ e $wait_{max}$, \texttt{paper} ed \texttt{environment} restano
+nettamente indietro in entrambi i regimi, coerentemente con l'unico
+elemento che condividono e che differisce da ogni altro preset: l'assenza del
+termine legato all'attesa nella ricompensa.
+
+Sempre sulle stesse due metriche in questione invece, i tre preset che lasciano intatti stato, ricompensa e maschera
+(\texttt{temporal}, \texttt{single\_dqn}, \texttt{vanilla\_buffer}),
+registrano in training i migliori risultati in assoluto tra tutti i preset considerati, modello Pro incluso.
+
+Tuttavia, per quanto riguarda i risultati in regime di test
+il quadro si inverte per \texttt{temporal}, con Pro che registra $tt_{\max}$ e $wait_{max}$ migliori.
+Un'analisi sulle singole configurazioni rivela che il crollo è sistematico
+e cresce con la scala della griglia: il suo $tt_{\max}$ medio per
+configurazione resta vicino al riferimento sulle tre configurazioni 4x4
+(855-975s) ma sale a 1218-1524s su 5x5 e 6x6.
+La causa probabilmente da ricercare nel fatto che \texttt{temporal} disattiva BPTT e burn-in: senza propagazione del gradiente
+lungo la sequenza né un periodo di adattamento dello stato ricorrente
+all'inizio di ogni episodio, il modulo temporale della Meta-LSTM ha meno
+modo di generalizzare il proprio stato interno a topologie di scala
+diversa da quella di training, mentre lo stesso stato interno resta
+adeguato sulla scala 4x4 già vista. La curva di training offre un
+indizio indipendente coerente con questa lettura: la loss di
+\texttt{temporal} resta stabilmente più alta di quella del riferimento
+per l'intero addestramento, un divario compatibile con
+un limite strutturale imposto dall'assenza di BPTT e burn-in.
+
+Il vantaggio di \texttt{single\_dqn} e \texttt{vanilla\_buffer} su
+$tt_{\max}$ e max wait regge anche scendendo alla singola configurazione,
+senza che questo lavoro riesca a indicarne con certezza la causa. Resta
+aperta una domanda distinta, che uno studio dedicato dovrebbe verificare:
+se la generalizzazione di questi due preset regga altrettanto bene su
+spaziature stradali diverse da quella di training. Un indizio non
+conclusivo in questo senso viene dal max wait: il vantaggio di entrambi i
+preset sul modello Pro, ampio sulle configurazioni 5x5 e 6x6
+mai viste in training, si riduce fino a scendere al di sotto del modello Pro sulle due configurazioni
+a 200m. Non possiamo pertanto dire con certezza che questi preset funzionino altrettanto bene su spaziature stradali diverse da quella di training.
+
+\subsection{Studio sui meccanismi spaziali: risultati}
+\label{sec:confronto-spaziale}
+
+Questa sottosezione confronta il modello Pro (MetaSTGAT, un layer)
+con le sue varianti a meccanismo spaziale alternativo definite in
+§\ref{sec:spatial-alt}: MetaSTGAT a due layer, MetaSTGCN a uno e due
+layer, e MetaSTSONAR con $L=2$ e $L=4$ ricorrenze. Tutti i modelli
+condividono l'architettura residua, gli iperparametri e procedura di training.
+
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabular}{@{}lrrr@{}}
+    \toprule
+    Modello                          & $\overline{tt}$ (s) & $tt_{\max}$ (s) & wait$_{\max}$ (s) \\
+    \midrule
+    Fixed-Time                       & 339.3               & 1030.0          & \textbf{470.0}    \\
+    MaxPressure                      & \textbf{161.9}      & 1070.0          & 955.0             \\
+    MetaSTGAT, 1L (Pro, riferimento) & 176.7               & 675.0           & 630.0             \\
+    MetaSTGAT, 2L                    & 174.6               & \textbf{635.0}  & \textbf{510.0}    \\
+    MetaSTGCN, 1L                    & 248.5               & 1340.0          & 1280.0            \\
+    MetaSTGCN, 2L                    & 217.8               & 1180.0          & 1160.0            \\
+    MetaSTSONAR, $L{=}2$             & 170.6               & \textbf{630.0}  & 535.0             \\
+    MetaSTSONAR, $L{=}4$             & \textbf{170.2}      & 660.0           & 525.0             \\
+    \bottomrule
+  \end{tabular}
+  \caption{Travel time medio, massimo e max wait sui
+    meccanismi spaziali, mediati sulle 3 configurazioni di training.}
+  \label{tab:architetture-train}
+\end{table}
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabular}{@{}lrrr@{}}
+    \toprule
+    Modello                          & $\overline{tt}$ (s) & $tt_{\max}$ (s) & wait$_{\max}$ (s) \\
+    \midrule
+    Fixed-Time                       & 460.7               & 1496.1          & 1289.1            \\
+    MaxPressure                      & 238.3               & 1647.4          & 1626.0            \\
+    MetaSTGAT, 1L (Pro, riferimento) & 242.2               & \textbf{1049.6} & \textbf{954.0}    \\
+    MetaSTGAT, 2L                    & 246.6               & 1128.0          & 990.0             \\
+    MetaSTGCN, 1L                    & 333.8               & 1659.0          & 1631.6            \\
+    MetaSTGCN, 2L                    & 288.5               & 1457.6          & 1428.9            \\
+    MetaSTSONAR, $L{=}2$             & \textbf{237.9}      & \textbf{1038.4} & \textbf{862.3}    \\
+    MetaSTSONAR, $L{=}4$             & \textbf{238.3}      & 1119.9          & 1047.4            \\
+    \bottomrule
+  \end{tabular}
+  \caption{Come Tabella~\ref{tab:architetture-train}, mediata sulle 7
+    configurazioni di test.}
+  \label{tab:architetture-test}
+\end{table}
+
+Il divario più netto di questo confronto separa MetaSTGCN dagli altri due
+meccanismi. In test, entrambe le varianti
+MetaSTGCN registrano valori nettamente peggiori su ogni colonna (travel time medio
+288.5-333.8s contro 237.9-246.6s di MetaSTGAT/MetaSTSONAR), con un
+$tt_{\max}$ e un $wait_{\max}$ che restano vicini a quelli di MaxPressure pur
+trattandosi di un modello addestrato con lo stesso obiettivo di equità del
+riferimento. La differenza concettuale descritta in §\ref{subsec:meta-gcn},
+un peso di aggregazione fissato dalla sola topologia contro un punteggio di
+compatibilità appreso per coppia di nodi, si traduce quindi in un divario di
+prestazioni ampio su questo compito.
+Un secondo layer in MetaSTGCN
+migliora la variante a singolo layer su tutte le metriche riportate in
+entrambi i regimi ($\overline{tt}$ di training 248.5$\to$217.8s,
+$tt_{\max}$ di test 1659.0$\to$1457.6s, max wait di test
+1631.6$\to$1428.9s): la profondità aggiuntiva compensa qui, almeno in
+parte, l'assenza di un meccanismo di compatibilità appreso, pur restando
+lontana dalle prestazioni di MetaSTGAT e MetaSTSONAR.
+
+MetaSTGAT e MetaSTSONAR hanno prestazioni pressochè pari tra loro su travel
+time medio e massimo; sul max wait, però, è MetaSTSONAR con $L=2$ a ottenere il
+risultato migliore dell'intero confronto (862.3s in test), davanti
+sia al modello Pro di riferimento (954.0s) sia alla sua variante a
+due layer (990.0s).
+
+Tra le due profondità di MetaSTSONAR, $L=2$ supera $L=4$ anche
+sul $tt_{\max}$ in entrambi i regimi (630.0s contro 660.0s in training,
+1038.4s contro 1119.9s in test), senza il vantaggio teorico di campo
+recettivo più ampio atteso da una profondità doppia.
+
+Aggiungere un secondo layer a MetaSTGAT, a differenza di MetaSTGCN, non produce qui un
+miglioramento netto: la variante a due layer resta vicina al riferimento
+su travel time medio e massimo ma peggiora leggermente il max wait in
+test (990.0s contro 954.0s).
+
+Un caso particolare nelle configurazioni di
+training (Tabella~\ref{tab:wait-full}): MetaSTGCN a un layer ottiene un
+max wait medio di 1280s, peggiore di MaxPressure stesso (955s), pur
+condividendo con il riferimento la stessa ricompensa orientata
+all'equità. È il solo modello di tutto questo lavoro, tra quelli
+addestrati con il termine anti-starvation pieno, a non riuscire a battere
+la baseline reattiva su questa metrica nel proprio stesso regime di
+addestramento, coerentemente con la spiegazione architetturale data sopra: un
+peso di aggregazione fissato dalla topologia non ha modo di imparare a
+dare priorità al segnale del vicino più in sofferenza, per quanto la
+ricompensa lo incentivi a farlo.
+
+\begin{figure}[htbp]
+  \centering
+  \begin{subfigure}[t]{0.48\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{architectures_train.png}
+    \caption{Configurazioni di training}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[t]{0.48\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{architectures_test.png}
+    \caption{Configurazioni di test}
+  \end{subfigure}
+  \caption{Travel time medio, max wait e travel time massimo sui meccanismi
+    spaziali, stessi dati delle
+    Tabelle~\ref{tab:architetture-train}-\ref{tab:architetture-test}.}
+  \label{fig:overlay-architetture}
+\end{figure}
+
+\begin{figure}[htbp]
+  \centering
+  \begin{subfigure}[t]{0.48\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{diff_pct_architetture_train.png}
+    \caption{Configurazioni di training}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[t]{0.48\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{diff_pct_architetture_test.png}
+    \caption{Configurazioni di test}
+  \end{subfigure}
+  \caption{Variazione percentuale di travel time medio e massimo rispetto a
+    MaxPressure (riferimento a 0\%) sui meccanismi spaziali, calcolata per
+    singola configurazione/seed e poi mediata.}
+  \label{fig:diffpct-architetture}
+\end{figure}
+
+\subsection{Tabelle dei risultati.}
+Sono qui di seguito riportati i risultati completi di tutti i modelli rispetto ciascuna configurazioni testata.
+
+\begin{sidewaystable}
+  \centering
+  \tiny
+  \begin{tabular}{@{}lrrrrrrrrrr@{}}
+    \toprule
+    Modello                   & Train 1 & Train 2 & Train 3 & 4x4 Pk & 4x4-200 F & 4x4-200 Pk & 5x5 F & 5x5 Pk & 6x6 F & 6x6 Pk \\
+    \midrule
+    Fixed-Time                & 84.6    & 85.5    & 87.9    & 84.7   & 84.0      & 81.9       & 84.4  & 82.6   & 81.5  & 80.4   \\
+    MaxPressure               & 98.0    & 98.3    & 97.1    & 92.8   & 93.5      & 92.0       & 92.0  & 91.2   & 90.7  & 89.2   \\
+    Pro ($\alpha$=0.08)       & 96.4    & 97.5    & 96.8    & 93.3   & 95.3      & 92.8       & 93.5  & 93.1   & 92.9  & 92.8   \\
+    Pro ($\alpha$=0.04)       & 97.2    & 97.4    & 97.2    & 94.0   & 95.8      & 93.6       & 93.3  & 92.5   & 92.4  & 92.0   \\
+    Pro ($\alpha$=0.00)       & 96.2    & 96.9    & 96.8    & 92.9   & 93.7      & 92.2       & 93.2  & 92.3   & 92.2  & 91.1   \\
+    MetaSTGAT 2L              & 96.5    & 97.4    & 97.8    & 93.7   & 94.5      & 92.6       & 93.7  & 92.2   & 93.1  & 92.3   \\
+    Ablation: paper           & 95.0    & 96.5    & 96.3    & 91.6   & 93.5      & 90.2       & 91.4  & 90.8   & 90.7  & 88.9   \\
+    Ablation: temporal        & 95.8    & 95.6    & 97.0    & 92.7   & 93.4      & 91.6       & 93.2  & 92.5   & 92.8  & 92.6   \\
+    Ablation: single\_dqn     & 96.8    & 97.6    & 97.0    & 93.6   & 95.6      & 93.4       & 93.3  & 92.3   & 92.5  & 92.2   \\
+    Ablation: environment     & 95.9    & 96.6    & 95.7    & 91.1   & 92.8      & 90.8       & 92.1  & 91.7   & 91.4  & 89.2   \\
+    Ablation: vanilla\_buffer & 96.1    & 97.7    & 97.5    & 93.8   & 95.7      & 92.9       & 93.7  & 92.8   & 92.9  & 92.0   \\
+    MetaSTGCN 1L              & 90.6    & 91.1    & 91.7    & 87.2   & 88.3      & 86.2       & 88.9  & 85.8   & 86.7  & 85.1   \\
+    MetaSTGCN 2L              & 93.3    & 94.8    & 93.6    & 91.0   & 92.6      & 89.8       & 91.4  & 90.2   & 90.6  & 89.4   \\
+    MetaSTSONAR L=2           & 97.3    & 97.7    & 97.5    & 93.4   & 95.5      & 93.1       & 93.9  & 92.6   & 93.3  & 92.0   \\
+    MetaSTSONAR L=4           & 97.2    & 97.6    & 97.6    & 93.4   & 95.1      & 92.6       & 93.2  & 92.9   & 93.3  & 92.9   \\
+    \bottomrule
+  \end{tabular}
+  \caption{Percentuale di trip completion $tc$ per ogni modello
+    e ogni configurazione, corretta escludendo dal
+    denominatore i veicoli strutturalmente impossibilitati ad arrivare in
+    tempo. Nessun modello scende sotto l'80\%; a parte Fixed-Time (baseline non
+    adattiva) l'unico caso ricorrente sotto il 90\% è MetaSTGCN 1L.}
+  \label{tab:tc-adjusted}
+\end{sidewaystable}
+
+\begin{sidewaystable}
+  \centering
+  \tiny
+  \begin{tabular}{@{}lrrrrrrrrrr@{}}
+    \toprule
+    Modello                   & Train 1 & Train 2 & Train 3 & 4x4 Pk                                     & 4x4-200 F                                  & 4x4-200 Pk                                 & 5x5 F                                       & 5x5 Pk                                     & 6x6 F                                      & 6x6 Pk                                     \\
+    \midrule
+    Fixed-Time                & 351.6   & 342.9   & 323.3   & 437.3 {\fontsize{4}{4}\selectfont$\pm$6.4} & 415.5 {\fontsize{4}{4}\selectfont$\pm$6.7} & 438.8 {\fontsize{4}{4}\selectfont$\pm$4.9} & 459.7 {\fontsize{4}{4}\selectfont$\pm$4.7}  & 485.0 {\fontsize{4}{4}\selectfont$\pm$5.1} & 484.8 {\fontsize{4}{4}\selectfont$\pm$6.2} & 503.7 {\fontsize{4}{4}\selectfont$\pm$4.6} \\
+    MaxPressure               & 165.4   & 160.2   & 160.0   & 218.8 {\fontsize{4}{4}\selectfont$\pm$2.3} & 197.3 {\fontsize{4}{4}\selectfont$\pm$4.2} & 247.8 {\fontsize{4}{4}\selectfont$\pm$2.6} & 217.8 {\fontsize{4}{4}\selectfont$\pm$3.3}  & 258.6 {\fontsize{4}{4}\selectfont$\pm$4.9} & 244.7 {\fontsize{4}{4}\selectfont$\pm$5.5} & 283.3 {\fontsize{4}{4}\selectfont$\pm$1.4} \\
+    Pro ($\alpha$=0.08)       & 180.2   & 176.3   & 173.5   & 230.9 {\fontsize{4}{4}\selectfont$\pm$2.6} & 199.5 {\fontsize{4}{4}\selectfont$\pm$2.4} & 252.0 {\fontsize{4}{4}\selectfont$\pm$3.3} & 224.8 {\fontsize{4}{4}\selectfont$\pm$3.1}  & 266.7 {\fontsize{4}{4}\selectfont$\pm$3.4} & 243.3 {\fontsize{4}{4}\selectfont$\pm$3.4} & 278.6 {\fontsize{4}{4}\selectfont$\pm$4.0} \\
+    Pro ($\alpha$=0.04)       & 172.5   & 169.4   & 168.4   & 223.3 {\fontsize{4}{4}\selectfont$\pm$3.1} & 196.9 {\fontsize{4}{4}\selectfont$\pm$3.4} & 248.2 {\fontsize{4}{4}\selectfont$\pm$3.8} & 213.4 {\fontsize{4}{4}\selectfont$\pm$4.6}  & 258.2 {\fontsize{4}{4}\selectfont$\pm$3.0} & 237.1 {\fontsize{4}{4}\selectfont$\pm$5.0} & 277.5 {\fontsize{4}{4}\selectfont$\pm$4.5} \\
+    Pro ($\alpha$=0.00)       & 183.5   & 180.8   & 171.5   & 237.5 {\fontsize{4}{4}\selectfont$\pm$3.8} & 206.1 {\fontsize{4}{4}\selectfont$\pm$3.5} & 257.8 {\fontsize{4}{4}\selectfont$\pm$2.6} & 230.9 {\fontsize{4}{4}\selectfont$\pm$4.5}  & 269.8 {\fontsize{4}{4}\selectfont$\pm$3.7} & 247.9 {\fontsize{4}{4}\selectfont$\pm$4.6} & 290.7 {\fontsize{4}{4}\selectfont$\pm$6.0} \\
+    MetaSTGAT 2L              & 181.3   & 175.0   & 167.6   & 231.8 {\fontsize{4}{4}\selectfont$\pm$3.5} & 203.7 {\fontsize{4}{4}\selectfont$\pm$2.1} & 252.7 {\fontsize{4}{4}\selectfont$\pm$2.9} & 228.8 {\fontsize{4}{4}\selectfont$\pm$3.7}  & 275.4 {\fontsize{4}{4}\selectfont$\pm$5.5} & 245.3 {\fontsize{4}{4}\selectfont$\pm$4.0} & 289.5 {\fontsize{4}{4}\selectfont$\pm$3.7} \\
+    Ablation: paper           & 194.1   & 182.9   & 186.5   & 253.9 {\fontsize{4}{4}\selectfont$\pm$4.6} & 217.7 {\fontsize{4}{4}\selectfont$\pm$3.6} & 287.3 {\fontsize{4}{4}\selectfont$\pm$4.8} & 245.3 {\fontsize{4}{4}\selectfont$\pm$11.4} & 294.5 {\fontsize{4}{4}\selectfont$\pm$5.2} & 275.8 {\fontsize{4}{4}\selectfont$\pm$2.6} & 318.6 {\fontsize{4}{4}\selectfont$\pm$3.5} \\
+    Ablation: temporal        & 189.8   & 190.0   & 174.6   & 247.4 {\fontsize{4}{4}\selectfont$\pm$6.4} & 213.6 {\fontsize{4}{4}\selectfont$\pm$7.0} & 262.5 {\fontsize{4}{4}\selectfont$\pm$6.8} & 240.3 {\fontsize{4}{4}\selectfont$\pm$6.0}  & 282.1 {\fontsize{4}{4}\selectfont$\pm$4.7} & 256.6 {\fontsize{4}{4}\selectfont$\pm$3.6} & 293.8 {\fontsize{4}{4}\selectfont$\pm$4.1} \\
+    Ablation: single\_dqn     & 178.4   & 173.4   & 172.1   & 227.3 {\fontsize{4}{4}\selectfont$\pm$1.8} & 198.8 {\fontsize{4}{4}\selectfont$\pm$3.0} & 249.2 {\fontsize{4}{4}\selectfont$\pm$3.8} & 221.8 {\fontsize{4}{4}\selectfont$\pm$2.2}  & 266.7 {\fontsize{4}{4}\selectfont$\pm$5.0} & 241.1 {\fontsize{4}{4}\selectfont$\pm$4.3} & 279.0 {\fontsize{4}{4}\selectfont$\pm$3.5} \\
+    Ablation: environment     & 182.3   & 181.7   & 173.1   & 241.0 {\fontsize{4}{4}\selectfont$\pm$4.3} & 216.7 {\fontsize{4}{4}\selectfont$\pm$7.8} & 268.3 {\fontsize{4}{4}\selectfont$\pm$3.0} & 228.8 {\fontsize{4}{4}\selectfont$\pm$2.4}  & 268.7 {\fontsize{4}{4}\selectfont$\pm$4.9} & 249.8 {\fontsize{4}{4}\selectfont$\pm$8.1} & 292.2 {\fontsize{4}{4}\selectfont$\pm$9.9} \\
+    Ablation: vanilla\_buffer & 177.9   & 170.2   & 166.5   & 230.3 {\fontsize{4}{4}\selectfont$\pm$2.9} & 202.2 {\fontsize{4}{4}\selectfont$\pm$4.1} & 252.4 {\fontsize{4}{4}\selectfont$\pm$4.2} & 220.1 {\fontsize{4}{4}\selectfont$\pm$4.5}  & 264.8 {\fontsize{4}{4}\selectfont$\pm$3.9} & 238.8 {\fontsize{4}{4}\selectfont$\pm$3.2} & 278.9 {\fontsize{4}{4}\selectfont$\pm$6.4} \\
+    MetaSTGCN 1L              & 250.5   & 254.6   & 240.5   & 325.6 {\fontsize{4}{4}\selectfont$\pm$8.1} & 290.4 {\fontsize{4}{4}\selectfont$\pm$6.6} & 343.6 {\fontsize{4}{4}\selectfont$\pm$7.6} & 310.6 {\fontsize{4}{4}\selectfont$\pm$6.3}  & 357.8 {\fontsize{4}{4}\selectfont$\pm$13.0} & 331.5 {\fontsize{4}{4}\selectfont$\pm$9.5} & 376.9 {\fontsize{4}{4}\selectfont$\pm$3.4} \\
+    MetaSTGCN 2L              & 225.4   & 215.1   & 212.7   & 280.1 {\fontsize{4}{4}\selectfont$\pm$5.0} & 242.7 {\fontsize{4}{4}\selectfont$\pm$4.4} & 299.3 {\fontsize{4}{4}\selectfont$\pm$3.8} & 266.7 {\fontsize{4}{4}\selectfont$\pm$5.5}  & 308.6 {\fontsize{4}{4}\selectfont$\pm$9.4} & 290.7 {\fontsize{4}{4}\selectfont$\pm$6.0} & 331.7 {\fontsize{4}{4}\selectfont$\pm$2.7} \\
+    MetaSTSONAR L=2           & 174.1   & 170.1   & 167.5   & 225.3 {\fontsize{4}{4}\selectfont$\pm$5.0} & 196.4 {\fontsize{4}{4}\selectfont$\pm$3.4} & 246.6 {\fontsize{4}{4}\selectfont$\pm$3.1} & 219.5 {\fontsize{4}{4}\selectfont$\pm$4.1}  & 261.3 {\fontsize{4}{4}\selectfont$\pm$4.6} & 235.4 {\fontsize{4}{4}\selectfont$\pm$3.9} & 281.0 {\fontsize{4}{4}\selectfont$\pm$1.8} \\
+    MetaSTSONAR L=4           & 171.9   & 171.1   & 167.7   & 224.8 {\fontsize{4}{4}\selectfont$\pm$4.4} & 198.3 {\fontsize{4}{4}\selectfont$\pm$2.4} & 249.2 {\fontsize{4}{4}\selectfont$\pm$3.2} & 221.5 {\fontsize{4}{4}\selectfont$\pm$3.2}  & 261.5 {\fontsize{4}{4}\selectfont$\pm$2.7} & 238.5 {\fontsize{4}{4}\selectfont$\pm$2.9} & 274.5 {\fontsize{4}{4}\selectfont$\pm$2.6} \\
+    \bottomrule
+  \end{tabular}
+  \caption{Travel time medio $\overline{tt}$ (s) per ogni modello e ogni configurazione. Sulle configurazioni di test, media $\pm$ deviazione standard su 5 seed diversi.}
+  \label{tab:ttmedio-full}
+\end{sidewaystable}
+
+\begin{sidewaystable}
+  \centering
+  \tiny
+  \begin{tabular}{@{}lrrrrrrrrrr@{}}
+    \toprule
+    Modello                   & Train 1 & Train 2 & Train 3 & 4x4 Pk                                        & 4x4-200 F                                     & 4x4-200 Pk                                    & 5x5 F                                         & 5x5 Pk                                        & 6x6 F                                         & 6x6 Pk                                        \\
+    \midrule
+    Fixed-Time                & 1020.0  & 975.0   & 1095.0  & 1410.0 {\fontsize{4}{4}\selectfont$\pm$49.3}  & 1431.0 {\fontsize{4}{4}\selectfont$\pm$30.9}  & 1290.0 {\fontsize{4}{4}\selectfont$\pm$19.0}  & 1620.0 {\fontsize{4}{4}\selectfont$\pm$32.9}  & 1482.0 {\fontsize{4}{4}\selectfont$\pm$17.5}  & 1653.0 {\fontsize{4}{4}\selectfont$\pm$32.0}  & 1587.0 {\fontsize{4}{4}\selectfont$\pm$37.2}  \\
+    MaxPressure               & 915.0   & 1155.0  & 1140.0  & 1194.0 {\fontsize{4}{4}\selectfont$\pm$20.3}  & 1692.0 {\fontsize{4}{4}\selectfont$\pm$133.6} & 1446.0 {\fontsize{4}{4}\selectfont$\pm$105.0} & 1800.0 {\fontsize{4}{4}\selectfont$\pm$0.0}   & 1800.0 {\fontsize{4}{4}\selectfont$\pm$0.0}   & 1800.0 {\fontsize{4}{4}\selectfont$\pm$0.0}   & 1800.0 {\fontsize{4}{4}\selectfont$\pm$0.0}   \\
+    Pro ($\alpha$=0.08)       & 780.0   & 600.0   & 645.0   & 888.0 {\fontsize{4}{4}\selectfont$\pm$63.9}   & 786.0 {\fontsize{4}{4}\selectfont$\pm$53.3}   & 876.0 {\fontsize{4}{4}\selectfont$\pm$7.3}    & 1242.0 {\fontsize{4}{4}\selectfont$\pm$152.8} & 1143.0 {\fontsize{4}{4}\selectfont$\pm$44.9}  & 1269.0 {\fontsize{4}{4}\selectfont$\pm$36.2}  & 1197.0 {\fontsize{4}{4}\selectfont$\pm$6.0}   \\
+    Pro ($\alpha$=0.04)       & 675.0   & 750.0   & 825.0   & 1077.0 {\fontsize{4}{4}\selectfont$\pm$116.3} & 858.0 {\fontsize{4}{4}\selectfont$\pm$84.5}   & 1074.0 {\fontsize{4}{4}\selectfont$\pm$79.7}  & 1494.0 {\fontsize{4}{4}\selectfont$\pm$275.7} & 1227.0 {\fontsize{4}{4}\selectfont$\pm$24.0}  & 1302.0 {\fontsize{4}{4}\selectfont$\pm$105.4} & 1257.0 {\fontsize{4}{4}\selectfont$\pm$51.4}  \\
+    Pro ($\alpha$=0.00)       & 885.0   & 1050.0  & 840.0   & 1275.0 {\fontsize{4}{4}\selectfont$\pm$195.1} & 1470.0 {\fontsize{4}{4}\selectfont$\pm$190.9} & 1317.0 {\fontsize{4}{4}\selectfont$\pm$119.4} & 1779.0 {\fontsize{4}{4}\selectfont$\pm$42.0}  & 1674.0 {\fontsize{4}{4}\selectfont$\pm$154.6} & 1722.0 {\fontsize{4}{4}\selectfont$\pm$99.7}  & 1665.0 {\fontsize{4}{4}\selectfont$\pm$82.2}  \\
+    MetaSTGAT 2L              & 615.0   & 660.0   & 630.0   & 933.0 {\fontsize{4}{4}\selectfont$\pm$54.8}   & 714.0 {\fontsize{4}{4}\selectfont$\pm$43.1}   & 867.0 {\fontsize{4}{4}\selectfont$\pm$101.5}  & 1302.0 {\fontsize{4}{4}\selectfont$\pm$93.6}  & 1248.0 {\fontsize{4}{4}\selectfont$\pm$58.8}  & 1476.0 {\fontsize{4}{4}\selectfont$\pm$61.2}  & 1242.0 {\fontsize{4}{4}\selectfont$\pm$43.9}  \\
+    Ablation: paper           & 930.0   & 975.0   & 945.0   & 1212.0 {\fontsize{4}{4}\selectfont$\pm$142.7} & 1257.0 {\fontsize{4}{4}\selectfont$\pm$93.1}  & 1326.0 {\fontsize{4}{4}\selectfont$\pm$145.3} & 1800.0 {\fontsize{4}{4}\selectfont$\pm$0.0}   & 1794.0 {\fontsize{4}{4}\selectfont$\pm$12.0}  & 1800.0 {\fontsize{4}{4}\selectfont$\pm$0.0}   & 1686.0 {\fontsize{4}{4}\selectfont$\pm$152.0} \\
+    Ablation: temporal        & 630.0   & 705.0   & 600.0   & 975.0 {\fontsize{4}{4}\selectfont$\pm$43.5}   & 855.0 {\fontsize{4}{4}\selectfont$\pm$65.7}   & 948.0 {\fontsize{4}{4}\selectfont$\pm$47.8}   & 1350.0 {\fontsize{4}{4}\selectfont$\pm$93.0}  & 1218.0 {\fontsize{4}{4}\selectfont$\pm$36.0}  & 1524.0 {\fontsize{4}{4}\selectfont$\pm$47.1}  & 1281.0 {\fontsize{4}{4}\selectfont$\pm$75.1}  \\
+    Ablation: single\_dqn     & 585.0   & 570.0   & 630.0   & 822.0 {\fontsize{4}{4}\selectfont$\pm$41.8}   & 774.0 {\fontsize{4}{4}\selectfont$\pm$57.4}   & 894.0 {\fontsize{4}{4}\selectfont$\pm$70.7}   & 1062.0 {\fontsize{4}{4}\selectfont$\pm$131.6} & 1065.0 {\fontsize{4}{4}\selectfont$\pm$75.3}  & 1212.0 {\fontsize{4}{4}\selectfont$\pm$39.6}  & 1086.0 {\fontsize{4}{4}\selectfont$\pm$63.4}  \\
+    Ablation: environment     & 1020.0  & 1065.0  & 1110.0  & 1341.0 {\fontsize{4}{4}\selectfont$\pm$188.7} & 1446.0 {\fontsize{4}{4}\selectfont$\pm$191.3} & 1416.0 {\fontsize{4}{4}\selectfont$\pm$143.1} & 1746.0 {\fontsize{4}{4}\selectfont$\pm$58.2}  & 1689.0 {\fontsize{4}{4}\selectfont$\pm$132.0} & 1743.0 {\fontsize{4}{4}\selectfont$\pm$47.8}  & 1671.0 {\fontsize{4}{4}\selectfont$\pm$107.6} \\
+    Ablation: vanilla\_buffer & 660.0   & 675.0   & 750.0   & 954.0 {\fontsize{4}{4}\selectfont$\pm$38.7}   & 795.0 {\fontsize{4}{4}\selectfont$\pm$42.4}   & 936.0 {\fontsize{4}{4}\selectfont$\pm$43.1}   & 1161.0 {\fontsize{4}{4}\selectfont$\pm$102.4} & 1071.0 {\fontsize{4}{4}\selectfont$\pm$33.7}  & 1215.0 {\fontsize{4}{4}\selectfont$\pm$26.8}  & 1182.0 {\fontsize{4}{4}\selectfont$\pm$22.0}  \\
+    MetaSTGCN 1L              & 1590.0  & 1335.0  & 1095.0  & 1689.0 {\fontsize{4}{4}\selectfont$\pm$131.3} & 1593.0 {\fontsize{4}{4}\selectfont$\pm$204.4} & 1569.0 {\fontsize{4}{4}\selectfont$\pm$106.3} & 1536.0 {\fontsize{4}{4}\selectfont$\pm$169.3}   & 1728.0 {\fontsize{4}{4}\selectfont$\pm$122.7}   & 1728.0 {\fontsize{4}{4}\selectfont$\pm$81.8}   & 1770.0 {\fontsize{4}{4}\selectfont$\pm$60.0}   \\
+    MetaSTGCN 2L              & 1215.0  & 1125.0  & 1200.0  & 1290.0 {\fontsize{4}{4}\selectfont$\pm$89.0}   & 1344.0 {\fontsize{4}{4}\selectfont$\pm$244.0} & 1263.0 {\fontsize{4}{4}\selectfont$\pm$99.2}  & 1719.0 {\fontsize{4}{4}\selectfont$\pm$102.0}   & 1434.0 {\fontsize{4}{4}\selectfont$\pm$134.7}   & 1692.0 {\fontsize{4}{4}\selectfont$\pm$114.4}   & 1461.0 {\fontsize{4}{4}\selectfont$\pm$121.0}   \\
+    MetaSTSONAR L=2           & 585.0   & 585.0   & 720.0   & 915.0 {\fontsize{4}{4}\selectfont$\pm$79.9}   & 735.0 {\fontsize{4}{4}\selectfont$\pm$52.0}   & 879.0 {\fontsize{4}{4}\selectfont$\pm$46.1}   & 1077.0 {\fontsize{4}{4}\selectfont$\pm$95.1}   & 1170.0 {\fontsize{4}{4}\selectfont$\pm$80.5}   & 1278.0 {\fontsize{4}{4}\selectfont$\pm$29.1}   & 1215.0 {\fontsize{4}{4}\selectfont$\pm$128.0}   \\
+    MetaSTSONAR L=4           & 600.0   & 675.0   & 705.0   & 945.0 {\fontsize{4}{4}\selectfont$\pm$122.6}   & 774.0 {\fontsize{4}{4}\selectfont$\pm$66.8}   & 939.0 {\fontsize{4}{4}\selectfont$\pm$122.5}  & 1233.0 {\fontsize{4}{4}\selectfont$\pm$150.7}   & 1311.0 {\fontsize{4}{4}\selectfont$\pm$97.9}   & 1392.0 {\fontsize{4}{4}\selectfont$\pm$58.8}   & 1245.0 {\fontsize{4}{4}\selectfont$\pm$51.1}   \\
+    \bottomrule
+  \end{tabular}
+  \caption{Travel time massimo $tt_{\max}$ (s) per ogni modello e ogni configurazione. Sulle configurazioni di test, media $\pm$ deviazione standard su 5 seed diversi.}
+  \label{tab:ttmax-full}
+\end{sidewaystable}
+
+\begin{sidewaystable}
+  \centering
+  \tiny
+  \begin{tabular}{@{}lrrrrrrrrrr@{}}
+    \toprule
+    Modello                   & Train 1 & Train 2 & Train 3 & 4x4 Pk                                        & 4x4-200 F                                     & 4x4-200 Pk                                    & 5x5 F                                         & 5x5 Pk                                        & 6x6 F                                         & 6x6 Pk                                        \\
+    \midrule
+    Fixed-Time                & 465.0   & 285.0   & 660.0   & 984.0 {\fontsize{4}{4}\selectfont$\pm$54.2}   & 1053.0 {\fontsize{4}{4}\selectfont$\pm$75.5}  & 1014.0 {\fontsize{4}{4}\selectfont$\pm$64.8}  & 1572.0 {\fontsize{4}{4}\selectfont$\pm$80.7}  & 1314.0 {\fontsize{4}{4}\selectfont$\pm$102.4} & 1620.0 {\fontsize{4}{4}\selectfont$\pm$65.0}  & 1467.0 {\fontsize{4}{4}\selectfont$\pm$83.5}  \\
+    MaxPressure               & 795.0   & 1050.0  & 1020.0  & 1146.0 {\fontsize{4}{4}\selectfont$\pm$29.4}  & 1680.0 {\fontsize{4}{4}\selectfont$\pm$138.1} & 1419.0 {\fontsize{4}{4}\selectfont$\pm$98.4}  & 1788.0 {\fontsize{4}{4}\selectfont$\pm$24.0}  & 1779.0 {\fontsize{4}{4}\selectfont$\pm$42.0}  & 1785.0 {\fontsize{4}{4}\selectfont$\pm$30.0}  & 1785.0 {\fontsize{4}{4}\selectfont$\pm$30.0}  \\
+    Pro ($\alpha$=0.08)       & 735.0   & 540.0   & 615.0   & 798.0 {\fontsize{4}{4}\selectfont$\pm$46.9}   & 606.0 {\fontsize{4}{4}\selectfont$\pm$71.4}   & 795.0 {\fontsize{4}{4}\selectfont$\pm$21.2}   & 1077.0 {\fontsize{4}{4}\selectfont$\pm$194.3} & 1074.0 {\fontsize{4}{4}\selectfont$\pm$93.2}  & 1137.0 {\fontsize{4}{4}\selectfont$\pm$106.2} & 1191.0 {\fontsize{4}{4}\selectfont$\pm$18.0}  \\
+    Pro ($\alpha$=0.04)       & 645.0   & 690.0   & 735.0   & 1050.0 {\fontsize{4}{4}\selectfont$\pm$127.3} & 687.0 {\fontsize{4}{4}\selectfont$\pm$69.3}   & 1005.0 {\fontsize{4}{4}\selectfont$\pm$94.9}  & 1479.0 {\fontsize{4}{4}\selectfont$\pm$281.4} & 1182.0 {\fontsize{4}{4}\selectfont$\pm$59.5}  & 1257.0 {\fontsize{4}{4}\selectfont$\pm$88.2}  & 1221.0 {\fontsize{4}{4}\selectfont$\pm$43.1}  \\
+    Pro ($\alpha$=0.00)       & 855.0   & 990.0   & 810.0   & 1254.0 {\fontsize{4}{4}\selectfont$\pm$204.0} & 1428.0 {\fontsize{4}{4}\selectfont$\pm$229.7} & 1284.0 {\fontsize{4}{4}\selectfont$\pm$122.4} & 1779.0 {\fontsize{4}{4}\selectfont$\pm$42.0}  & 1665.0 {\fontsize{4}{4}\selectfont$\pm$165.4} & 1713.0 {\fontsize{4}{4}\selectfont$\pm$100.6} & 1653.0 {\fontsize{4}{4}\selectfont$\pm$75.5}  \\
+    MetaSTGAT 2L              & 495.0   & 555.0   & 480.0   & 876.0 {\fontsize{4}{4}\selectfont$\pm$45.1}   & 603.0 {\fontsize{4}{4}\selectfont$\pm$58.8}   & 819.0 {\fontsize{4}{4}\selectfont$\pm$79.7}   & 972.0 {\fontsize{4}{4}\selectfont$\pm$183.3}  & 1239.0 {\fontsize{4}{4}\selectfont$\pm$49.8}  & 1236.0 {\fontsize{4}{4}\selectfont$\pm$221.0} & 1185.0 {\fontsize{4}{4}\selectfont$\pm$26.8}  \\
+    Ablation: paper           & 885.0   & 945.0   & 915.0   & 1071.0 {\fontsize{4}{4}\selectfont$\pm$109.7} & 1215.0 {\fontsize{4}{4}\selectfont$\pm$91.5}  & 1278.0 {\fontsize{4}{4}\selectfont$\pm$135.3} & 1800.0 {\fontsize{4}{4}\selectfont$\pm$0.0}   & 1788.0 {\fontsize{4}{4}\selectfont$\pm$24.0}  & 1800.0 {\fontsize{4}{4}\selectfont$\pm$0.0}   & 1641.0 {\fontsize{4}{4}\selectfont$\pm$171.4} \\
+    Ablation: temporal        & 570.0   & 675.0   & 570.0   & 819.0 {\fontsize{4}{4}\selectfont$\pm$112.1}  & 789.0 {\fontsize{4}{4}\selectfont$\pm$87.3}   & 882.0 {\fontsize{4}{4}\selectfont$\pm$58.0}   & 1074.0 {\fontsize{4}{4}\selectfont$\pm$72.6}  & 1188.0 {\fontsize{4}{4}\selectfont$\pm$25.8}  & 1236.0 {\fontsize{4}{4}\selectfont$\pm$189.6} & 1221.0 {\fontsize{4}{4}\selectfont$\pm$35.0}  \\
+    Ablation: single\_dqn     & 510.0   & 450.0   & 495.0   & 726.0 {\fontsize{4}{4}\selectfont$\pm$30.9}   & 606.0 {\fontsize{4}{4}\selectfont$\pm$58.9}   & 759.0 {\fontsize{4}{4}\selectfont$\pm$76.8}   & 855.0 {\fontsize{4}{4}\selectfont$\pm$171.6}  & 981.0 {\fontsize{4}{4}\selectfont$\pm$104.2}  & 948.0 {\fontsize{4}{4}\selectfont$\pm$124.9}  & 996.0 {\fontsize{4}{4}\selectfont$\pm$111.7}  \\
+    Ablation: environment     & 990.0   & 990.0   & 1080.0  & 1335.0 {\fontsize{4}{4}\selectfont$\pm$195.3} & 1422.0 {\fontsize{4}{4}\selectfont$\pm$211.6} & 1401.0 {\fontsize{4}{4}\selectfont$\pm$149.6} & 1734.0 {\fontsize{4}{4}\selectfont$\pm$51.6}  & 1671.0 {\fontsize{4}{4}\selectfont$\pm$142.5} & 1728.0 {\fontsize{4}{4}\selectfont$\pm$53.2}  & 1662.0 {\fontsize{4}{4}\selectfont$\pm$101.9} \\
+    Ablation: vanilla\_buffer & 585.0   & 570.0   & 525.0   & 753.0 {\fontsize{4}{4}\selectfont$\pm$85.1}   & 594.0 {\fontsize{4}{4}\selectfont$\pm$50.7}   & 777.0 {\fontsize{4}{4}\selectfont$\pm$59.5}   & 768.0 {\fontsize{4}{4}\selectfont$\pm$235.3}  & 837.0 {\fontsize{4}{4}\selectfont$\pm$17.5}   & 834.0 {\fontsize{4}{4}\selectfont$\pm$99.8}   & 1065.0 {\fontsize{4}{4}\selectfont$\pm$70.4}  \\
+    MetaSTGCN 1L              & 1485.0  & 1290.0  & 1065.0  & 1647.0 {\fontsize{4}{4}\selectfont$\pm$147.7}   & 1542.0 {\fontsize{4}{4}\selectfont$\pm$237.6} & 1509.0 {\fontsize{4}{4}\selectfont$\pm$94.2}  & 1527.0 {\fontsize{4}{4}\selectfont$\pm$169.5}   & 1719.0 {\fontsize{4}{4}\selectfont$\pm$134.0}   & 1716.0 {\fontsize{4}{4}\selectfont$\pm$86.2}   & 1761.0 {\fontsize{4}{4}\selectfont$\pm$70.7}   \\
+    MetaSTGCN 2L              & 1185.0  & 1125.0  & 1170.0  & 1263.0 {\fontsize{4}{4}\selectfont$\pm$96.0}   & 1308.0 {\fontsize{4}{4}\selectfont$\pm$238.2} & 1203.0 {\fontsize{4}{4}\selectfont$\pm$85.1}  & 1713.0 {\fontsize{4}{4}\selectfont$\pm$97.9}   & 1401.0 {\fontsize{4}{4}\selectfont$\pm$141.2}   & 1674.0 {\fontsize{4}{4}\selectfont$\pm$118.7}   & 1440.0 {\fontsize{4}{4}\selectfont$\pm$131.5}   \\
+    MetaSTSONAR L=2           & 510.0   & 510.0   & 585.0   & 753.0 {\fontsize{4}{4}\selectfont$\pm$146.5}    & 603.0 {\fontsize{4}{4}\selectfont$\pm$32.0}   & 720.0 {\fontsize{4}{4}\selectfont$\pm$9.5}    & 813.0 {\fontsize{4}{4}\selectfont$\pm$55.6}    & 1125.0 {\fontsize{4}{4}\selectfont$\pm$100.8}   & 831.0 {\fontsize{4}{4}\selectfont$\pm$64.1}    & 1191.0 {\fontsize{4}{4}\selectfont$\pm$149.3}   \\
+    MetaSTSONAR L=4           & 555.0   & 525.0   & 495.0   & 882.0 {\fontsize{4}{4}\selectfont$\pm$134.0}   & 642.0 {\fontsize{4}{4}\selectfont$\pm$52.3}   & 816.0 {\fontsize{4}{4}\selectfont$\pm$125.4}  & 1137.0 {\fontsize{4}{4}\selectfont$\pm$187.4}   & 1263.0 {\fontsize{4}{4}\selectfont$\pm$83.5}   & 1368.0 {\fontsize{4}{4}\selectfont$\pm$84.5}   & 1224.0 {\fontsize{4}{4}\selectfont$\pm$43.1}   \\
+    \bottomrule
+  \end{tabular}
+  \caption{Max wait $\text{wait}_{\max}$ (s) per ogni modello e ogni configurazione. Sulle configurazioni di test, media $\pm$ deviazione standard su 5 seed diversi. Sulle config \texttt{4x4-200}, valori a piena corsia.}
+  \label{tab:wait-full}
+\end{sidewaystable}

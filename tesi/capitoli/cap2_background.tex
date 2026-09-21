@@ -5,6 +5,32 @@
 \section{Reinforcement Learning}
 \label{sec:background-rl}
 
+
+MEMO PER ME : DA SPOSTARE!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!-----
+--------------------------------------------------------------------------------------------------------------------------------
+
+LSTM con pesi $W_g \in
+\mathbb{R}^{2d_1 \times d_1}$ e bias $b_g \in \mathbb{R}^{d_1}$ condivisi da
+ogni nodo della rete, per ciascuno dei quattro gate $g \in \{\text{forget,
+input, output, cell}\}$:
+\begin{equation}
+  \begin{bmatrix} f_i^t \\ \iota_i^t \\ o_i^t \\ g_i^t \end{bmatrix} =
+  \begin{bmatrix} \sigma \\ \sigma \\ \sigma \\ \tanh \end{bmatrix}
+  \left(
+    W_{\{f,\iota,o,g\}}^{\top} [\,e_i^t \,\|\, h_i^{t-1}\,] + b_{\{f,\iota,o,g\}}
+  \right), \qquad
+  c_i^t = f_i^t \odot c_i^{t-1} + \iota_i^t \odot g_i^t, \qquad
+  x_i^t = h_i^t = o_i^t \odot \tanh(c_i^t)
+  \label{eq:stgat-lstm}
+\end{equation}
+
+-------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------
+
+
+
+
+
 Un problema di decisione sequenziale in ambiente stocastico è formalizzato 
 come processo decisionale di Markov (MDP) \citep{suttonbarto2018}, definito dalla tupla
 \[\mathcal{M} = (\mathcal{S}, \mathcal{A}, P, R, \gamma)\] dove $\mathcal{S}$ è
@@ -126,21 +152,21 @@ non dal contenuto delle rappresentazioni stesse. Indicando con
 $\hat A = A + I$ la matrice di adiacenza a cui è stato aggiunto un
 self-loop per ogni nodo (cosicché un nodo contribuisca anche al proprio
 aggiornamento) e con $\hat D$ la matrice diagonale dei gradi corrispondente
-($\hat D_{ii} = \sum_j \hat A_{ij}$), la regola di propagazione di un
+($\hat D_{ii} = \sum_u \hat A_{iu}$), la regola di propagazione di un
 singolo layer si scrive, in forma matriciale:
 \begin{equation}
   H^{(l+1)} = \sigma\!\left(\hat D^{-1/2} \hat A\, \hat D^{-1/2} H^{(l)} W^{(l)}\right)
   \label{eq:gcn-propagation}
 \end{equation}
-dove $H^{(l)} \in \mathbb{R}^{N \times d_l}$ raccoglie le rappresentazioni
-di tutti gli $N$ nodi del grafo al layer $l$, $W^{(l)}$ è la matrice di
+dove $H^{(l)} \in \mathbb{R}^{I \times d_l}$ raccoglie le rappresentazioni
+di tutti gli $I$ nodi del grafo al layer $l$, $W^{(l)}$ è la matrice di
 pesi condivisa da ogni nodo e $\sigma$ una non linearità puntuale. Per un
 singolo nodo $i$, la normalizzazione simmetrica
 $\hat D^{-1/2}\hat A\hat D^{-1/2}$ equivale a pesare il contributo di ogni
-vicino $j$ con $1/\sqrt{\hat d_i \hat d_j}$:
+vicino $u$ con $1/\sqrt{\hat d_i \hat d_u}$:
 \begin{equation}
-  h_i' = \sigma\!\left(\sum_{j \in \mathcal{N}(i) \cup \{i\}}
-    \frac{1}{\sqrt{\hat d_i \hat d_j}}\, W h_j\right)
+  h_i' = \sigma\!\left(\sum_{u \in \mathcal{N}(i) \cup \{i\}}
+    \frac{1}{\sqrt{\hat d_i \hat d_u}}\, W h_u\right)
   \label{eq:gcn-aggregate}
 \end{equation}
 un peso identico per ogni arco del vicinato di $i$, funzione solo del grado
@@ -157,20 +183,20 @@ contenuto. Dato un nodo $i$ con vicinato $\mathcal{N}(i)$, embedding di
 input $h_i$, matrice di proiezione condivisa $W$ e vettore di attenzione
 $\vec a$:
 \begin{equation}
-  e_{ij} = \mathrm{LeakyReLU}\!\left(\vec a^\top [W h_i \,\|\, W h_j]\right),
+  e_{iu} = \mathrm{LeakyReLU}\!\left(\vec a^\top [W h_i \,\|\, W h_u]\right),
   \qquad
-  \alpha_{ij} = \frac{\exp(e_{ij})}{\sum_{k \in \mathcal{N}(i)} \exp(e_{ik})}
+  \alpha_{iu} = \frac{\exp(e_{iu})}{\sum_{u' \in \mathcal{N}(i)} \exp(e_{iu'})}
   \label{eq:gat-attention}
 \end{equation}
 \begin{equation}
-  h_i' = \sigma\!\left(\sum_{j \in \mathcal{N}(i)} \alpha_{ij}\, W h_j\right)
+  h_i' = \sigma\!\left(\sum_{u \in \mathcal{N}(i)} \alpha_{iu}\, W h_u\right)
   \label{eq:gat-aggregate}
 \end{equation}
 dove $\|$ denota la concatenazione. Con $K$ teste di attenzione
 indipendenti, gli output si concatenano nei layer intermedi e si mediano
 nell'ultimo, secondo lo schema multi-head introdotto per l'attenzione da
 \citet{vaswani2017attention}. A differenza della GCN, il coefficiente
-$\alpha_{ij}$ consente a un nodo di ponderare diversamente i propri vicini
+$\alpha_{iu}$ consente a un nodo di ponderare diversamente i propri vicini
 in base al loro contenuto, non solo alla loro posizione nel grafo: una
 proprietà rilevante per un'intersezione i cui vicini abbiano importanza
 marcatamente diversa, come nel caso di un'arteria principale contrapposta
@@ -193,7 +219,7 @@ termine ormai consolidato nella letteratura sul forecasting di serie
 temporali multivariate correlate \citep{cini2025graphdl}. MetaSTGAT,
 descritto nel dettaglio nel Capitolo~\ref{cap:tsc-modelli}, costituisce un esempio 
 di questa famiglia applicata al controllo semaforico anziché
-alla previsione: un layer di attenzione grafica cattura la dipendenza
+alla previsione: un layer di \emph{graph attention} cattura la dipendenza
 spaziale tra intersezioni limitrofe, un layer ricorrente (LSTM) ne
 cattura l'evoluzione temporale, e i due vengono addestrati congiuntamente
 end-to-end.
@@ -208,7 +234,7 @@ nodo a nodo. Un \emph{hypernetwork} affronta il problema generando i pesi
 di un layer non come parametri fissi appresi direttamente, bensì come
 output di una seconda rete condizionata sulle caratteristiche locali del
 nodo: il Capitolo~\ref{cap:tsc-modelli} descrive nel dettaglio come
-MetaSTGAT applichi questo principio sia al layer di attenzione grafica
+MetaSTGAT applichi questo principio sia al layer di \emph{graph attention}
 sia al layer ricorrente.
 
 \paragraph{Propagazione a lungo raggio.} Sia la GCN sia la GAT propagano
@@ -293,7 +319,7 @@ che interazioni tra sole intersezioni adiacenti non siano sufficienti a catturar
 le dinamiche di traffico e si propongono diverse soluzioni per ovviare a questo limite. 
 In questo lavoro si è deciso di non affrontare questo tema, esplorandolo solo in parte nel Capitolo ~\ref{cap:confronto}.
 Il problema resta comunque aperto e framework che combinano ingredienti proposti da MetaSTGAT, 
-quali attenzione grafica, una componente ricorrente sul tempo e reinforcement
+quali \emph{graph attention}, una componente ricorrente sul tempo e reinforcement
 learning per il controllo semaforico, continuano ad essere oggetto di ricerca.
 
 \paragraph{Una tassonomia delle soluzioni recenti.} La letteratura più
@@ -320,7 +346,7 @@ le introduce quasi sempre in risposta a un limite preciso.
 \paragraph{Dove si colloca MetaSTGAT.} Il modello di questo lavoro è la combinazione 
 di alcune delle tecniche appena citate. 
 La sua è un'architettura DTDE con scambio locale di informazione, che 
-affianca all'attenzione grafica (GAT) un componente ricorrente (LSTM) per catturare la dipendenza temporale oltre
+affianca al \emph{graph attention} (GAT) un componente ricorrente (LSTM) per catturare la dipendenza temporale oltre
 a quella spaziale, collocandosi nella famiglia delle reti spatio-temporali
 su grafo (STGNN); il modello sfrutta inoltre il meta-learning,
 con l'obiettivo di adattare dinamicamente la propria architettura alle condizioni della rete. 

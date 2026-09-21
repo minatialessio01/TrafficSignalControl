@@ -1,0 +1,34 @@
+# Non serve nella build: risultati, checkpoint, log (creati dal container stesso)
+results/
+
+# Metadati git
+.git/
+.gitignore
+
+# Tesi e materiale di scrittura: non serve al training/test
+tesi/
+Materiale per la scrittura della tesi/
+*.md
+
+# Ambienti virtuali e cache Python
+venv/
+env/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Sorgente CityFlow locale: il Dockerfile ne clona una copia propria da
+# GitHub durante la build, questa cartella non è mai referenziata dal codice
+CityFlow/
+
+# Cartelle di analisi/scratch locali
+confronto/
+analisi_configurazioni*/
+scratch_*/

@@ -110,6 +110,17 @@ GREEN_LANES_PER_PHASE = {
     7: [6, 7, 8]           # WTWL: Ovest Sinistra/Dritto/Destra (6,7,8)
 }
 
+# Inverso di GREEN_LANES_PER_PHASE: per ogni corsia, l'insieme di fasi che le
+# danno il verde -- usato da use_lane_starvation_mask (vedi get_invalid_actions).
+PHASES_PER_GREEN_LANE = {
+    lane: [p for p, lanes in GREEN_LANES_PER_PHASE.items() if lane in lanes]
+    for lane in range(12)
+}
+
+# Numero di step decisionali consecutivi senza verde oltre il quale una
+# corsia forza la maschera use_lane_starvation_mask (vedi get_invalid_actions).
+LANE_STARVATION_THRESHOLD = 8
+
 
 class CityFlowEnv:
     """
@@ -134,6 +145,7 @@ class CityFlowEnv:
         use_pressure_reward_term: bool = False,  # True = 1o termine del reward custom = pressione (stile paper) invece di throughput
         use_phase_pressure_state: bool = False,  # True = aggiunge phase_pressure (8 dim) allo STATO principale
         use_soft_wait_scale: bool = False,  # True = wait_vec = tanh(wt/WAIT_SCALE_TAU_S) invece di clip(wt/100, 0, 1)
+        use_lane_starvation_mask: bool = False,  # True = maschera per-corsia oltre LANE_STARVATION_THRESHOLD step senza verde
     ):
         """
         Args:
@@ -180,6 +192,16 @@ class CityFlowEnv:
                 esattamente, preserva gradazione tra attese "gravi" (200-300s) e
                 "patologiche" (900-1800s) che il clip a 100s rende identiche.
                 Esperimento 16/9/2026, vedi commento su WAIT_SCALE_TAU_S.
+            use_lane_starvation_mask: se True, aggiunge alla maschera anti-starvation
+                esistente (ripetizione della stessa fase) un secondo vincolo per
+                singola corsia: se una corsia in ingresso non riceve il verde da
+                LANE_STARVATION_THRESHOLD step decisionali consecutivi, lo step
+                successivo è limitato alle sole fasi che le danno il verde
+                (PHASES_PER_GREEN_LANE). A differenza della maschera esistente
+                (che vieta solo la ripetizione della fase corrente), questa
+                garantisce un limite massimo all'attesa di ogni singola corsia,
+                indipendentemente da quali fasi diverse siano state scelte nel
+                frattempo. Esperimento 19/9/2026.
         """
         if not CITYFLOW_AVAILABLE:
             raise RuntimeError(
@@ -199,6 +221,7 @@ class CityFlowEnv:
         self.use_pressure_reward_term = use_pressure_reward_term
         self.use_phase_pressure_state = use_phase_pressure_state
         self.use_soft_wait_scale = use_soft_wait_scale
+        self.use_lane_starvation_mask = use_lane_starvation_mask
 
         # Carica la configurazione
         with open(config_path, "r") as f:
@@ -258,6 +281,9 @@ class CityFlowEnv:
         self.current_step = 0
         self.current_phase = {iid: 0 for iid in self.inter_ids}
         self.consecutive_phases = {iid: 0 for iid in self.inter_ids}
+        # Step decisionali consecutivi senza verde, per ogni corsia in ingresso
+        # (vedi use_lane_starvation_mask / get_invalid_actions).
+        self.lane_no_green_streak = {iid: [0] * N_LANES for iid in self.inter_ids}
 
         # Statistiche episodio
         self.episode_travel_times = []
@@ -519,6 +545,7 @@ class CityFlowEnv:
         self.current_step = 0
         self.current_phase = {iid: 0 for iid in self.inter_ids}
         self.consecutive_phases = {iid: 0 for iid in self.inter_ids}
+        self.lane_no_green_streak = {iid: [0] * N_LANES for iid in self.inter_ids}
         self.episode_travel_times = []
         self.episode_throughput = 0
         
@@ -543,6 +570,28 @@ class CityFlowEnv:
         # config_4x4_100m_6k_peak/MaxPressure (1125s) era di questo secondo tipo.
         self._wait_ns_record = {}
         self._wait_ew_record = {}
+
+        # Stessa identica contabilita' di max_wait_ns/ew e vehicle_wait_times,
+        # ma SEMPRE sull'intera corsia (ignorando use_vision_cutoff) — usata
+        # solo per la metrica di valutazione "max wait", mai per stato o
+        # reward. Con use_vision_cutoff=True (default per quasi tutti i
+        # modelli), un veicolo fermo prima della zona vicina al semaforo
+        # (oltre VISION_CUTOFF_M dall'incrocio) non viene mai contato in
+        # max_wait_ns/ew: su una corsia piu' lunga di VISION_CUTOFF_M, uno
+        # stallo che si forma in quella zona cieca resta invisibile alla
+        # metrica finche' non si propaga fino al raggio di visibilita'.
+        # Verificato il 19/9/2026: su corsie da ~167m (config "100m") la
+        # zona cieca e' di soli ~23m e non cambia mai il massimo osservato;
+        # su corsie da ~260m (config "200m") la zona cieca e' di ~116m e puo'
+        # nascondere code molto piu' lunghe (es. Fixed-Time su
+        # config_4x4_200m_6k_flat: 420s con cutoff, 1140s senza). Questo
+        # contatore parallelo non influenza mai la policy: aggiorna solo
+        # bookkeeping interno, mai osservazione o ricompensa.
+        self.vehicle_wait_times_full = {}
+        self.max_wait_ns_full = {iid: 0.0 for iid in self.inter_ids}
+        self.max_wait_ew_full = {iid: 0.0 for iid in self.inter_ids}
+        self._wait_ns_record_full = {}
+        self._wait_ew_record_full = {}
 
         # Massima attesa MAI osservata da OGNI VEICOLO (non per intersezione),
         # separata N/S vs W/E in base a su quale corsia si trovava nel momento
@@ -587,6 +636,17 @@ class CityFlowEnv:
             self.engine.set_tl_phase(iid, phase)
             self.current_phase[iid] = phase
 
+            # Aggiorna, per ogni corsia in ingresso, gli step decisionali
+            # consecutivi senza verde (vedi use_lane_starvation_mask): azzerata
+            # se la fase appena scelta la serve, incrementata altrimenti.
+            green_lanes_now = GREEN_LANES_PER_PHASE.get(phase, [])
+            streak = self.lane_no_green_streak[iid]
+            for lane_idx in range(N_LANES):
+                if lane_idx in green_lanes_now:
+                    streak[lane_idx] = 0
+                else:
+                    streak[lane_idx] += 1
+
         incoming_t0 = self._get_incoming_vehicles_ids()
 
         old_vehicles = set(self.engine.get_vehicles(include_waiting=True))
@@ -617,6 +677,10 @@ class CityFlowEnv:
         self.all_spawned_vehicles.update(self.engine.get_vehicles())
 
         incoming_t1 = self._get_incoming_vehicles_ids()
+        # Solo per il contatore parallelo max_wait_ns_full/ew_full (vedi reset()):
+        # stessa identificazione ma sempre sull'intera corsia, mai usata per
+        # stato/reward/azioni.
+        incoming_t1_full = self._get_incoming_vehicles_ids(ignore_cutoff=True)
 
         # Aggiorna il tempo di attesa dei veicoli: tempo CONTINUATIVO trascorso
         # come veicolo "in ingresso" a un'intersezione (nel raggio di
@@ -643,6 +707,17 @@ class CityFlowEnv:
             if veh_id not in all_incoming_now:
                 self.vehicle_wait_times[veh_id] = 0
 
+        # Stessa contabilita', ma per il contatore parallelo sempre a piena
+        # corsia (vedi reset()).
+        all_incoming_now_full = set()
+        for s in incoming_t1_full.values():
+            all_incoming_now_full.update(s)
+        for veh_id in all_incoming_now_full:
+            self.vehicle_wait_times_full[veh_id] = self.vehicle_wait_times_full.get(veh_id, 0) + STEP_TIME
+        for veh_id in list(self.vehicle_wait_times_full.keys()):
+            if veh_id not in all_incoming_now_full:
+                self.vehicle_wait_times_full[veh_id] = 0
+
         # Aggiorna la massima attesa mai vista per intersezione, separata per
         # corsie N/S vs W/E (metriche di equita', vedi get_direction_fairness_stats()).
         try:
@@ -654,6 +729,7 @@ class CityFlowEnv:
                         continue
                     for veh in lane_vehicles_fair.get(lane_id, []):
                         wt = self.vehicle_wait_times.get(veh, 0.0)
+                        wt_full = self.vehicle_wait_times_full.get(veh, 0.0)
                         record_time = (self.current_step + 1) * STEP_TIME
                         if k < 6:  # N (0-2) + S (3-5)
                             if wt > self.max_wait_ns[iid]:
@@ -661,12 +737,18 @@ class CityFlowEnv:
                                 self._wait_ns_record[iid] = (veh, lane_id, record_time)
                             if wt > self.vehicle_max_wait_ns.get(veh, 0.0):
                                 self.vehicle_max_wait_ns[veh] = wt
+                            if wt_full > self.max_wait_ns_full[iid]:
+                                self.max_wait_ns_full[iid] = wt_full
+                                self._wait_ns_record_full[iid] = (veh, lane_id, record_time)
                         else:  # W (6-8) + E (9-11)
                             if wt > self.max_wait_ew[iid]:
                                 self.max_wait_ew[iid] = wt
                                 self._wait_ew_record[iid] = (veh, lane_id, record_time)
                             if wt > self.vehicle_max_wait_ew.get(veh, 0.0):
                                 self.vehicle_max_wait_ew[veh] = wt
+                            if wt_full > self.max_wait_ew_full[iid]:
+                                self.max_wait_ew_full[iid] = wt_full
+                                self._wait_ew_record_full[iid] = (veh, lane_id, record_time)
         except Exception:
             pass
 
@@ -814,8 +896,13 @@ class CityFlowEnv:
 
         return observations
 
-    def _get_incoming_vehicles_ids(self) -> Dict[str, set]:
-        """Restituisce per ogni intersezione il set di ID dei veicoli in ingresso (nel raggio visivo)."""
+    def _get_incoming_vehicles_ids(self, ignore_cutoff: bool = False) -> Dict[str, set]:
+        """Restituisce per ogni intersezione il set di ID dei veicoli in ingresso (nel raggio visivo).
+
+        ignore_cutoff=True forza la visibilita' sull'intera corsia anche con
+        use_vision_cutoff=True — usato solo dal contatore parallelo
+        max_wait_ns_full/ew_full (vedi reset()), mai per stato o reward.
+        """
         lane_vehicles = self.engine.get_lane_vehicles()
         vehicle_distances = self.engine.get_vehicle_distance()
         incoming_ids = {iid: set() for iid in self.inter_ids}
@@ -827,12 +914,12 @@ class CityFlowEnv:
                     continue
                 road_id = "_".join(l.split("_")[:-1])
                 for veh in lane_vehicles.get(l, []):
-                    if self.use_vision_cutoff:
+                    if self.use_vision_cutoff and not ignore_cutoff:
                         cutoff = max(0.0, self.road_lengths.get(road_id, 340.0) - VISION_CUTOFF_M)
                         if vehicle_distances.get(veh, 0.0) >= cutoff:
                             incoming_ids[iid].add(veh)
                     else:
-                        # Paper: conta tutti i veicoli sulla corsia
+                        # Paper, o ignore_cutoff=True: conta tutti i veicoli sulla corsia
                         incoming_ids[iid].add(veh)
         return incoming_ids
 
@@ -1521,9 +1608,12 @@ class CityFlowEnv:
         if not ns_vals:
             return {"avg_wait_ns": 0.0, "max_wait_ns": 0.0, "max_wait_ns_resolved": 0.0,
                     "avg_wait_ew": 0.0, "max_wait_ew": 0.0, "max_wait_ew_resolved": 0.0,
-                    "worst_wait": 0.0}
+                    "worst_wait": 0.0,
+                    "max_wait_ns_full": 0.0, "max_wait_ew_full": 0.0, "worst_wait_full": 0.0}
         avg_ns, max_ns = float(np.mean(ns_vals)), float(np.max(ns_vals))
         avg_ew, max_ew = float(np.mean(ew_vals)), float(np.max(ew_vals))
+        max_ns_full = float(np.max(list(self.max_wait_ns_full.values())))
+        max_ew_full = float(np.max(list(self.max_wait_ew_full.values())))
 
         episode_end = self.current_step * STEP_TIME
 
@@ -1539,6 +1629,11 @@ class CityFlowEnv:
             "avg_wait_ns": avg_ns, "max_wait_ns": max_ns, "max_wait_ns_resolved": max_ns_resolved,
             "avg_wait_ew": avg_ew, "max_wait_ew": max_ew, "max_wait_ew_resolved": max_ew_resolved,
             "worst_wait": max(max_ns, max_ew),
+            # Variante a piena corsia (ignora use_vision_cutoff), vedi reset():
+            # stesso significato, solo senza la zona cieca vicino all'inizio
+            # della corsia. Mai usata per stato/reward, solo per la metrica.
+            "max_wait_ns_full": max_ns_full, "max_wait_ew_full": max_ew_full,
+            "worst_wait_full": max(max_ns_full, max_ew_full),
         }
 
     def get_invalid_actions(self) -> Dict[str, List[int]]:
@@ -1549,17 +1644,46 @@ class CityFlowEnv:
           Maschera la fase corrente se scelta >= 2 volte consecutive (anti-starvation).
 
         Modalità paper (use_action_mask=False):
-          Nessun vincolo — restituisce dizionario con liste vuote.
-        """
-        if not self.use_action_mask:
-            return {iid: [] for iid in self.inter_ids}
+          Nessun vincolo di base (si applica comunque use_lane_starvation_mask,
+          se attivo: i due flag sono indipendenti).
 
-        invalid_actions = {}
-        for iid, phase in self.current_phase.items():
-            if self.consecutive_phases.get(iid, 0) >= 2:
-                invalid_actions[iid] = [phase]
-            else:
-                invalid_actions[iid] = []
+        use_lane_starvation_mask=True: se una corsia in ingresso non ha
+        ricevuto il verde da LANE_STARVATION_THRESHOLD step decisionali
+        consecutivi (self.lane_no_green_streak, aggiornato in step()), lo
+        step successivo è limitato alle sole fasi che le danno il verde
+        (PHASES_PER_GREEN_LANE), unite su tutte le corsie eventualmente sopra
+        soglia insieme. Se questo vincolo, combinato con quello sulla
+        ripetizione della fase corrente, azzererebbe le azioni valide, ha
+        priorità la maschera per corsia (evitare la starvation è più
+        importante di evitare una terza ripetizione consecutiva).
+        """
+        if self.use_action_mask:
+            invalid_actions = {}
+            for iid, phase in self.current_phase.items():
+                invalid_actions[iid] = [phase] if self.consecutive_phases.get(iid, 0) >= 2 else []
+        else:
+            invalid_actions = {iid: [] for iid in self.inter_ids}
+
+        if not self.use_lane_starvation_mask:
+            return invalid_actions
+
+        all_phases = set(range(N_PHASES))
+        for iid in self.inter_ids:
+            streak = self.lane_no_green_streak[iid]
+            starved_lanes = [k for k, s in enumerate(streak) if s >= LANE_STARVATION_THRESHOLD]
+            if not starved_lanes:
+                continue
+            allowed = set()
+            for lane_idx in starved_lanes:
+                allowed.update(PHASES_PER_GREEN_LANE.get(lane_idx, []))
+            if not allowed:
+                continue
+            forced_invalid = all_phases - allowed
+            combined = set(invalid_actions[iid]) | forced_invalid
+            if len(combined) >= N_PHASES:
+                combined = forced_invalid
+            invalid_actions[iid] = sorted(combined)
+
         return invalid_actions
 
     def get_original_average_travel_time(self) -> float:
