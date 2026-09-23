@@ -146,6 +146,13 @@ prestazione in-distribuzione) più 7 configurazioni mai viste in training
 \emph{flat} sia \emph{peak}), usate per misurare la generalizzazione a
 profili di traffico, spaziature e topologie mai incontrati in training.
 
+Ogni modello di questo lavoro, RL o ablation, deriva da un singolo run di
+addestramento. La batteria a più seed appena descritta ripete la sola
+valutazione, non l'addestramento: le medie e le deviazioni standard
+riportate in questo capitolo descrivono quindi la variabilità della
+policy già addestrata su scenari di valutazione diversi, non la
+variabilità tra run di addestramento indipendenti.
+
 \section{Confronti proposti}
 \label{sec:confronti}
 
@@ -279,11 +286,22 @@ mentre le sottosezioni successive approfondiranno i rispettivi confronti
   \label{tab:base-test}
 \end{table}
 
-Fixed-Time è il controllore peggiore su quasi ogni metrica di riferimento,
-$wait_{\max}$ compreso: la rotazione fissa delle fasi non produce alcun
-vantaggio nemmeno in training, dove Max-Pressure e MetaSTGAT Pro lo
-battono nettamente su ogni metrica.
-Non osservando mai lo stato della rete, resta comunque il riferimento più
+Fixed-Time è il controllore peggiore su travel time medio e su trip
+completion, in entrambi i regimi. Il quadro si inverte però su
+$tt_{\max}$ e $wait_{\max}$: Max-Pressure non batte Fixed-Time su nessuna
+delle due metriche, né in training ($tt_{\max}$ 1070.0s contro 1030.0s,
+$wait_{\max}$ 1040.0s contro 935.0s) né in test (1647.4s contro 1496.1s,
+1636.7s contro 1311.0s). Una spiegazione plausibile è strutturale:
+Max-Pressure sceglie a ogni istante la fase che libera più veicoli, senza
+mai considerare da quanto tempo attende la direzione esclusa
+(Capitolo~\ref{cap:introduzione}), e può quindi in linea di principio far
+attendere a lungo una direzione a bassa pressione se le altre restano
+sempre più cariche; la rotazione fissa di Fixed-Time, per quanto cieca al
+traffico reale, garantisce invece per costruzione che ogni fase torni
+periodicamente, ponendo un limite strutturale all'attesa massima che una
+regola puramente reattiva non ha. MetaSTGAT Pro resta l'unico dei tre a
+battere Fixed-Time su ogni metrica, in entrambi i regimi. Non osservando
+mai lo stato della rete, Fixed-Time resta comunque il riferimento più
 semplice rispetto a cui ogni strategia reattiva o appresa può essere
 confrontata.
 
@@ -323,7 +341,10 @@ e tutti gli altri modelli di questo capitolo: 86.2\%/84.0\%
 training e tra l'89.0\% e il 95.8\% in test per ogni altra variante
 (Tabella~\ref{tab:tc-adjusted}, a fine capitolo); l'unica
 eccezione parziale è MetaSTGCN, il cui completamento più basso è discusso
-a parte in §\ref{sec:confronto-spaziale}. Con questo unico scarto
+a parte in §\ref{sec:confronto-spaziale}. Tra Max-Pressure e MetaSTGAT
+Pro, quest'ultimo ottiene un $tc$ più alto su tutte e 7 le configurazioni
+di test, un vantaggio sistematico non limitato alle due griglie
+$6\times6$ già osservate sul travel time medio. Con questo unico scarto
 rilevante già osservato qui, le sottosezioni seguenti non ripetono la
 discussione di $tc$ configurazione per configurazione: si limitano a
 segnalarne la tendenza generale, rimandando alla stessa tabella per il
@@ -439,8 +460,11 @@ strettamente monotono al diminuire di $\alpha$, cioè al ridursi del peso
 dato al caso di starvation più estremo, in entrambi i regimi. Su
 $wait_{\max}$ l'andamento è quasi monotono: in test $\alpha=0.00$ (1012.3s)
 resta peggiore di $\alpha=0.04$ (930.9s) come atteso, ma in training i due
-valori sono sostanzialmente pari (555.0s contro 560.0s, una differenza
-compatibile con la variabilità tra seed). Il
+valori sono sostanzialmente pari (555.0s contro 560.0s): le configurazioni
+di training, a differenza di quelle di test, non sono mediate su più
+seed, per cui una differenza di 5 secondi tra le due non è distinguibile
+da una singola realizzazione senza una stima della variabilità a
+supporto. Il
 riferimento $\alpha=0.08$ ottiene comunque sia il $tt_{\max}$ sia il
 $wait_{\max}$ più bassi in entrambi i regimi, il 59\% in meno
 di Max-Pressure in training e il 52\% in meno in test. In test sia $\alpha=0.04$
@@ -471,8 +495,8 @@ con i cinque preset di ablation presenti nella Tabella~\ref{tab:ablation-preset}
 \texttt{paper} (replica fedele del riferimento originale), \texttt{environment}
 (campo di visibilità, $w_i^t$ e maschera azioni rimossi),
 \texttt{temporal} (burn-in e BPTT disattivati), \texttt{single\_dqn}
-(Double DQN sostituita da DQN) e \texttt{vanilla\_buffer} (PER, Huber, soft
-update, gradient clipping, warm-up ed esplorazione ciclica disattivati),
+(Double DQN sostituita da DQN) e \texttt{vanilla\_buffer} (PER, Huber,
+gradient clipping, warm-up ed esplorazione ciclica disattivati),
 tutti allo stesso $\alpha=0.08$ del riferimento.
 
 \begin{table}[htbp]
@@ -577,9 +601,21 @@ il risultato congiunto di queste rimozioni che di una sola.
 \end{figure}
 
 Su $tt_{\max}$ e $wait_{max}$, \texttt{paper} ed \texttt{environment} restano
-nettamente indietro in entrambi i regimi, coerentemente con l'unico
-elemento che condividono e che differisce da ogni altro preset: l'assenza del
-termine legato all'attesa nella ricompensa.
+nettamente indietro in entrambi i regimi. I due preset condividono più di
+un solo elemento rispetto a ogni altro modello di questo studio: oltre
+all'assenza del termine legato all'attesa nella ricompensa, rimuovono
+entrambi anche il segnale di attesa $w_i^t$ dallo stato, la maschera
+anti-starvation e il vincolo sul campo visivo
+(Tabella~\ref{tab:ablation-preset}). Che la sola assenza del termine di
+ricompensa non basti a spiegare il divario lo conferma il confronto con
+$\alpha=0.00$ (§\ref{sec:risultati-alpha}): pur privo anch'esso di
+qualunque penalità sull'attesa nella ricompensa, con stato e maschera
+lasciati intatti resta nettamente sotto \texttt{paper} ed
+\texttt{environment} su entrambe le metriche di caso peggiore in test
+($wait_{\max}$ 1012.3s contro 1513.3s e 1463.1s, $tt_{\max}$ 1164.4s
+contro 1553.6s e 1495.3s). Il degrado osservato dipende quindi più
+probabilmente dalla combinazione delle rimozioni congiunte che dal solo
+termine di ricompensa.
 
 Sempre su queste due metriche, in training \texttt{single\_dqn} ottiene il
 miglior $tt_{\max}$ in assoluto (600.0s), con il modello Pro secondo
