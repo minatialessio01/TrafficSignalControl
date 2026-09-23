@@ -102,13 +102,22 @@ def _resolve_model_ids(args):
 
 
 def train_one(model_id, info, args, output_dir):
+    # Le altre trainings (pro_*, ablation_*) selezionano final vs best-loss su
+    # 3 varianti seed della config di validazione, non su una sola (troppo
+    # rumoroso per un unico episodio di confronto, vedi train.py
+    # run_final_selection). Manteniamo la stessa convenzione qui.
+    select_best_configs = [
+        args.validation_config,
+        args.validation_config.replace(".json", "2.json"),
+        args.validation_config.replace(".json", "3.json"),
+    ]
     argv = [
         "train.py",
         "--config", *args.train_configs,
         "--model", info["model"],
         "--episodes", str(args.episodes),
         "--output-dir", output_dir,
-        "--select-best-config", args.validation_config,
+        "--select-best-config", *select_best_configs,
         "--ablation", "pro",
         "--seed", str(args.seed),
         *info["extra_args"],

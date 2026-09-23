@@ -65,13 +65,13 @@ def unified_maxwait_test(model):
 
 
 STUDIES = {
-    "ALPHA": ["maxpressure", "pro_0.08", "pro_0.04", "pro_0.00"],
-    "ABLATION": ["fixedtime", "maxpressure", "ablation_paper", "ablation_temporal",
-                 "pro_0.08", "ablation_single_dqn", "ablation_environment",
+    "ALPHA": ["maxpressure", "pro_0.08_no_soft", "pro_0.04_no_soft", "pro_0.00_no_soft"],
+    "ABLATION": ["fixedtime", "maxpressure", "ablation_paper", "ablation_temporal_no_soft",
+                 "pro_0.08_no_soft", "ablation_single_dqn_no_soft", "ablation_environment_no_soft",
                  "ablation_vanilla_buffer"],
-    "ARCHITECTURES": ["fixedtime", "maxpressure", "metastgcn_1l_pro_0.08",
-                       "metastgcn_2l_pro_0.08", "pro_0.08", "pro_2l",
-                       "metastsonar_l4_pro_0.08", "metastsonar_l2_pro_0.08"],
+    "ARCHITECTURES": ["fixedtime", "maxpressure", "metastgcn_1l_pro_0.08_no_soft",
+                       "metastgcn_2l_pro_0.08_no_soft", "pro_0.08_no_soft", "pro_2l_no_soft",
+                       "metastsonar_l4_pro_0.08_no_soft", "metastsonar_l2_pro_0.08_no_soft"],
 }
 
 for name, models in STUDIES.items():

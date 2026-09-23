@@ -40,20 +40,20 @@ SHADES = ("#08306b", "#2171b5", "#6baed6")  # scuro (TT medio) -> chiaro (TT mas
 
 LABELS = {
     "fixedtime": "Fixed-Time",
-    "maxpressure": "MaxPressure",
+    "maxpressure": "Max-Pressure",
     "ablation_paper": "Paper",
-    "ablation_temporal": "Temporal",
-    "ablation_single_dqn": "Single DQN",
-    "ablation_environment": "Environment",
+    "ablation_temporal_no_soft": "Temporal",
+    "ablation_single_dqn_no_soft": "Single DQN",
+    "ablation_environment_no_soft": "Environment",
     "ablation_vanilla_buffer": "Vanilla buffer",
-    "pro_0.08": "Pro (α=0.08)",
-    "pro_0.04": "Pro (α=0.04)",
-    "pro_0.00": "Pro (α=0.00)",
-    "metastgcn_1l_pro_0.08": "MetaSTGCN 1L",
-    "metastgcn_2l_pro_0.08": "MetaSTGCN 2L",
-    "pro_2l": "MetaSTGAT 2L",
-    "metastsonar_l4_pro_0.08": "MetaSTSONAR L4",
-    "metastsonar_l2_pro_0.08": "MetaSTSONAR L2",
+    "pro_0.08_no_soft": "Pro (α=0.08)",
+    "pro_0.04_no_soft": "Pro (α=0.04)",
+    "pro_0.00_no_soft": "Pro (α=0.00)",
+    "metastgcn_1l_pro_0.08_no_soft": "MetaSTGCN 1L",
+    "metastgcn_2l_pro_0.08_no_soft": "MetaSTGCN 2L",
+    "pro_2l_no_soft": "MetaSTGAT 2L",
+    "metastsonar_l4_pro_0.08_no_soft": "MetaSTSONAR L4",
+    "metastsonar_l2_pro_0.08_no_soft": "MetaSTSONAR L2",
 }
 
 # (group_key, model_ids, nome cartella per-config -- distinto sia dalle
@@ -67,18 +67,18 @@ LABELS = {
 # sorgente cancellati in precedenza).
 GROUPS = [
     ("pro_alpha", [
-        "fixedtime", "pro_0.08", "pro_0.04",
-        "pro_0.00", "maxpressure",
+        "fixedtime", "pro_0.08_no_soft", "pro_0.04_no_soft",
+        "pro_0.00_no_soft", "maxpressure",
     ], "compare_pro_alpha"),
     ("ablation", [
-        "fixedtime", "ablation_paper", "ablation_temporal",
-        "pro_0.08", "ablation_single_dqn",
-        "ablation_environment", "ablation_vanilla_buffer", "maxpressure",
+        "fixedtime", "ablation_paper", "ablation_temporal_no_soft",
+        "pro_0.08_no_soft", "ablation_single_dqn_no_soft",
+        "ablation_environment_no_soft", "ablation_vanilla_buffer", "maxpressure",
     ], "compare_ablation"),
     ("architectures", [
-        "fixedtime", "metastgcn_1l_pro_0.08", "metastgcn_2l_pro_0.08",
-        "pro_0.08", "pro_2l",
-        "metastsonar_l4_pro_0.08", "metastsonar_l2_pro_0.08", "maxpressure",
+        "fixedtime", "metastgcn_1l_pro_0.08_no_soft", "metastgcn_2l_pro_0.08_no_soft",
+        "pro_0.08_no_soft", "pro_2l_no_soft",
+        "metastsonar_l4_pro_0.08_no_soft", "metastsonar_l2_pro_0.08_no_soft", "maxpressure",
     ], "compare_architectures"),
 ]
 

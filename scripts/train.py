@@ -571,7 +571,7 @@ def run_final_selection(args, final_model_path: str, best_model_path: str, devic
         print("[Select] Selezione finale disattivata (--no-select-best).")
         return None
 
-    if args.model not in ("MetaSTGAT", "STGAT"):
+    if args.model not in ("MetaSTGAT", "STGAT", "MetaSTGNN", "MetaSTSONAR"):
         print(f"[Select] Selezione finale non supportata per --model {args.model}. Salto.")
         return None
 
@@ -624,6 +624,10 @@ def run_final_selection(args, final_model_path: str, best_model_path: str, devic
                 num_heads=args.num_heads,
                 num_neighbors=args.num_neighbors,
                 num_layers=getattr(args, "num_layers", 1),
+                sonar_recurrences=getattr(args, "sonar_recurrences", 2),
+                sonar_step_size=getattr(args, "sonar_step_size", 0.1),
+                no_sonar_dissipation=getattr(args, "no_sonar_dissipation", False),
+                no_sonar_forcing=getattr(args, "no_sonar_forcing", False),
                 device=str(device),
             )
             try:

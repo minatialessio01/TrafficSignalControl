@@ -137,7 +137,7 @@ def draw(title, labels, models, cfgs, use_seeds, out_path):
 
 
 # ── Sweep alpha ──────────────────────────────────────────────────────────
-ALPHA_MODELS = ["fixedtime", "pro_0.08", "pro_0.04", "pro_0.00"]
+ALPHA_MODELS = ["fixedtime", "pro_0.08_no_soft", "pro_0.04_no_soft", "pro_0.00_no_soft"]
 ALPHA_LABELS = ["Fixed-Time", "Pro (α=0.08)", "Pro (α=0.04)", "Pro (α=0.00)"]
 
 draw("Sweep $\\alpha$ — config di training", ALPHA_LABELS, ALPHA_MODELS, TRAIN_CFGS, False,
@@ -146,8 +146,8 @@ draw("Sweep $\\alpha$ — config di test", ALPHA_LABELS, ALPHA_MODELS, TEST_CFGS
      f"{OUT_DIR}/diff_pct_alpha_test.png")
 
 # ── Ablation ─────────────────────────────────────────────────────────────
-ABL_MODELS = ["fixedtime", "pro_0.08", "ablation_paper", "ablation_environment",
-              "ablation_temporal", "ablation_single_dqn", "ablation_vanilla_buffer"]
+ABL_MODELS = ["fixedtime", "pro_0.08_no_soft", "ablation_paper", "ablation_environment_no_soft",
+              "ablation_temporal_no_soft", "ablation_single_dqn_no_soft", "ablation_vanilla_buffer"]
 ABL_LABELS = ["Fixed-Time", "Pro (riferimento)", "paper", "environment", "temporal", "single_dqn", "vanilla_buffer"]
 
 draw("Studio di ablation — config di training", ABL_LABELS, ABL_MODELS, TRAIN_CFGS, False,
@@ -156,9 +156,9 @@ draw("Studio di ablation — config di test", ABL_LABELS, ABL_MODELS, TEST_CFGS,
      f"{OUT_DIR}/diff_pct_ablation_test.png")
 
 # ── Meccanismi spaziali ──────────────────────────────────────────────────
-ARCH_MODELS = ["fixedtime", "pro_0.08", "pro_2l",
-               "metastgcn_1l_pro_0.08", "metastgcn_2l_pro_0.08",
-               "metastsonar_l2_pro_0.08", "metastsonar_l4_pro_0.08"]
+ARCH_MODELS = ["fixedtime", "pro_0.08_no_soft", "pro_2l_no_soft",
+               "metastgcn_1l_pro_0.08_no_soft", "metastgcn_2l_pro_0.08_no_soft",
+               "metastsonar_l2_pro_0.08_no_soft", "metastsonar_l4_pro_0.08_no_soft"]
 ARCH_LABELS = ["Fixed-Time", "MetaSTGAT 1L (rif.)", "MetaSTGAT 2L", "MetaSTGCN 1L", "MetaSTGCN 2L", "MetaSTSONAR L=2", "MetaSTSONAR L=4"]
 
 draw("Meccanismi spaziali — config di training", ARCH_LABELS, ARCH_MODELS, TRAIN_CFGS, False,
