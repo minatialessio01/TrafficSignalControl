@@ -1,57 +1,46 @@
-%!TEX root = ../main.tex
+%!TEX root = ../mainufficiale.tex
 \chapter*{Sommario}
 \addcontentsline{toc}{chapter}{Sommario}
 
-Il controllo semaforico su una rete di intersezioni è un problema di
-coordinamento distribuito: la fase scelta a un incrocio influenza, con
-pochi secondi di ritardo, il traffico che raggiunge gli incroci vicini. Le
-soluzioni classiche, a tempi fissi o reattive sulla sola pressione locale
-(MaxPressure), non tengono conto di questa dipendenza spaziale in modo
-esplicito. MetaSTGAT (Wang et al., 2022) affronta il problema con un agente
-di reinforcement learning per intersezione, coordinato da una \emph{graph
-attention network} i cui pesi sono generati dinamicamente da un modulo di
-meta-learning condizionato su caratteristiche locali della rete stradale.
+Il traffico veicolare nelle aree urbane attraversa incroci regolati da
+semafori, e il modo in cui le fasi vengono decise incide sui tempi di
+percorrenza e sulla congestione della rete. Le soluzioni classiche, dai
+piani a tempi fissi ai sistemi coordinati come SCOOT e SCATS, si basano
+su euristiche definite manualmente e restano per questo poco flessibili
+di fronte a condizioni di traffico diverse da quelle previste in fase di
+progettazione. Il reinforcement learning offre un'alternativa,
+apprendendo una politica di controllo dall'esperienza simulata; le
+architetture più recenti coordinano gli agenti di intersezioni vicine
+tramite reti neurali a grafo, ma tendono a concentrarsi sull'efficienza
+aggregata, senza trattare l'equità tra le direzioni di traffico come
+obiettivo esplicito né verificare sistematicamente la generalizzazione a
+condizioni mai osservate in addestramento.
 
-Questo lavoro replica da zero l'architettura e la procedura di training di
-MetaSTGAT su un ambiente costruito su \textsc{CityFlow}, con reti a griglia
-di tre dimensioni ($4\times4$, $5\times5$, $6\times6$) e traffico generato
-parametricamente: ogni configurazione include un'arteria a densità
-artificialmente maggiorata, usata per misurare l'equità del controllo tra
-direzioni di traffico diverse.
-Ogni differenza introdotta rispetto alla procedura originale, dalla
-ricompensa alla struttura del replay buffer, è isolata da un sistema di
-preset di ablation e motivata singolarmente invece di essere presentata come
-un insieme indistinto di miglioramenti.
+Questo lavoro usa come punto di partenza MetaSTGAT, un'architettura in
+cui ogni incrocio è controllato da un agente che apprende e gli agenti si
+scambiano informazioni con gli incroci vicini tramite una rete neurale a
+grafo, per condurre uno studio sperimentale del compromesso tra
+efficienza, equità e generalizzazione. L'ambiente, costruito su CityFlow,
+riproduce reti a griglia di tre dimensioni con traffico generato
+parametricamente; il confronto include le baseline Fixed-Time e
+Max-Pressure ed è organizzato in tre studi indipendenti, sul peso
+assegnato all'equità nella ricompensa, su un'ablazione sistematica delle
+modifiche introdotte, e sul meccanismo di comunicazione tra intersezioni.
+Ogni modello è valutato, senza riaddestramento, su topologie, spaziature
+e profili di traffico mai incontrati in addestramento.
 
-I risultati sperimentali confrontano le baseline classiche (Fixed-Time,
-MaxPressure) con tre varianti del modello Pro che differiscono per il peso
-$\alpha$ della penalità anti-starvation ($\alpha \in \{0.08, 0.04, 0.00\}$),
-con lo studio di ablation completo sui sei preset previsti e con un
-confronto tra tre meccanismi di comunicazione spaziale a parità di resto
-dell'architettura: il \emph{graph attention} meta-condizionato del modello di
-riferimento (Meta-GAT), una convoluzione grafica meta-condizionata
-(Meta-GCN) e una propagazione ondulatoria meta-condizionata ispirata a SONAR
-(Meta-SONAR). Rimuovere del tutto la penalità anti-starvation ($\alpha=0$)
-fa collassare il max wait verso i valori di MaxPressure e allo
-stesso tempo peggiora il tempo di viaggio massimo rispetto alle varianti con
-$\alpha>0$, escludendo un semplice compromesso tra equità e throughput. Lo
-studio di ablation isola un effetto analogo su scala più ampia: disattivare
-singolarmente i meccanismi dell'algoritmo di apprendimento (Double DQN, il
-replay prioritizzato, la componente ricorrente della Meta-LSTM) lascia il
-modello vicino al riferimento su ogni metrica, mentre rimuovere insieme il
-vincolo di visibilità, il segnale di attesa nello stato e la ricompensa
-riscritta riporta il comportamento vicino a quello di un controllore
-reattivo privo di garanzie di equità.
+Il modello di riferimento riduce l'attesa massima subita dai veicoli del
+34\% in addestramento e del 41\% in valutazione rispetto a Max-Pressure,
+a fronte di un tempo di percorrenza medio superiore di pochi punti
+percentuali. Sulle topologie più grandi mai viste in addestramento,
+Max-Pressure arriva a bloccare almeno un veicolo per l'intera durata
+dell'episodio in ogni configurazione testata, mentre il modello di
+riferimento resta entro limiti nettamente più contenuti. L'ablazione
+mostra inoltre che questo vantaggio dipende dalla combinazione tra il
+segnale di attesa nello stato e il termine dedicato nella ricompensa, non
+da un singolo dettaglio dell'algoritmo di apprendimento.
 
-Il confronto tra meccanismi spaziali mostra un divario netto tra la
-convoluzione grafica, priva di un meccanismo di compatibilità appreso tra
-nodi, e gli altri due: Meta-GCN resta indietro su ogni metrica, mentre
-Meta-GAT e Meta-SONAR restano sostanzialmente alla pari, con il modello di
-riferimento a un solo layer che si conferma il più equo dell'intero
-confronto. La rappresentazione del tempo di attesa nello stato è infine
-un'ultima scelta di design verificata sperimentalmente: sostituire la
-normalizzazione lineare, che rende indistinguibili tutte le attese oltre i
-100 secondi, con una funzione $\tanh$ che continua a crescere ben oltre
-quella soglia migliora ogni metrica riportata, motivo per cui questa
-rappresentazione è adottata per l'intero parco di modelli di questo lavoro,
-non solo per la configurazione su cui è stata isolata.
+Questi risultati indicano che l'equità tra direzioni di traffico può
+essere perseguita senza una rinuncia sostanziale all'efficienza, e che
+parte di questo vantaggio si conserva su condizioni diverse da quelle di
+addestramento.

@@ -1,4 +1,4 @@
-%!TEX root = ../main.tex
+%!TEX root = ../mainquasiufficiale.tex
 \chapter{Confronto}
 \label{cap:confronto}
 
@@ -190,7 +190,7 @@ isolando un sottosistema alla volta rispetto al modello MetaSTGAT Pro (§\ref{su
     \texttt{pro}             & \texttt{custom} & --                                                                    \\
     \texttt{temporal}        & \texttt{custom} & burn-in + BPTT sulla Meta-LSTM                                        \\
     \texttt{single\_dqn}     & \texttt{custom} & Double DQN                                                            \\
-    \texttt{vanilla\_buffer} & \texttt{custom} & PER, Huber, soft update, grad clipping, warm-up, esplorazione ciclica \\
+    \texttt{vanilla\_buffer} & \texttt{custom} & PER, Huber, grad clipping, warm-up, esplorazione ciclica              \\
     \texttt{environment}     & \texttt{paper}  & campo visivo, feature dello stato $w_i^t$, maschera fasi consecutive  \\
     \texttt{paper}           & \texttt{paper}  & Replica fedele di Wang et al. (2022)                                  \\
     \bottomrule
@@ -274,7 +274,7 @@ mentre le sottosezioni successive approfondiranno i rispettivi confronti
 \end{table}
 
 Fixed-Time è il controllore peggiore su quasi ogni metrica di riferimento,
-con l'unica eccezione del max wait in training (470.0s, il più basso dei tre):
+con l'unica eccezione del $wait_{\max}$ in training (470.0s, il più basso dei tre):
 la rotazione fissa delle fasi impone per costruzione un
 limite alla durata di ogni attesa, un vincolo che le configurazioni di
 training, meno dense, non arrivano a violare.
@@ -290,7 +290,7 @@ Tra MaxPressure e MetaSTGAT Pro il confronto è più sfumato. In training e in t
 resta il modello con il travel time medio più basso in assoluto (rispettivamente 161.9s e 238.3s),
 coerente con la sua ottimalità di portata a livello di rete;
 MetaSTGAT Pro paga per questo un travel time leggermente peggiore sia in training (176.7s, +9.1\%) sia in test (242.2s, +1.7\%).
-Per quanto riguarda il max wait però il rapporto si inverte nettamente:
+Per quanto riguarda il $wait_{\max}$ però il rapporto si inverte nettamente:
 MetaSTGAT Pro registra un valore il 34\% più basso di MaxPressure in training e il 41\% più basso in test
 (Tabelle~\ref{tab:base-train}-\ref{tab:base-test}).
 Questi risultati introducono il compromesso al centro di questo lavoro, discusso nella sua forma
@@ -301,7 +301,7 @@ l'importanza di un controllo coordinato tra semafori quando la densità veicolar
 le capacità di generalizzazione acquisita dal modello MetaSTGAT Pro.
 
 Il basso max wait di Fixed-Time in training merita un chiarimento: il suo
-$tt_{\max}$ (1030.0s) resta più del doppio del suo stesso max wait
+$tt_{\max}$ (1030.0s) resta più del doppio del suo stesso $wait_{\max}$
 (470.0s), mentre per MaxPressure e per MetaSTGAT Pro i due valori restano
 vicini (rispettivamente 1070.0s contro 955.0s, e 675.0s contro 630.0s). La
 causa è strutturale: la rotazione fissa delle fasi non produce mai un
@@ -433,16 +433,16 @@ proprio sulle topologie più complesse e dense.
   \label{fig:diffpct-alpha}
 \end{figure}
 
-Su max wait e $tt_{\max}$ invece il quadro è quello atteso: entrambe le
+Su $wait_{\max}$ e $tt_{\max}$ invece il quadro è quello atteso: entrambe le
 metriche peggiorano in modo pressoché monotono al diminuire di $\alpha$,
 cioè al ridursi del peso dato al caso di starvation più estremo. Il
 riferimento $\alpha=0.08$ ottiene sia il $tt_{\max}$ più basso in entrambi
-i regimi, sia il max wait più basso, il 34\% in meno
+i regimi, sia il $wait_{\max}$ più basso, il 34\% in meno
 di MaxPressure in training e il 41\% in meno in test. In test $\alpha=0.04$
-resta comunque nettamente sotto Fixed-Time su entrambe le metriche (max
-wait 1125.9s e $tt_{\max}$ 1181.6s, contro 1289.1s e 1496.1s);
+resta comunque nettamente sotto Fixed-Time su entrambe le metriche
+($wait_{\max}$ 1125.9s e $tt_{\max}$ 1181.6s, contro 1289.1s e 1496.1s);
 $\alpha=0.00$ invece pareggia o peggiora leggermente i risultati di Fixed-Time
-(max wait 1539.4s contro 1289.1s, $tt_{\max}$ 1569.9s contro 1496.1s).
+($wait_{\max}$ 1539.4s contro 1289.1s, $tt_{\max}$ 1569.9s contro 1496.1s).
 
 Nonostante il vantaggio di $\alpha=0.04$ sul travel time medio, il resto
 di questo lavoro adotta $\alpha=0.08$ come riferimento standard per gli
@@ -450,7 +450,7 @@ studi di ablazione e dei meccanismi spaziali
 (§\ref{sec:ablation-risultati}, §\ref{sec:confronto-spaziale}). La ragione
 è la priorità dichiarata tra le metriche di questo lavoro:
 $\alpha=0.04$ è sistematicamente meno incisivo di
-$\alpha=0.08$ su max wait e $tt_{\max}$, le due metriche di caso peggiore
+$\alpha=0.08$ su $wait_{\max}$ e $tt_{\max}$, le due metriche di caso peggiore
 che questa tesi tiene in primo piano, a fronte di un guadagno sul solo
 travel time medio, la meno critica delle tre. $\alpha=0.08$ resta quindi
 la scelta più coerente con l'obiettivo del lavoro, anche al costo di
@@ -591,7 +591,7 @@ per l'intero addestramento, un divario compatibile con
 un limite strutturale imposto dall'assenza di BPTT e burn-in.
 
 Il vantaggio di \texttt{single\_dqn} e \texttt{vanilla\_buffer} su
-$tt_{\max}$ e max wait regge anche scendendo alla singola configurazione,
+$tt_{\max}$ e $wait_{\max}$ regge anche scendendo alla singola configurazione,
 senza che questo lavoro riesca a indicarne con certezza la causa. Resta
 aperta una domanda distinta, che uno studio dedicato dovrebbe verificare:
 se la generalizzazione di questi due preset regga altrettanto bene su
@@ -666,13 +666,13 @@ prestazioni ampio su questo compito.
 Un secondo layer in MetaSTGCN
 migliora la variante a singolo layer su tutte le metriche riportate in
 entrambi i regimi ($\overline{tt}$ di training 248.5$\to$217.8s,
-$tt_{\max}$ di test 1659.0$\to$1457.6s, max wait di test
+$tt_{\max}$ di test 1659.0$\to$1457.6s, $wait_{\max}$ di test
 1631.6$\to$1428.9s): la profondità aggiuntiva compensa qui, almeno in
 parte, l'assenza di un meccanismo di compatibilità appreso, pur restando
 lontana dalle prestazioni di MetaSTGAT e MetaSTSONAR.
 
 MetaSTGAT e MetaSTSONAR hanno prestazioni pressochè pari tra loro su travel
-time medio e massimo; sul max wait, però, è MetaSTSONAR con $L=2$ a ottenere il
+time medio e massimo; sul $wait_{\max}$, però, è MetaSTSONAR con $L=2$ a ottenere il
 risultato migliore dell'intero confronto (862.3s in test), davanti
 sia al modello Pro di riferimento (954.0s) sia alla sua variante a
 due layer (990.0s).
@@ -684,12 +684,12 @@ recettivo più ampio atteso da una profondità doppia.
 
 Aggiungere un secondo layer a MetaSTGAT, a differenza di MetaSTGCN, non produce qui un
 miglioramento netto: la variante a due layer resta vicina al riferimento
-su travel time medio e massimo ma peggiora leggermente il max wait in
+su travel time medio e massimo ma peggiora leggermente il $wait_{\max}$ in
 test (990.0s contro 954.0s).
 
 Un caso particolare nelle configurazioni di
 training (Tabella~\ref{tab:wait-full}): MetaSTGCN a un layer ottiene un
-max wait medio di 1280s, peggiore di MaxPressure stesso (955s), pur
+$wait_{\max}$ medio di 1280s, peggiore di MaxPressure stesso (955s), pur
 condividendo con il riferimento la stessa ricompensa orientata
 all'equità. È il solo modello di tutto questo lavoro, tra quelli
 addestrati con il termine anti-starvation pieno, a non riuscire a battere

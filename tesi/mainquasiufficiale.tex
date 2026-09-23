@@ -63,15 +63,10 @@
 \graphicspath{{img/}{../results/plots/compare_3stat/}{../results/plots/differenza_percentuale/}{../results/plots/}}
 
 % ── NOTA SU QUESTO FILE ──────────────────────────────────────────────────
-% "mainquasiufficiale.tex" e' il file ufficiale della tesi (main.tex resta
-% come backup della versione precedente). Compila per intero i capitoli 1
-% (Introduzione), 2 (Background) -- riscritti -- e 5 (Conclusioni) -- nuovo
-% -- insieme ai capitoli 3 e 4 (identici a quelli di main.tex), cosi' che
-% numerazione, citazioni e riferimenti incrociati risultino corretti.
-% Le pagine dei capitoli 3 e 4 vengono poi rimosse meccanicamente dal PDF
-% finale (script scratchpad, pypdf): e' l'unico modo per avere "si puo'
-% citare il capitolo 3 anche se il capitolo 3 non c'e' nel pdf" con
-% riferimenti numerici garantiti corretti.
+% "mainquasiufficiale.tex" e' congelato come BACKUP di questa precisa
+% versione della tesi (23/9/2026): non va piu' modificato, ne' i capitoli
+% che referenzia (i file capitoli/*_backup.tex). Ogni sviluppo successivo
+% avviene su "mainufficiale.tex" e sui file capitoli/*_attuale.tex.
 
 % ── Dati del frontespizio ──────────────────────────────────────────────
 \newcommand{\nomeUniversita}{Università di Firenze}
@@ -106,7 +101,7 @@
 
   \vspace{1cm}
   {\Large \bfseries [DOCUMENTO DI LAVORO -- QUASI-UFFICIALE] \par}
-  {\normalsize Capitoli 1, 2 e 5 in versione rivista; capitoli 3 e 4 identici a main.pdf \par}
+  {\normalsize Versione di lavoro corrente, capitoli 1--5 completi \par}
 
   \vspace{1.5cm}
   \begin{minipage}[t]{0.47\textwidth}
@@ -134,7 +129,7 @@
 % ── Front matter: numerazione romana ─────────────────────────────────────
 \pagenumbering{roman}
 
-\input{capitoli/sommario_v2}
+\input{capitoli/sommario}
 
 \tableofcontents
 \listoffigures
@@ -146,11 +141,11 @@
 \cleardoublepage
 \pagenumbering{arabic}
 
-\input{capitoli/cap1_introduzione_v2}
-\input{capitoli/cap2_background_v2}
-\input{capitoli/cap3_tsc_e_modelli}
-\input{capitoli/cap4_confronto}
-\input{capitoli/cap5_conclusioni_v2}
+\input{capitoli/cap1_introduzione}
+\input{capitoli/cap2_background_backup}
+\input{capitoli/cap3_backup}
+\input{capitoli/cap4_backup}
+\input{capitoli/cap5_backup}
 
 \bibliographystyle{plainnat}
 \bibliography{bibliografia}

@@ -1,4 +1,4 @@
-\begin{thebibliography}{32}
+\begin{thebibliography}{31}
 \providecommand{\natexlab}[1]{#1}
 \providecommand{\url}[1]{\texttt{#1}}
 \expandafter\ifx\csname urlstyle\endcsname\relax
@@ -33,13 +33,6 @@ Andrea Cini, Ivan Marisca, Daniele Zambon, and Cesare Alippi.
 \newblock Graph deep learning for time series forecasting.
 \newblock \emph{ACM Computing Surveys}, 57\penalty0 (12):\penalty0 321, 2025.
 \newblock \doi{10.1145/3742784}.
-
-\bibitem[Hu et~al.(2026)Hu, Liu, Hu, Wang, Peng, and Zhang]{hu2026mpnnlight}
-Zhiyuan Hu, Bowen Liu, Jianming Hu, Zihang Wang, Lihui Peng, and Yi~Zhang.
-\newblock Mpnnlight: A self-attention enhanced message passing graph neural
-  network for multi-intersection traffic signal control.
-\newblock \emph{Electronics}, 15\penalty0 (8):\penalty0 1655, 2026.
-\newblock \doi{10.3390/electronics15081655}.
 
 \bibitem[Kapturowski et~al.(2019)Kapturowski, Ostrovski, Quan, Munos, and
   Dabney]{kapturowski2019r2d2}
