@@ -164,7 +164,7 @@ def parse_args():
     parser.add_argument("--num-neighbors", type=int, default=DEFAULTS["num_neighbors"])
     parser.add_argument("--num-layers", type=int, default=1, choices=[1, 2],
                         help="Deve combaciare con --num-layers usato in training per "
-                             "--model MetaSTGAT|MetaSTGNN (istruzioni seconda parte.md §2.1).")
+                             "--model MetaSTGAT|MetaSTGNN.")
     parser.add_argument("--sonar-recurrences", type=int, default=2,
                         help="L, deve combaciare con --sonar-recurrences usato in training "
                              "per --model MetaSTSONAR.")
@@ -173,6 +173,12 @@ def parse_args():
                              "per --model MetaSTSONAR.")
     parser.add_argument("--no-sonar-dissipation", action="store_true")
     parser.add_argument("--no-sonar-forcing", action="store_true")
+    parser.add_argument("--mp-respect-mask", action="store_true",
+                        help="Solo per --model MaxPressure: fa rispettare la maschera "
+                             "anti-starvation (env.get_invalid_actions(), 2 ripetizioni "
+                             "consecutive max) nella scelta della fase a pressione massima. "
+                             "Default False: MaxPressure resta il baseline originale, ignaro "
+                             "della maschera indipendentemente da --no-action-mask.")
     parser.add_argument("--device", default=None)
 
     return parser.parse_args()
@@ -315,7 +321,7 @@ def evaluate(args):
     if args.model == "FixedTime":
         agent = FixedTimeAgent(n_phases=env.action_space_n)
     elif args.model == "MaxPressure":
-        agent = MaxPressureAgent(n_phases=env.action_space_n)
+        agent = MaxPressureAgent(n_phases=env.action_space_n, respect_mask=args.mp_respect_mask)
     else:
         if args.model == "MetaSTGAT":
             model = MetaSTGAT(
@@ -396,7 +402,8 @@ def evaluate(args):
             if args.model == "FixedTime":
                 actions = agent.select_actions(env.inter_ids, current_step=step)
             elif args.model == "MaxPressure":
-                actions = agent.select_actions(states=obs, inter_ids=env.inter_ids, env=env)
+                actions = agent.select_actions(states=obs, inter_ids=env.inter_ids, env=env,
+                                                invalid_actions=env.get_invalid_actions())
             else:
                 spatial_meta = None
                 temporal_meta = None

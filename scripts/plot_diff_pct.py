@@ -103,35 +103,30 @@ def draw(title, labels, models, cfgs, use_seeds, out_path):
             ha = "left" if x >= 0 else "right"
             lx = x + offset if x >= 0 else x - offset
             ax.text(lx, rect.get_y() + rect.get_height() / 2, f"{v:+.1f}%",
-                     va="center", ha=ha, fontsize=9, color="#222222", zorder=4)
+                     va="center", ha=ha, fontsize=11, color="#222222", zorder=4)
 
     ax.set_yticks(y)
-    ax.set_yticklabels(labels, fontsize=10)
+    ax.set_yticklabels(labels, fontsize=12)
     ax.invert_yaxis()
 
     (mn_tt, mx_tt), (mn_ttmax, mx_ttmax) = maxpressure_range(cfgs, use_seeds)
     ax.set_xlabel(
         "Variazione percentuale rispetto a MaxPressure\n"
         f"(MaxPressure: TT medio {mn_tt:.0f}–{mx_tt:.0f}s  ·  "
-        f"TT massimo {mn_ttmax:.0f}–{mx_ttmax:.0f}s — stesso % vale molti più secondi su TT massimo)",
-        fontsize=8.5
+        f"TT massimo {mn_ttmax:.0f}–{mx_ttmax:.0f}s)",
+        fontsize=10.5
     )
-    ax.set_title(title, fontsize=11, pad=12)
-
-    ax.text(0.0, 1.02, "← migliore di MaxPressure", transform=ax.transAxes,
-            fontsize=8.5, color="#666666", ha="left", va="bottom", style="italic")
-    ax.text(1.0, 1.02, "peggiore di MaxPressure →", transform=ax.transAxes,
-            fontsize=8.5, color="#666666", ha="right", va="bottom", style="italic")
+    ax.set_title(title, fontsize=14, pad=12)
 
     ax.grid(axis="x", linestyle="--", alpha=0.3, zorder=0)
     for spine in ("top", "right", "left"):
         ax.spines[spine].set_visible(False)
 
     fig.legend(handles=[b1, b2], loc="lower center", ncol=2, frameon=False,
-               fontsize=9.5, bbox_to_anchor=(0.5, -0.04))
+               fontsize=11.5, bbox_to_anchor=(0.5, -0.04))
     plt.tight_layout(rect=[0, 0.09, 1, 1])
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
     print(f"[OK] {out_path}")
 

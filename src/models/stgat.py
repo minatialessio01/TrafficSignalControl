@@ -20,7 +20,7 @@ La differenza rispetto a MetaSTGAT:
   - MetaSTGAT usa i pesi dinamici generati dai meta-learner
 
 Self-loop su edge_index (12/9/2026, coerenza con la stessa modifica applicata
-a MetaSTGAT -- vedi metastgat.py e descrizione_gcn_sonar.md §0): come
+a MetaSTGAT -- vedi metastgat.py e descrizioni/descrizione_gcn_sonar.md §0): come
 MetaGATLayer, anche StandardGATLayer non riceveva mai self-loop, la stessa
 deviazione dalla formulazione standard di Velickovic et al. (2018). Corretta
 qui per coerenza architetturale, anche se nessun modello STGAT risulta mai

@@ -2,11 +2,11 @@
 
 Documento di riferimento per la seconda parte del progetto: sostituzione del
 meccanismo spaziale di MetaSTGAT (GAT) con una GCN (`MetaSTGNN`) e con SONAR
-(`MetaSTSONAR`), come pianificato in [istruzioni seconda parte.md](istruzioni%20seconda%20parte.md).
-Quel file resta il riferimento per il *perche'* di ogni scelta; qui si
-documenta *cosa e' stato effettivamente implementato*, le decisioni prese
-sui punti aperti (D1-D6), e cosa e' stato verificato prima di lasciarlo a
-disposizione per il training vero.
+(`MetaSTSONAR`). Qui si documenta *cosa e' stato effettivamente implementato*,
+le decisioni prese sui punti aperti (D1-D6), e cosa e' stato verificato prima
+di lasciarlo a disposizione per il training vero (il piano originale che ha
+guidato queste scelte, `istruzioni seconda parte.md`, e' stato rimosso
+l'1/10/2026 una volta implementato: tutto cio' che serve e' qui).
 
 > **Stato (13/9/2026)**: codice scritto, verificato con test di forma/
 > parametri/gradienti e uno smoke test end-to-end (3 episodi, tutte e 5 le
@@ -136,8 +136,7 @@ $$
 con $W^{(v)}, b^{(v)}$ generati da `MetaDense(meta\_embedding_v)`, non
 condivisi tra i nodi. Self-loop aggiunti esplicitamente (§0) da
 `add_self_loops()`, chiamata una sola volta per `edge_index` distinto (cache
-per `id()` del tensore in `MetaSTGNN`, non ricalcolata a ogni step — vedi
-`istruzioni seconda parte.md` §3.3).
+per `id()` del tensore in `MetaSTGNN`, non ricalcolata a ogni step).
 
 `num_layers` (1 default, o 2) impila layer **indipendenti** (pesi propri,
 `nn.ModuleList`), applicati sia al modulo CST sia al CS (decisione D6, vedi
@@ -179,8 +178,7 @@ $$\ddot X(t) = -L^a X(t) W - D(X(t)) \odot \dot X(t) + F(X(t))$$
 discretizzata su $L$ passi (`n_recurrences`) con passo $h$ (`step_size`),
 **a pesi condivisi tra le ricorrenze** (a differenza dello stack GAT/GCN
 sopra, dove i due layer hanno pesi indipendenti — e' il motivo per cui SONAR
-si confronta "a parita' di $L$", non "a parita' di numero di layer",
-§0/tabella iniziale di `istruzioni seconda parte.md`):
+si confronta "a parita' di $L$", non "a parita' di numero di layer"):
 
 $$a_{uv} = \mathrm{ReLU}\big((x_u - x_v) \cdot W_{\mathrm{res}}^{(v)} + b_{\mathrm{res}}^{(v)}\big), \qquad
   (L^a X)_v = \sum_{u} a_{uv}(X_v - X_u)$$
@@ -216,7 +214,7 @@ variante opzionale.
 
 ---
 
-## 5. Decisioni D1-D6 (da `istruzioni seconda parte.md` §5)
+## 5. Decisioni D1-D6
 
 | # | Decisione | Scelta presa |
 |---|---|---|
@@ -238,7 +236,7 @@ con backward pass su tensori fittizi, §6):
 | MetaSTGNN (2L) | 3.261.004 |
 | MetaSTSONAR (L=2 o L=4, identico) | 2.229.066 |
 
-Coerente con l'atteso (§6 di `istruzioni seconda parte.md`): GAT-2L/GCN-2L
+Coerente con l'atteso: GAT-2L/GCN-2L
 hanno visibilmente piu' parametri delle rispettive varianti 1L (layer
 indipendenti); SONAR-L2 e SONAR-L4 hanno lo **stesso** conteggio (pesi
 condivisi tra ricorrenze). MetaSTGNN ha piu' parametri di MetaSTGAT a parita'
@@ -248,7 +246,7 @@ che chi decide D4 deve tenere presente.
 
 ---
 
-## 6. Verifica prima del training (istruzioni seconda parte.md §6)
+## 6. Verifica prima del training
 
 Eseguita il 13/9/2026, prima di lanciare qualunque training lungo:
 
@@ -277,8 +275,8 @@ Eseguita il 13/9/2026, prima di lanciare qualunque training lungo:
    il forward/backward isolato del punto 1-3.
 
 **Non ancora fatto** (esplicitamente fuori scope di questa implementazione,
-vedi "Prossimi passi"): punto 5 di `istruzioni seconda parte.md` §6
-(confronto del degrado relativo 4x4→5x5→6x6 tra profondita' diverse) richiede
+vedi "Prossimi passi"): il confronto del degrado relativo 4x4→5x5→6x6 tra
+profondita' diverse richiede
 risultati di training completo, non disponibili al momento della stesura di
 questo documento.
 

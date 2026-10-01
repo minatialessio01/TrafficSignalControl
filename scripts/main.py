@@ -93,7 +93,7 @@ MODEL_REGISTRY = {
     },
 }
 
-# Suddivisione train / validation / test (vedi descrizione_configurazioni.md):
+# Suddivisione train / validation / test (vedi descrizioni/descrizione_configurazioni.md):
 #   - train:      l'unica config su cui si allena (flusso "giornata lavorativa")
 #   - validation: usata da train.py (--select-best-config) per scegliere tra
 #                 final_model.pth e best_model.pt a fine training

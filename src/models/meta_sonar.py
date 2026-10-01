@@ -14,7 +14,7 @@ discretizzata con passo `h` su `L` iterazioni per blocco (Eq. 7-8). Il paper
 non ha alcun concetto di "meta-knowledge": qui la resistenza adattiva per
 arco (a_uv, l'analogo diretto del peso dinamico di Meta-GAT/Meta-GCN) e'
 generata da un embedding SMK(i)/TMK(i) via MetaDense, invece che da una MLP a
-pesi fissi condivisi -- vedi `istruzioni seconda parte.md` §4, decisione D3.
+pesi fissi condivisi -- vedi `descrizioni/descrizione_gcn_sonar.md`, decisione D3.
 
 Validato contro il codice ufficiale (https://github.com/gravins/SONAR,
 graph_transfer_task/models/sonar.py) prima dell'implementazione, per i
@@ -99,9 +99,8 @@ class MetaSONARLayer(nn.Module):
                 nn.Linear(hidden_dim, hidden_dim)
             )
 
-        # V^0 = query @ W_V (scelta di design, non nel paper -- vedi
-        # `istruzioni seconda parte.md` §4.1: da' al modulo CST un'analogia
-        # residua con "Q e K asimmetrici" anche in SONAR, usando `query` come
+        # V^0 = query @ W_V (scelta di design, non nel paper: da' al modulo
+        # CST un'analogia residua con "Q e K asimmetrici" anche in SONAR, usando `query` come
         # sorgente della velocita' iniziale e `value` come posizione iniziale
         # X^0. Alternativa piu' fedele al paper, se questa risultasse
         # artificiosa: V^0 = value @ W_V, ignorando `query`.)

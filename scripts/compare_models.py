@@ -12,7 +12,7 @@ nessun problema di scale diverse su uno stesso asse):
   - Travel Time: TT medio e TT massimo, una barra per modello in ciascun gruppo.
   - Attesa massima direzionale: N/S e W/E, una barra per modello in ciascun gruppo.
 
-Vedi descrizione_metriche.md per la definizione precisa di ogni metrica.
+Vedi descrizioni/descrizione_metriche.md per la definizione precisa di ogni metrica.
 
 Uso:
     python scripts/compare_models.py
@@ -155,7 +155,7 @@ MODEL_COLORS = {
 _FALLBACK_COLORS = ["#1b9e77", "#d95f02", "#7570b3", "#e7298a", "#66a61e"]
 
 # Durata fissa di un episodio in questo progetto (maxStep=1800, interval=1.0s
-# in ogni configs/*.json, vedi descrizione_configurazioni.md): hardcoded qui
+# in ogni configs/*.json, vedi descrizioni/descrizione_configurazioni.md): hardcoded qui
 # per disegnare una riga di riferimento nei grafici (un veicolo/attesa che la
 # tocca ha "consumato" l'intero episodio, non e' un valore arbitrario tra tanti).
 EPISODE_DURATION_S = 1800
@@ -167,7 +167,7 @@ def _color_for(model_id, idx):
     return _FALLBACK_COLORS[idx % len(_FALLBACK_COLORS)]
 
 
-# (basename, etichetta breve, ruolo) -- vedi descrizione_configurazioni.md
+# (basename, etichetta breve, ruolo) -- vedi descrizioni/descrizione_configurazioni.md
 TRAIN_CONFIGS = [
     ("config_4x4_100m_train1", "Train 1", "training"),
     ("config_4x4_100m_train2", "Train 2", "training"),
@@ -186,7 +186,7 @@ ALL_CONFIGS = TRAIN_CONFIGS + TEST_CONFIGS
 
 # Dal 15/9/2026: ognuna delle 7 config di TEST (non quelle di training) ha 2
 # varianti seed aggiuntive (stesso profilo di densita'/topologia/arteria,
-# spawn/percorsi diversi -- vedi descrizione_configurazioni.md §"Aggiunta del
+# spawn/percorsi diversi -- vedi descrizioni/descrizione_configurazioni.md §"Aggiunta del
 # 15/9/2026" per le config di validazione, stessa logica qui), generate come
 # test_summary_<cfg>2.json / <cfg>3.json accanto all'originale test_summary_<cfg>.json.
 # Motivo: un singolo seed e' un punto singolo deterministico, non una stima

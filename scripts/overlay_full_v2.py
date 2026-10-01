@@ -146,17 +146,17 @@ def draw_chart(model_ids, values, out_path, title=None):
         ax.bar(x[i], tt, width=width, color=SHADES[0], zorder=4)
 
         ax.text(x[i], ttmax + ymax * 0.012, f"{ttmax:.0f}", ha="center", va="bottom",
-                fontsize=8, color=SHADES[0], fontweight="bold", zorder=5)
+                fontsize=10, color=SHADES[0], fontweight="bold", zorder=5)
         ax.text(x[i], (tt + wait) / 2, f"{wait:.0f}", ha="center", va="center",
-                fontsize=8, color="white", fontweight="bold", zorder=5)
+                fontsize=10, color="white", fontweight="bold", zorder=5)
         ax.text(x[i], tt / 2, f"{tt:.0f}", ha="center", va="center",
-                fontsize=8.5, color="white", fontweight="bold", zorder=5)
+                fontsize=10.5, color="white", fontweight="bold", zorder=5)
 
     ax.set_xticks(x)
-    ax.set_xticklabels([LABELS.get(m, m) for m in model_ids], fontsize=9, rotation=20, ha="right")
+    ax.set_xticklabels([LABELS.get(m, m) for m in model_ids], fontsize=11, rotation=20, ha="right")
     ax.set_ylabel("Secondi (s)")
     if title:
-        ax.set_title(title, fontsize=11)
+        ax.set_title(title, fontsize=13)
     ax.grid(axis="y", linestyle="--", alpha=0.3, zorder=0)
     ax.set_ylim(0, ymax * 1.15)
 
@@ -166,11 +166,11 @@ def draw_chart(model_ids, values, out_path, title=None):
         Patch(facecolor=SHADES[2], label="TT massimo"),
     ]
     fig.legend(handles=legend_elems, loc="lower center", ncol=3, frameon=False,
-               fontsize=8.5, bbox_to_anchor=(0.5, -0.02))
+               fontsize=10.5, bbox_to_anchor=(0.5, -0.02))
 
     plt.tight_layout(rect=[0, 0.06, 1, 1])
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
 

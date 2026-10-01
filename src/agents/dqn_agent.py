@@ -41,16 +41,15 @@ from ..models.stgat import STGAT
 
 # Modelli che usano il meccanismo di meta-learning (SMK/TMK -> spatial_meta/
 # temporal_meta in input al forward, vedi is_meta sotto). Bug corretto il
-# 13/9/2026 (istruzioni seconda parte.md §3.2, checklist esplicita: "verifica
-# che DQNAgent non assuma da nessuna parte che il modello sia MetaSTGAT/STGAT
-# per nome/tipo"): l'isinstance() controllava solo MetaSTGAT, quindi
+# 13/9/2026 (verifica che DQNAgent non assuma da nessuna parte che il modello
+# sia MetaSTGAT/STGAT per nome/tipo): l'isinstance() controllava solo MetaSTGAT, quindi
 # MetaSTGNN/MetaSTSONAR (che richiedono spatial_meta/temporal_meta esattamente
 # come MetaSTGAT) non le avrebbero mai ricevute.
 _META_MODEL_CLASSES = (MetaSTGAT, MetaSTGNN, MetaSTSONAR)
 
 # Prefissi che, in metastgat.py, sono passati da un singolo MetaGATLayer a un
-# nn.ModuleList (istruzioni seconda parte.md §2.1, per supportare
-# --num-layers 2): i checkpoint salvati PRIMA di questa modifica hanno le
+# nn.ModuleList (per supportare --num-layers 2): i checkpoint salvati PRIMA
+# di questa modifica hanno le
 # chiavi "meta_gat_cst.<resto>"/"meta_gat_cs.<resto>", quelli salvati dopo
 # hanno "meta_gat_cst.0.<resto>"/"meta_gat_cs.0.<resto>" (l'indice del
 # ModuleList). Bug corretto il 13/9/2026: senza questa migrazione, ogni

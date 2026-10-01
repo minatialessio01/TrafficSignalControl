@@ -158,7 +158,7 @@ class CityFlowEnv:
             use_action_mask: se True abilita la maschera anti-starvation
             use_phase_pressure_meta: se True (default) il SMK include la feature
                 phase_pressure (N_PHASES dim, esperimento meta_v3, 13/9/2026, vedi
-                descrizione_stato_meta_reward.md) -- SMK 18->26, TMK invariato a 25 (deciso il
+                descrizioni/descrizione_stato_meta_reward.md) -- SMK 18->26, TMK invariato a 25 (deciso il
                 13/9/2026: phase_pressure va solo nel SMK, non nel TMK -- e' un
                 dato spaziale per fase, non una dinamica temporale). Se False,
                 il SMK resta alla revisione meta_v2 del 12/9/2026 -- dim 18.
@@ -173,7 +173,7 @@ class CityFlowEnv:
                 dal reward_mode="paper"), ma qui SOLO per il primo termine: il resto della
                 formula custom (penalita' anti-starvation pesata da alpha,
                 wasted_green_penalty, normalizzazione /100, clip [-2,0]) resta
-                invariato. Esperimento 13/9/2026 (vedi descrizione_stato_meta_reward.md): vedere se
+                invariato. Esperimento 13/9/2026 (vedi descrizioni/descrizione_stato_meta_reward.md): vedere se
                 allenare direttamente sulla pressione, invece che sul throughput,
                 aiuta il modello ad avvicinarsi al comportamento di MaxPressure.
                 Ignorato se reward_mode="paper" (che ha gia' -P_i come unico termine).
@@ -183,7 +183,7 @@ class CityFlowEnv:
                 `_compute_phase_pressure_vector`) usata dal SMK con
                 use_phase_pressure_meta -- dim 32->40 (con wait_vec) o 20->28
                 (senza). Rispetta `use_vision_cutoff` come tutto il resto dello
-                stato (vedi descrizione_stato_meta_reward.md §1). Esperimento 13/9/2026: la stessa
+                stato (vedi descrizioni/descrizione_stato_meta_reward.md §1). Esperimento 13/9/2026: la stessa
                 informazione, spostata dal meta-learner allo stato diretto, per
                 vedere se aiuta di piu' quando la Q-network la vede direttamente
                 invece che tramite pesi generati dal meta-learner.
@@ -257,7 +257,7 @@ class CityFlowEnv:
         # Cache della pressione media per nodo, un valore per intersezione,
         # ricalcolata una sola volta per step (non per ogni singola chiamata di
         # get_spatial_meta_features) e riusata per calcolare pressure_diff_neighbors
-        # di ogni nodo -- vedi descrizione_stato_meta_reward.md §2.5. Invalidata in reset().
+        # di ogni nodo -- vedi descrizioni/descrizione_stato_meta_reward.md §2.5. Invalidata in reset().
         self._node_pressure_cache: Dict[str, float] = {}
         self._node_pressure_cache_step: Optional[int] = None
 
@@ -271,7 +271,7 @@ class CityFlowEnv:
         # _compute_lane_pressure_vector per una media LOCALE (solo le uscite
         # che quella specifica corsia puo' davvero raggiungere), non globale
         # su tutte le uscite dell'incrocio. Corretto il 13/9/2026 (vedi
-        # descrizione_stato_meta_reward.md), su segnalazione: la versione precedente usava
+        # descrizioni/descrizione_stato_meta_reward.md), su segnalazione: la versione precedente usava
         # la stessa media (su TUTTE le corsie in uscita dell'incrocio) per
         # ogni corsia in ingresso, indipendentemente da quali uscite fossero
         # davvero raggiungibili da quella corsia.
@@ -484,7 +484,7 @@ class CityFlowEnv:
         Usata da `_compute_lane_pressure_vector` per calcolare una media LOCALE
         delle corsie in uscita raggiungibili da ciascuna corsia in ingresso,
         invece di una media GLOBALE su tutte le corsie in uscita
-        dell'incrocio — corretto il 13/9/2026 (vedi descrizione_stato_meta_reward.md): la
+        dell'incrocio — corretto il 13/9/2026 (vedi descrizioni/descrizione_stato_meta_reward.md): la
         versione precedente usava la stessa media (su tutte le uscite
         dell'incrocio) per ogni corsia in ingresso, anche quando quella
         corsia in realtà porta solo verso un sottoinsieme specifico delle
@@ -687,7 +687,7 @@ class CityFlowEnv:
         # visibilita' se use_vision_cutoff, sull'intera corsia altrimenti --
         # stessa definizione di incoming_t1 sopra), non piu' legato alla
         # velocita' istantanea. Corretto il 14/9/2026 (vedi
-        # descrizione_stato_meta_reward.md §10): il vecchio criterio
+        # descrizioni/descrizione_stato_meta_reward.md §10): il vecchio criterio
         # (velocita' < 0.1 m/s in un singolo istante, campionato una volta a
         # step dopo il tutto-rosso) si azzerava appena il veicolo si spostava
         # anche di poco all'interno della coda SENZA aver attraversato
@@ -829,7 +829,7 @@ class CityFlowEnv:
           s_i^t = [n_vec (12), p_vec (8)] — dim 20 (solo conteggio + fase)
 
         Se use_phase_pressure_state=True (esperimento 13/9/2026, vedi
-        descrizione_stato_meta_reward.md §1): si aggiunge in coda phase_pressure (8 dim,
+        descrizioni/descrizione_stato_meta_reward.md §1): si aggiunge in coda phase_pressure (8 dim,
         una per fase candidata, stessa formula di MaxPressureAgent ma
         rispettando use_vision_cutoff) — dim 32->40 o 20->28.
 
@@ -964,7 +964,7 @@ class CityFlowEnv:
         vecchio -20 non era mai raggiunto nemmeno nel caso limite assoluto.
 
         (2) 15/9/2026, [-10,0] -> [-4,0]: dopo la correzione del tempo di attesa
-        (§10 di descrizione_stato_meta_reward.md: l'attesa ora e' ~2-3x piu' grande
+        (§10 di descrizioni/descrizione_stato_meta_reward.md: l'attesa ora e' ~2-3x piu' grande
         a scala tipica, misurato su modelli allenati veri, non solo sul worst case
         teorico) lo sweep su alpha e' stato riscalato in proporzione (0.2->0.07,
         0.1->0.035, 0.0 invariato) per non far pesare l'anti-starvation piu' del
@@ -973,7 +973,7 @@ class CityFlowEnv:
 
         (3) 15/9/2026 (stesso giorno), [-4,0] -> [-3,0] e sweep ufficiale fissato a
         alpha in {0.08, 0.04, 0.00} (valori tondi, sostituiscono {0.07,0.035,0.0}
-        del punto 2 -- vedi descrizione_modelli.md §2): il worst case fisico coi
+        del punto 2 -- vedi descrizioni/descrizione_modelli.md §2): il worst case fisico coi
         nuovi valori (alpha=0.08, il piu' alto) e' -156 - 0.08*1800 - 50 = -350,
         cioe' -3.50 dopo /100 -- leggermente PIU' negativo di -3, quindi il clip
         [-3,0] tocca (di poco) anche il caso limite assoluto, a differenza delle
@@ -1000,7 +1000,7 @@ class CityFlowEnv:
                 # ── Reward originale del paper: -P_i ───────────────────────────────
                 # P_i = veicoli in ingresso - veicoli in uscita (pressione), entrambi
                 # a t+1 (dopo lo step) -- ufficiale, vedi discussione in
-                # descrizione_stato_meta_reward.md §5 (valutata anche la variante a
+                # descrizioni/descrizione_stato_meta_reward.md §5 (valutata anche la variante a
                 # t0 per l'incoming, scartata: si mantiene t+1 per entrambi i lati).
                 outgoing = self._get_outgoing_vehicles_count(iid)
                 pressure = len(in_t1) - outgoing  # veicoli attuali - veicoli usciti
@@ -1059,7 +1059,7 @@ class CityFlowEnv:
                 raw_reward = first_term - (self.alpha * max_red_wait_time) - wasted_green_penalty
                 normalized_reward = raw_reward / 100.0
                 # Clip abbassato da -3 a -2 il 16/9/2026 (Alessio): vedi
-                # descrizione_stato_meta_reward.md per il calcolo del worst
+                # descrizioni/descrizione_stato_meta_reward.md per il calcolo del worst
                 # case teorico e l'implicazione di un bound piu' stretto.
                 rewards[iid] = max(min(normalized_reward, 0.0), -2.0)
 
@@ -1116,7 +1116,7 @@ class CityFlowEnv:
         all'intersezione che questa corsia sta per raggiungere, stessa
         convenzione di n_vec in _get_observations(). Senza cutoff, l'intera
         corsia. Helper condiviso da _compute_lane_pressure_vector e
-        _compute_phase_pressure_vector (13/9/2026, vedi descrizione_stato_meta_reward.md):
+        _compute_phase_pressure_vector (13/9/2026, vedi descrizioni/descrizione_stato_meta_reward.md):
         prima ciascuna delle due aveva una propria logica di cutoff
         (una addirittura nessuna, vedi nota storica in
         _compute_phase_pressure_vector) invece di applicare consistentemente
@@ -1154,7 +1154,7 @@ class CityFlowEnv:
             lane_pressure[k] = (veicoli_in_corsia_k - media(veicoli su ogni
                                 corsia in uscita RAGGIUNGIBILE da k)) / 30
 
-        Corretto il 13/9/2026 (vedi descrizione_stato_meta_reward.md, su segnalazione): la
+        Corretto il 13/9/2026 (vedi descrizioni/descrizione_stato_meta_reward.md, su segnalazione): la
         media in uscita era prima GLOBALE (tutti i veicoli in uscita
         dall'incrocio / tutte le corsie in uscita dell'incrocio), la stessa
         per ogni corsia in ingresso indipendentemente da quali uscite quella
@@ -1222,7 +1222,7 @@ class CityFlowEnv:
 
             phase_pressure[k] = (Σ_{(in,out) ∈ movimenti(fase k)} count(in) - count(out)) / 30.0
 
-        Corretto il 13/9/2026 (vedi descrizione_stato_meta_reward.md, su segnalazione):
+        Corretto il 13/9/2026 (vedi descrizioni/descrizione_stato_meta_reward.md, su segnalazione):
         prima ignorava SEMPRE self.use_vision_cutoff (piena visibilita' anche
         con use_vision_cutoff=True), per dare fedelmente al meta-learner il
         "vero" valore usato da MaxPressure. Ora rispetta il cutoff come tutto
@@ -1258,7 +1258,7 @@ class CityFlowEnv:
         """
         Features spaziali per il SMK-Learner (Section 4.3.1, Fig. 5b), riviste
         il 12/9/2026 per rimuovere ridondanze con lo stato principale e una
-        feature degenere -- vedi descrizione_stato_meta_reward.md §2.2/§2.5 per la
+        feature degenere -- vedi descrizioni/descrizione_stato_meta_reward.md §2.2/§2.5 per la
         motivazione completa di ciascuna:
         - lane_pressure (N_LANES): pressione approssimata per corsia,
           invariata rispetto a prima.
@@ -1275,7 +1275,7 @@ class CityFlowEnv:
           (indici 0-5, ordine canonico di GREEN_LANES_PER_PHASE) meno quella
           sulle corsie E/O (indici 6-11) dello stesso nodo.
         - phase_pressure (N_PHASES): AGGIUNTA il 13/9/2026 per l'esperimento
-          meta_v3 (vedi descrizione_stato_meta_reward.md), SOLO nel SMK (non nel TMK, deciso
+          meta_v3 (vedi descrizioni/descrizione_stato_meta_reward.md), SOLO nel SMK (non nel TMK, deciso
           il 13/9/2026 -- e' un dato spaziale per fase, non una dinamica
           temporale) -- la stessa formula di pressione per movimento usata
           da MaxPressureAgent (vedi _compute_phase_pressure_vector),
@@ -1318,10 +1318,10 @@ class CityFlowEnv:
         return np.concatenate(parts)
 
     # Quanti step indietro guardare per queue_trend in get_temporal_meta_features
-    # (vedi descrizione_stato_meta_reward.md §2.5).
+    # (vedi descrizioni/descrizione_stato_meta_reward.md §2.5).
     _TREND_STEPS_BACK = 3
     # Soglia di saturazione per phase_dwell_time, per normalizzare in [0,1].
-    # Corretta il 13/9/2026 (vedi descrizione_stato_meta_reward.md, su segnalazione): con
+    # Corretta il 13/9/2026 (vedi descrizioni/descrizione_stato_meta_reward.md, su segnalazione): con
     # use_action_mask=True, self.consecutive_phases non supera mai 2 (la
     # maschera anti-starvation forza un cambio fase al 3o step consecutivo,
     # vedi get_invalid_actions()) -- un CAP=10 (il valore precedente, mai
@@ -1338,7 +1338,7 @@ class CityFlowEnv:
                                    current_state: Optional[np.ndarray] = None) -> np.ndarray:
         """
         Features temporali per il TMK-Learner (Section 4.3.1), riviste il
-        12/9/2026 -- vedi descrizione_stato_meta_reward.md §2.3/§2.5 per la motivazione
+        12/9/2026 -- vedi descrizioni/descrizione_stato_meta_reward.md §2.3/§2.5 per la motivazione
         completa di ciascuna:
         - queue_trend (N_LANES): n_vec(ora) − n_vec(qualche step fa), per
           corsia. Sostituisce queue_len (che ripeteva n_vec dello stato
@@ -1548,7 +1548,7 @@ class CityFlowEnv:
         un numero di punti realistico per una distribuzione (uno per veicolo,
         tipicamente migliaia) invece del massimo per intersezione (uno per
         intersezione, tipicamente 16) — quest'ultimo resta la metrica ufficiale
-        per il ranking tra modelli (vedi descrizione_metriche.md §5), questo e'
+        per il ranking tra modelli (vedi descrizioni/descrizione_metriche.md §5), questo e'
         pensato solo per grafici di distribuzione (violin plot).
 
         Con include_unfinished=True (default, stessa convenzione delle altre
@@ -1575,7 +1575,7 @@ class CityFlowEnv:
         Non presuppone la presenza di un'arteria: se il traffico e'
         uniforme i due gruppi risulteranno simili; se una delle due
         orientazioni e' sistematicamente favorita (es. un'arteria Est-Ovest,
-        vedi descrizione_configurazioni.md §4bis), lo si vede da uno scarto
+        vedi descrizioni/descrizione_configurazioni.md §4bis), lo si vede da uno scarto
         marcato tra i due gruppi.
 
         Returns: dict con avg/max per gruppo N/S e W/E, il valore peggiore in
@@ -1708,14 +1708,14 @@ class CityFlowEnv:
     def observation_dim(self) -> int:
         """Dimensione del vettore di osservazione per agente (dipende da
         use_wait_vec e, se attivo, da use_phase_pressure_state: +N_PHASES,
-        esperimento 13/9/2026, vedi descrizione_stato_meta_reward.md §1)."""
+        esperimento 13/9/2026, vedi descrizioni/descrizione_stato_meta_reward.md §1)."""
         base = STATE_DIM_FULL if self.use_wait_vec else STATE_DIM_PAPER
         return base + (N_PHASES if self.use_phase_pressure_state else 0)
 
     @property
     def spatial_meta_dim(self) -> int:
         """Dimensione delle feature spaziali per SMK-Learner (rivista il
-        12/9/2026, vedi descrizione_stato_meta_reward.md §2.5, ed estesa il 13/9/2026 per
+        12/9/2026, vedi descrizioni/descrizione_stato_meta_reward.md §2.5, ed estesa il 13/9/2026 per
         meta_v3): lane_pressure (N_LANES) + real_degree (1) +
         pressure_diff_neighbors (num_neighbors) + traffic_asymmetry_ns_ew (1)
         + phase_pressure (N_PHASES) se use_phase_pressure_meta=True (default),
@@ -1726,7 +1726,7 @@ class CityFlowEnv:
     @property
     def temporal_meta_dim(self) -> int:
         """Dimensione delle feature temporali per TMK-Learner (rivista il
-        12/9/2026, vedi descrizione_stato_meta_reward.md §2.5): queue_trend (N_LANES) +
+        12/9/2026, vedi descrizioni/descrizione_stato_meta_reward.md §2.5): queue_trend (N_LANES) +
         phase_dwell_time (1) + queue_volatility (N_LANES). Fissa a 25 --
         non dipende da use_phase_pressure_meta: dal 13/9/2026 la feature
         phase_pressure di meta_v3 va solo nel SMK (vedi spatial_meta_dim),

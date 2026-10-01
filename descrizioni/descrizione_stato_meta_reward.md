@@ -302,7 +302,7 @@ clip), l'ottimizzatore **non è un flag di ablation**: non esiste un modo per
 scegliere Adam da riga di comando.
 
 **Perché RMSprop**: è la scelta dell'articolo originale (Wang et al. 2022,
-Section 5.1) — vedi `metastgat_diff_analysis.md`. È stata ereditata
+Section 5.1). È stata ereditata
 inalterata quando il progetto ha introdotto tutte le altre modifiche (reward,
 stato, self-loop, meta-learner, Double DQN, PER, ...): a differenza di quelle,
 non è mai stata messa in discussione né testata in alternativa. Non è quindi

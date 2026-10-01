@@ -1,9 +1,9 @@
 """
 Confronto tra meccanismi spaziali: GAT vs GCN vs SONAR (seconda parte della
-tesi, vedi `istruzioni seconda parte.md` e `descrizione_gcn_sonar.md`).
+tesi, vedi `descrizioni/descrizione_gcn_sonar.md`).
 
-Registro SEPARATO da `MODEL_REGISTRY` di `main.py` (decisione D5 di
-`istruzioni seconda parte.md`): questo confronto risponde a una domanda di
+Registro SEPARATO da `MODEL_REGISTRY` di `main.py` (decisione D5, vedi
+`descrizioni/descrizione_gcn_sonar.md`): questo confronto risponde a una domanda di
 ricerca diversa ("quale meccanismo spaziale e' migliore, a parita' di resto
 dell'architettura") da quella dello studio di ablation ("quali componenti del
 framework Pro contano"), e tutti i modelli qui usano lo stesso preset
@@ -39,7 +39,7 @@ from main import (
 )
 
 
-# Tabella principale a inizio `istruzioni seconda parte.md`. MetaSTGAT-1L
+# Tabella principale in `descrizioni/descrizione_gcn_sonar.md`. MetaSTGAT-1L
 # (Pro) non e' ripetuto qui: e' gia' `results/metastgat_pro_0.5`, allenato
 # nella prima parte del progetto -- il confronto va fatto contro quel
 # checkpoint, non riallenandolo una seconda volta.

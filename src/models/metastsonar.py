@@ -3,7 +3,7 @@ MetaSTSONAR: Meta-learning Spatial-Temporal SONAR.
 
 Variante di MetaSTGAT (metastgat.py) dove il meccanismo di attenzione grafica
 (Meta-GAT) e' sostituito dalla propagazione a onda di Meta-SONAR
-(meta_sonar.py) -- vedi `istruzioni seconda parte.md` §4.
+(meta_sonar.py) -- vedi `descrizioni/descrizione_gcn_sonar.md`.
 
 A differenza di MetaSTGAT/MetaSTGNN, qui non esiste un parametro `num_layers`:
 la profondita' della propagazione spaziale e' governata da `n_recurrences`
@@ -33,8 +33,7 @@ class MetaSTSONAR(nn.Module):
     Args: identici a MetaSTGAT per la parte condivisa; `num_heads` e'
     accettato solo per uniformita' di interfaccia con `build_model()` e
     ignorato da MetaSONARLayer. `n_recurrences` (L) e `step_size` (h) sono i
-    due nuovi iperparametri specifici di SONAR (istruzioni seconda parte.md
-    §4.1 punto 4).
+    due nuovi iperparametri specifici di SONAR.
     """
 
     def __init__(self,

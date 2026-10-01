@@ -3,8 +3,8 @@ MetaSTGNN: Meta-learning Spatial-Temporal Graph Convolutional Network.
 
 Variante di MetaSTGAT (metastgat.py) dove il meccanismo di attenzione grafica
 (Meta-GAT) e' sostituito dalla regola di aggregazione a normalizzazione di
-grado della GCN (Meta-GCN, meta_gcn.py) -- vedi `istruzioni seconda parte.md`
-§1/§3. Tenuta come file separato invece che un flag dentro MetaSTGAT: sono
+grado della GCN (Meta-GCN, meta_gcn.py) -- vedi
+`descrizioni/descrizione_gcn_sonar.md`. Tenuta come file separato invece che un flag dentro MetaSTGAT: sono
 due architetture concettualmente distinte da confrontare (con vs senza
 meccanismo di compatibilita' appreso per coppia di nodi), non una variazione
 minore dello stesso modello.
@@ -45,7 +45,7 @@ class MetaSTGNN(nn.Module):
                  meta_hidden_dim: int = 64,
                  dropout: float = 0.0,
                  use_tanh_meta: bool = True,
-                 num_layers: int = 1):          # 1 o 2, vedi istruzioni seconda parte.md §2.1/§3.1
+                 num_layers: int = 1):          # 1 o 2
         super().__init__()
         if num_layers not in (1, 2):
             raise ValueError(f"num_layers deve essere 1 o 2, ricevuto {num_layers}")
@@ -54,9 +54,9 @@ class MetaSTGNN(nn.Module):
         self.n_actions = n_actions
         self.num_layers = num_layers
         # Self-loop calcolati una volta per ogni edge_index distinto (la
-        # topologia e' fissa entro un episodio, cambia solo tra config diverse
-        # -- istruzioni seconda parte.md §3.3): cache banale via id() del
-        # tensore, evita di rifare lo scan Python ad ogni singolo step.
+        # topologia e' fissa entro un episodio, cambia solo tra config diverse):
+        # cache banale via id() del tensore, evita di rifare lo scan Python ad
+        # ogni singolo step.
         self._self_loop_cache = {}
 
         self.encoder = DualStateEncoder(state_dim, hidden_dim)
@@ -139,8 +139,8 @@ class MetaSTGNN(nn.Module):
 
         # Nessuna ELU esterna qui (a differenza dello stack di MetaSTGAT):
         # MetaGCNLayer applica gia' internamente una ReLU in uscita (prassi
-        # standard GCN, istruzioni seconda parte.md §3.1 punto 4), che funge
-        # gia' da non-linearita' tra un layer e il successivo.
+        # standard GCN), che funge gia' da non-linearita' tra un layer e il
+        # successivo.
         kv_cst = x_i
         for layer in self.meta_gcn_cst:
             kv_cst = layer(query=e_j, key=kv_cst, value=kv_cst,

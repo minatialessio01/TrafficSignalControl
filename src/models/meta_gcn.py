@@ -6,8 +6,7 @@ MetaSTGAT) con la regola di aggregazione classica della GCN (Kipf & Welling,
 2017): normalizzazione simmetrica del grado, fissa e dipendente solo dalla
 topologia, senza alcun meccanismo di compatibilita' Q*K/softmax appreso per
 coppia di nodi. E' la differenza concettuale reale rispetto a Meta-GAT, non un
-dettaglio implementativo da nascondere -- vedi `istruzioni seconda parte.md`
-§1/§3.1.
+dettaglio implementativo da nascondere.
 
 Il principio "meta" e' preservato identico a MetaGATLayer: il peso che
 trasforma il valore del vicino non e' un parametro fisso condiviso da tutti i
@@ -31,8 +30,8 @@ def add_self_loops(edge_index: torch.Tensor, num_nodes: int) -> torch.Tensor:
     """Aggiunge un self-loop (i,i) per ogni nodo a edge_index, se non gia'
     presente. Pratica standard GCN (Â = A + I): senza self-loop il contributo
     del nodo al proprio stesso output si perderebbe interamente nella
-    normalizzazione di grado. Calcolato una volta fuori dal layer (vedi
-    `istruzioni seconda parte.md` §3.3) e non ad ogni forward.
+    normalizzazione di grado. Calcolato una volta fuori dal layer e non ad
+    ogni forward.
     """
     device = edge_index.device
     src, dst = edge_index[0], edge_index[1]
@@ -71,8 +70,7 @@ class MetaGCNLayer(nn.Module):
         self.dropout_layer = nn.Dropout(dropout)
 
         # Genera W: (N, D_h, D_h), b: (N, 1) dall'embedding meta -- stessa
-        # classe MetaDense usata da Meta-GAT (istruzioni seconda parte.md §3.1
-        # punto 2: "e' gia' pronta, non serve riscriverla").
+        # classe MetaDense usata da Meta-GAT, riusata as-is.
         self.meta_dense = MetaDense(meta_dim, hidden_dim, hidden_dim)
 
     def forward(self,

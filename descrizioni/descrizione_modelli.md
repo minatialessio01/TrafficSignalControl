@@ -1,8 +1,8 @@
 # Descrizione dei Modelli — il "catalogo" del progetto
 
-> Fonde e sostituisce, come riferimento principale,
-> [`metastgat_diff_analysis.md`](metastgat_diff_analysis.md) (12/9/2026, l'analisi riga-per-riga
-> codice-vs-paper con gli estratti di codice, che resta nel repository con tutto il dettaglio) e il
+> Fonde e sostituisce, come riferimento principale, l'analisi riga-per-riga
+> codice-vs-paper con gli estratti di codice (in origine un documento a parte, `metastgat_diff_analysis.md`,
+> rimosso l'1/10/2026 una volta assorbito qui) e il
 > razionale di raggruppamento per l'ablation study (§3 sotto, in origine in un documento di
 > brainstorm separato — le 4 proposte alternative, non più conservate a parte, sono riassunte lì).
 > Per capire **quali modelli sono stati effettivamente testati e in cosa differiscono l'uno
@@ -109,7 +109,6 @@ anziché $W{\cdot}(Q{\cdot}K)$; la Meta-LSTM genera pesi per tutti e 4 i gate (i
 dimensione di un solo gate); la feature "location" del TMK del paper non è implementata (nessun
 canale porta coordinate assolute, si veda `descrizione_configurazioni.md` §4bis sul perché questo
 è stato deliberatamente messo alla prova con l'esperimento delle 3 arterie su righe diverse).
-Dettaglio riga per riga con estratti di codice: [`metastgat_diff_analysis.md`](metastgat_diff_analysis.md).
 
 **Numeri**: su `config_4x4_100m_train1` (in-distribuzione) il modello Paper ha TT medio 334.9s
 contro 215.2s del Pro ($\alpha=0.5$); sulla generalizzazione più dura (6x6 peak) 538.2s contro
@@ -162,10 +161,10 @@ puro.
 Nessuna delle 4 varianti domina su ogni config (vedi `results/plots/compare_per_config/` per il
 quadro completo sulle 10 config): $\alpha=0.1$ ha il TT medio più basso in training ma non
 generalizza altrettanto bene; **$\alpha=0.2$ risulta il miglior compromesso complessivo** tra TT
-medio e massimo attraverso l'insieme delle config (piano_tesi.md §4.3), mentre **$\alpha=0.0$ è
+medio e massimo attraverso l'insieme delle config, mentre **$\alpha=0.0$ è
 sistematicamente il peggiore**, non solo sul travel time ma anche sull'equità direzionale: la sua
 attesa massima N/S e W/E collassa quasi al livello di MaxPressure, confermando che il termine
-anti-starvation non è ridondante rispetto al solo throughput (piano_tesi.md §4.4). Nessuna delle
+anti-starvation non è ridondante rispetto al solo throughput. Nessuna delle
 due metriche isolate basta da sola a scegliere un $\alpha$: da qui la scelta di riportare sempre
 TT e equità direzionale fianco a fianco nei grafici di `compare_models.py`, mai uno senza l'altro.
 
@@ -210,7 +209,7 @@ gruppo, perché la reward custom dipende da `wait_vec`/dal cutoff visivo per ess
 nello stesso modo. Vedi `descrizione_scripts.md` per la mappa preset→flag completa e il dettaglio
 di ogni flag atomico.
 
-**Lettura dei risultati** (unico confronto completo scritto in tesi finora, piano_tesi.md §4.5):
+**Lettura dei risultati** (unico confronto completo scritto in tesi finora):
 `ablation_temporal` vs Pro peggiora sia in training (+7.1% TT medio) sia, in misura maggiore, in
 generalizzazione (+18.6%) — indizio che BPTT+burn-in non è solo un dettaglio di ottimizzazione ma
 contribuisce alla capacità di generalizzare, non solo a convergere più in fretta sulle config viste
@@ -322,7 +321,6 @@ che vale la pena verificare con un secondo run prima di generalizzare.
 
 ## 5. Per approfondire
 
-- Dettaglio riga-per-riga codice-vs-paper (con estratti di codice): [`metastgat_diff_analysis.md`](metastgat_diff_analysis.md)
 - Stato, meta-learner (SMK/TMK) e reward: cosa si usa, come si calcola, perché — [`descrizione_stato_meta_reward.md`](descrizione_stato_meta_reward.md)
 - Letteratura correlata (PressLight/MPLight/CoLight/AttendLight/MaCAR) e cosa dice sul meta-learner: [`descrizione_letteratura_correlata.md`](descrizione_letteratura_correlata.md)
 - Flag `--ablation`/`--no-*` e come li applica `train.py`: [`descrizione_scripts.md`](descrizione_scripts.md)

@@ -3,7 +3,7 @@
 Genera un replay con una politica semplice (nessun training/checkpoint) per una
 data config CityFlow — serve per ispezionare visivamente/numericamente quanti
 veicoli vengono immessi in una rete nuova, prima di allenare qualunque modello
-su di essa (vedi descrizione_configurazioni.md).
+su di essa (vedi descrizioni/descrizione_configurazioni.md).
 
 Due politiche disponibili (--policy):
   - maxpressure (default): MaxPressureAgent (Varaiya 2013, via CityFlowEnv.

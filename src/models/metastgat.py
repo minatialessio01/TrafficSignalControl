@@ -21,17 +21,17 @@ Confronto con STGAT baseline:
   - STGAT: LSTM e GAT con pesi fissi
   - MetaSTGAT: LSTM e GAT con pesi generati dinamicamente dai meta-learner
 
-Estensione "seconda parte" (`istruzioni seconda parte.md` §2.1): `num_layers`
+Estensione "seconda parte" (vedi `descrizioni/descrizione_gcn_sonar.md`): `num_layers`
 permette di impilare 1 o 2 layer indipendenti (pesi propri, non condivisi) sia
 per il modulo CST sia per il CS, per confrontare GAT-1L vs GAT-2L a parita' di
 resto dell'architettura contro le varianti GCN/SONAR equivalenti
 (metastgnn.py, metastsonar.py). Con num_layers=1 il comportamento e'
 identico bit-per-bit alla versione precedente di questo file (nessuna
 regressione sul modello Pro gia' validato -- verificato con un test di forma,
-vedi descrizione_gcn_sonar.md).
+vedi descrizioni/descrizione_gcn_sonar.md).
 
 Self-loop su edge_index (12/9/2026, decisione definitiva -- vedi
-descrizione_gcn_sonar.md §0 e descrizione_modelli.md §4): il Meta-GAT originale
+descrizioni/descrizione_gcn_sonar.md §0 e descrizioni/descrizione_modelli.md §4): il Meta-GAT originale
 non aggiungeva mai self-loop a edge_index, una deviazione dalla formulazione
 standard di Velickovic et al. (2018), che include esplicitamente il nodo nel
 proprio vicinato. Corretto qui in via permanente dopo un esperimento
@@ -78,7 +78,7 @@ class MetaSTGAT(nn.Module):
         dropout:           dropout (default 0.0)
         num_layers:        numero di layer Meta-GAT indipendenti impilati per
                             ciascun modulo (CST e CS), 1 (default, comportamento
-                            originale) o 2 (istruzioni seconda parte.md §2.1)
+                            originale) o 2
     """
 
     def __init__(self,
@@ -91,7 +91,7 @@ class MetaSTGAT(nn.Module):
                  meta_hidden_dim: int = 64,
                  dropout: float = 0.0,
                  use_tanh_meta: bool = True,    # Ablation: False = no Tanh sui meta-learner
-                 num_layers: int = 1):          # 1 (default) o 2, vedi istruzioni seconda parte.md §2.1
+                 num_layers: int = 1):          # 1 (default) o 2
         super().__init__()
         if num_layers not in (1, 2):
             raise ValueError(f"num_layers deve essere 1 o 2, ricevuto {num_layers}")
@@ -135,8 +135,8 @@ class MetaSTGAT(nn.Module):
         # ── 4. Meta-GAT CST Module (Section 4.3.2, Eq. 16-17) ────────────────
         # Q=e_j, K=x_i, V=x_i; meta=TMK(i). Con num_layers=2: due layer
         # indipendenti (pesi propri, MAI condivisi tra loro -- a differenza di
-        # SONAR, dove invece le L ricorrenze condividono i pesi, vedi
-        # istruzioni seconda parte.md §0/§2.1); query e' tenuta fissa a e_j per
+        # SONAR, dove invece le L ricorrenze condividono i pesi); query e'
+        # tenuta fissa a e_j per
         # entrambi i layer, key/value si raffinano da un layer al successivo
         # (scelta dichiarata: l'alternativa "aggiorna anche la query" e'
         # egualmente legittima, non e' ovvio quale sia meglio).

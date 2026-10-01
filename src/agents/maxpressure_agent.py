@@ -46,10 +46,21 @@ class MaxPressureAgent:
     Args:
         n_phases: numero di fasi semaforiche selezionabili (default: 8 — la
                   fase di tutto-rosso, indice 8, non e' mai tra queste).
+        respect_mask: se True, rispetta la maschera anti-starvation passata
+                  come `invalid_actions` a select_actions (di norma
+                  env.get_invalid_actions()), escludendo quelle fasi
+                  dall'argmax di pressione. Default False: comportamento
+                  originale invariato, MaxPressure ignora sempre la
+                  maschera indipendentemente da env.use_action_mask, per
+                  non alterare i risultati "MaxPressure" gia' usati nella
+                  tesi. Va attivato esplicitamente solo per il confronto
+                  ad hoc "MaxPressure con maschera" (richiesto il
+                  24/9/2026, mai parte degli studi standard).
     """
 
-    def __init__(self, n_phases: int = 8):
+    def __init__(self, n_phases: int = 8, respect_mask: bool = False):
         self.n_phases = n_phases
+        self.respect_mask = respect_mask
 
     def reset(self, inter_ids: List[str]) -> None:
         """MaxPressure è stateless: non fa nulla al reset."""
@@ -59,6 +70,7 @@ class MaxPressureAgent:
                        inter_ids: List[str],
                        env=None,
                        states=None,
+                       invalid_actions=None,
                        **kwargs) -> Dict[str, int]:
         """
         Seleziona la fase con pressione massima per ogni intersezione.
@@ -70,6 +82,9 @@ class MaxPressureAgent:
                        per corsia (env.get_lane_vehicle_count()).
             states:    non usato dalla pressione (mantenuto solo per compatibilita'
                        con la firma di chiamata esistente in test.py).
+            invalid_actions: {inter_id -> [fasi vietate]}, tipicamente
+                       env.get_invalid_actions(). Applicata solo se
+                       self.respect_mask e' True; altrimenti ignorata.
 
         Returns:
             {inter_id → phase_index}
@@ -90,6 +105,10 @@ class MaxPressureAgent:
                 sum(lane_counts.get(start, 0) - lane_counts.get(end, 0) for start, end in pairs)
                 for pairs in phase_pairs
             ]
+            if self.respect_mask and invalid_actions:
+                for forbidden in invalid_actions.get(iid, []):
+                    if 0 <= forbidden < len(pressures):
+                        pressures[forbidden] = float("-inf")
             # In caso di parita' (o nessuna fase disponibile), manteniamo l'indice
             # minore (stabile) — coerente con np.argmax su valori uguali.
             actions[iid] = int(np.argmax(pressures)) if pressures else 0

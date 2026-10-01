@@ -135,7 +135,7 @@ def parse_args():
                              "'sostanza-preservante' (stesso roadnet/densita', seed diverso).")
     # [LIBSIGNAL ADDITION: Aggiunto CoLight alle scelte]
     # MetaSTGNN/MetaSTSONAR: seconda parte del progetto (GAT -> GCN/SONAR),
-    # vedi istruzioni seconda parte.md e descrizione_gcn_sonar.md.
+    # vedi descrizioni/descrizione_gcn_sonar.md.
     parser.add_argument("--model", default="MetaSTGAT",
                         choices=["MetaSTGAT", "MetaSTGNN", "MetaSTSONAR", "STGAT", "FixedTime", "CoLight"],
                         help="Modello da allenare")
@@ -160,7 +160,7 @@ def parse_args():
     # "sostanza-preservante" della stessa config, seed diversi, mai viste in
     # training) -- un solo episodio su una sola config e' un test statistico
     # troppo debole per decidere quale checkpoint tenere (vedi
-    # descrizione_scripts.md). final_model e best_model competono ora sulla
+    # descrizioni/descrizione_scripts.md). final_model e best_model competono ora sulla
     # media tra le 3, non su un singolo numero potenzialmente fortunato.
     parser.add_argument("--select-best-config", nargs="+",
                         default=["configs/config_4x4_100m_6k_flat.json",
@@ -169,7 +169,7 @@ def parse_args():
                         help="Una o piu' config di validazione usate a fine training per scegliere "
                              "tra final_model.pth e best_model.pt (media del TT su tutte). Default: "
                              "3 varianti seed della stessa config, stessa densita'/topologia/arteria, "
-                             "percorsi e istanti diversi -- vedi descrizione_configurazioni.md §4bis.")
+                             "percorsi e istanti diversi -- vedi descrizioni/descrizione_configurazioni.md §4bis.")
     parser.add_argument("--select-best-episodes", type=int, default=1,
                         help="Numero di episodi di valutazione (epsilon=0) per la selezione finale, "
                              "PER OGNI config di --select-best-config. Default 1: stessa ragione di "
@@ -200,9 +200,9 @@ def parse_args():
                              "tra le ricorrenze, non layer indipendenti).")
     parser.add_argument("--sonar-recurrences", type=int, default=2,
                         help="L, numero di ricorrenze di discretizzazione per blocco "
-                             "Meta-SONAR (solo --model MetaSTSONAR). Raccomandazione "
-                             "istruzioni seconda parte.md §D1: 2 (secondo valore "
-                             "consigliato se si vuole confrontare due profondita': 4).")
+                             "Meta-SONAR (solo --model MetaSTSONAR). Raccomandazione: 2 "
+                             "(secondo valore consigliato se si vuole confrontare due "
+                             "profondita': 4).")
     parser.add_argument("--sonar-step-size", type=float, default=0.1,
                         help="h, passo di discretizzazione di Meta-SONAR (solo "
                              "--model MetaSTSONAR). Valori grandi possono divergere "
@@ -265,7 +265,7 @@ def parse_args():
     parser.add_argument("--no-phase-pressure-meta", action="store_true",
                         help="Rimuove la feature phase_pressure (N_PHASES dim) dal SMK "
                              "(solo SMK, non TMK) aggiunta il 13/9/2026 (meta_v3, vedi "
-                             "descrizione_stato_meta_reward.md), tornando alle dimensioni meta_v2 (SMK 18, "
+                             "descrizioni/descrizione_stato_meta_reward.md), tornando alle dimensioni meta_v2 (SMK 18, "
                              "TMK 25 invariato). Serve SOLO per --resume di un checkpoint "
                              "allenato prima di meta_v3 (dimensione dei pesi diversa).")
     parser.add_argument("--pressure-reward-term", action="store_true",
@@ -587,7 +587,7 @@ def run_final_selection(args, final_model_path: str, best_model_path: str, devic
     # best_model vengono valutati su OGNI config della lista, il punteggio di
     # ciascun candidato e' la media tra tutte -- un solo episodio su una sola
     # config e' un confronto troppo rumoroso per decidere quale checkpoint
-    # tenere (discusso in descrizione_scripts.md). Compatibile all'indietro:
+    # tenere (discusso in descrizioni/descrizione_scripts.md). Compatibile all'indietro:
     # una lista di un solo elemento si comporta come prima.
     select_configs = args.select_best_config
     if isinstance(select_configs, str):
@@ -1000,7 +1000,7 @@ def run_training(args):
         # su un solo episodio e' troppo sensibile al rumore (variante di
         # traffico ciclata quell'episodio, stocasticita' della simulazione)
         # per essere un buon criterio di selezione del checkpoint -- vedi
-        # descrizione_scripts.md per la discussione completa. Vale solo per i
+        # descrizioni/descrizione_scripts.md per la discussione completa. Vale solo per i
         # modelli allenati da zero dopo questa modifica.
         is_best = agent.save_best(
             path=logger.best_path,
